@@ -72,6 +72,11 @@ impl Home {
         rel.split('/').fold(self.root.clone(), |p, c| p.join(c))
     }
 
+    /// Resolves a configured path: relative ones (either separator) live under the home.
+    pub fn path(&self, configured: &Path) -> PathBuf {
+        self.root.join(configured.components().collect::<PathBuf>())
+    }
+
     pub fn config_file(&self) -> PathBuf {
         self.join("aftercast.toml")
     }
@@ -147,6 +152,16 @@ mod tests {
             Path::new("U").join("aftercast")
         );
         assert!(matches!(pick_root(None, None, None), Err(Error::NoHome)));
+    }
+
+    #[test]
+    fn configured_paths_resolve_under_home_with_native_separators() {
+        let home = Home::new("root");
+        let expected = Path::new("root").join("state").join("client_secret.json");
+        assert_eq!(home.path(Path::new("state/client_secret.json")), expected);
+        assert_eq!(home.join("state/client_secret.json"), expected);
+        let absolute = std::env::temp_dir().join("x");
+        assert_eq!(home.path(&absolute), absolute);
     }
 
     #[test]

@@ -16,6 +16,8 @@ use mock::Mock;
 use quota::{Method, QuotaGuard, Spent};
 
 const API: &str = "https://www.googleapis.com/youtube/v3";
+/// Appended to auth errors that signing in again fixes.
+pub(crate) const LOGIN_HINT: &str = "run `aftercast auth login`";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -31,7 +33,7 @@ pub enum Error {
     QuotaExhausted,
     #[error("quota ledger: {0}")]
     Ledger(String),
-    #[error("{0} (run `aftercast auth login`)")]
+    #[error("{0}")]
     Auth(String),
     #[error("YouTube API error {status} {reason}: {message}")]
     Api {
@@ -353,7 +355,9 @@ async fn send(http: &reqwest::Client, auth: &Auth, request: &Request) -> Result<
     let body: Value = response.json().await.unwrap_or(Value::Null);
     match status {
         200..=299 => Ok(body),
-        401 => Err(Error::Auth("YouTube rejected the access token".into())),
+        401 => Err(Error::Auth(format!(
+            "YouTube rejected the access token; {LOGIN_HINT}"
+        ))),
         _ => Err(api_error(status, &body)),
     }
 }

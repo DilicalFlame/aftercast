@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
-use crate::{Error, Result};
+use crate::{Error, LOGIN_HINT, Result};
 
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube.force-ssl";
 const KEYRING_SERVICE: &str = "aftercast";
@@ -80,7 +80,9 @@ impl Auth {
         let refresh_token = match entry(profile)?.get_password() {
             Ok(token) => token,
             Err(keyring::Error::NoEntry) => {
-                return Err(Error::Auth(format!("profile {profile:?} is not signed in")));
+                return Err(Error::Auth(format!(
+                    "profile {profile:?} is not signed in; {LOGIN_HINT}"
+                )));
             }
             Err(e) => return Err(Error::Auth(format!("keyring: {e}"))),
         };
@@ -137,10 +139,11 @@ async fn token_request(
     if !status.is_success() {
         let reason = body["error"].as_str().unwrap_or("unknown");
         let hint = if reason == "invalid_grant" {
-            "; the refresh token expired or was revoked. If the OAuth consent screen is in \
-             Testing, tokens expire after ~7 days: set it to In production"
+            format!(
+                "; the refresh token expired or was revoked ({LOGIN_HINT}). If the OAuth consent                  screen is in Testing, tokens expire after ~7 days: set it to In production"
+            )
         } else {
-            ""
+            String::new()
         };
         return Err(Error::Auth(format!(
             "token request failed ({status}): {reason}{hint}"

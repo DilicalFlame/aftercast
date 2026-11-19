@@ -393,7 +393,7 @@ impl App {
                 Style::new().fg(ACCENT).bold(),
             ),
             Span::raw(format!(
-                "─ YouTube {youtube} ─ quota {} ─ ",
+                "· YouTube {youtube} · quota {} · ",
                 thousands(view.quota_remaining)
             )),
             Span::styled(view.session.clone(), Style::new().fg(MUTED)),

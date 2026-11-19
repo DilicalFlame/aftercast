@@ -98,8 +98,7 @@ impl Session {
         fs::create_dir_all(dir.join(".render")).map_err(Error::io(&dir))?;
 
         let seed = home
-            .root()
-            .join(&config.paths.templates)
+            .path(&config.paths.templates)
             .join(&config.readme.seed_template);
         let readme = dir.join("README.md");
         if !readme.exists() {
@@ -195,7 +194,7 @@ impl Session {
 }
 
 pub fn sessions_dir(home: &Home, config: &Config) -> PathBuf {
-    home.root().join(&config.paths.sessions)
+    home.path(&config.paths.sessions)
 }
 
 /// Subfolders of `dir`, sorted; a missing folder has none.

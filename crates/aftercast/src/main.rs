@@ -105,7 +105,7 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
 async fn auth(home: &Home, config_path: &std::path::Path, action: AuthAction) -> Result<u8> {
     let config = Config::load(config_path)?;
     let profile = &config.youtube.token_profile;
-    let secret: PathBuf = home.root().join(&config.youtube.client_secret_file);
+    let secret: PathBuf = home.path(&config.youtube.client_secret_file);
     match action {
         AuthAction::Login => {
             auth::login(&secret, profile).await?;

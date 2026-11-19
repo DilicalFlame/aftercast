@@ -119,7 +119,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             clock.advance(Duration::from_secs_f64(behind));
         }
     }
-    let renderer = Renderer::new(&home.root().join(&config.paths.templates));
+    let renderer = Renderer::new(&home.path(&config.paths.templates));
     let (events_tx, events_rx) = broadcast::channel(4096);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let yt = Arc::new(yt);
@@ -195,7 +195,7 @@ fn client(home: &Home, config: &Config, mock: Option<&Path>, clock: Arc<Clock>) 
     Ok(match mock {
         Some(fixture) => Client::mock(fixture, &home.join("mock/requests"), quota, clock),
         None => {
-            let secret = home.root().join(&config.youtube.client_secret_file);
+            let secret = home.path(&config.youtube.client_secret_file);
             Client::rest(
                 Auth::load(&secret, &config.youtube.token_profile)?,
                 quota,
@@ -549,7 +549,7 @@ impl Controller {
     fn reload(&mut self) {
         match Config::load(&self.config_path) {
             Ok(config) => {
-                self.renderer = Renderer::new(&self.home.root().join(&config.paths.templates));
+                self.renderer = Renderer::new(&self.home.path(&config.paths.templates));
                 self.config = config;
                 self.notice = Some("config and templates reloaded".into());
             }
