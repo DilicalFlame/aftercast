@@ -154,4 +154,4 @@ Things only a person can verify (real account, real OBS, hotkeys) are listed in
 
 ## License
 
-MIT OR Apache-2.0.
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your option.
