@@ -32,7 +32,7 @@ const LATENCY_SAMPLES: usize = 3;
 const CHAPTERS_REPLY: usize = 200;
 
 /// A running latency measurement: the overlay counter started at `start` and counts
-/// whole seconds.
+/// tenths of a second.
 pub(super) struct LatencyRun {
     start: Timestamp,
     samples: Vec<f64>,
@@ -361,7 +361,7 @@ impl Controller {
             self.notice = Some("no latency measurement running (start it with :latency)".into());
             return;
         };
-        let shown = run.start.add_secs(counter as f64);
+        let shown = run.start.add_secs(counter as f64 / 10.0);
         let latency = at.secs_since(shown);
         if latency < 0.0 {
             self.notice = Some(format!(

@@ -1246,9 +1246,9 @@ mod tests {
         );
         assert!(palette("overlay toast", now()).is_err());
         assert_eq!(
-            palette("lat 235", now()),
+            palette("lat 2350", now()),
             Ok(Palette::Command(Command::LatencySample {
-                counter: 235,
+                counter: 2350,
                 at: now()
             }))
         );
