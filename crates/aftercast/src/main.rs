@@ -39,6 +39,21 @@ fn run(cli: Cli) -> Result<u8> {
         Some(Command::Doctor) => Ok(doctor::run(&home, cli.config)),
         Some(Command::Auth { action }) => runtime()?.block_on(auth(&home, &config_path, action)),
         Some(Command::ShellHook { shell }) => shell_hook(&home, &config_path, shell),
+        Some(Command::Post {
+            session,
+            from,
+            only,
+            force,
+            language,
+        }) => post(
+            &home,
+            &config_path,
+            session.as_deref(),
+            from,
+            only,
+            force,
+            language,
+        ),
         None => runtime()?.block_on(live_session(&home, &config_path, &cli)),
         Some(_) => {
             eprintln!("not yet implemented");
@@ -168,6 +183,77 @@ fn hotkeys(
             A::Brb => commands.send(C::Brb { on: None, by }),
             A::Privacy => commands.send(C::Privacy { on: None, by }),
         };
+    })
+}
+
+/// Runs the post-stream pipeline on a session (the last one when none is given).
+fn post(
+    home: &Home,
+    config_path: &std::path::Path,
+    session: Option<&str>,
+    from: Option<String>,
+    only: Option<String>,
+    force: bool,
+    language: Option<String>,
+) -> Result<u8> {
+    use error::AppError;
+    let config = Config::load(config_path)?;
+    let dir = session_dir(home, &config, session)?;
+    let stage = |s: Option<String>| {
+        s.map(|s| ac_post::Stage::parse(&s))
+            .transpose()
+            .map_err(AppError::Usage)
+    };
+    let opts = ac_post::Options {
+        from: stage(from)?,
+        only: stage(only)?,
+        force,
+    };
+    let mut ctx = ac_post::Ctx::open(home.clone(), config, &dir).map_err(AppError::Usage)?;
+    ctx.language_override = language;
+    println!("post {}", dir.display());
+    let report = ac_post::run(&mut ctx, &opts).map_err(AppError::Usage)?;
+    for (stage, outcome) in report {
+        let what = match outcome {
+            ac_post::Outcome::Ran => "done".to_owned(),
+            ac_post::Outcome::UpToDate => "up to date".to_owned(),
+            ac_post::Outcome::Disabled(why) => format!("skipped ({why})"),
+        };
+        println!("  {:<11} {what}", stage.name());
+    }
+    for note in &ctx.notes {
+        println!("warning: {note}");
+    }
+    println!("index: {}", dir.join("derived").join("index.md").display());
+    Ok(exit::OK)
+}
+
+/// A session folder from a path, a folder name like `2026-11-19_ep042`, or the last session.
+fn session_dir(home: &Home, config: &Config, session: Option<&str>) -> Result<PathBuf> {
+    use error::AppError;
+    let Some(arg) = session else {
+        let state = ac_core::state::State::load(&home.state_file())?;
+        let rel = state
+            .last_session
+            .ok_or_else(|| AppError::Usage("no previous session; pass one".into()))?;
+        return Ok(home.root().join(rel));
+    };
+    let path = PathBuf::from(arg);
+    if path.join("session.toml").exists() {
+        return Ok(path);
+    }
+    let sessions = ac_core::session::sessions_dir(home, config);
+    let found = std::fs::read_dir(&sessions)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|year| year.path().join(arg))
+        .find(|p| p.join("session.toml").exists());
+    found.ok_or_else(|| {
+        AppError::Usage(format!(
+            "no session {arg:?} (a folder name under {}, or a path)",
+            sessions.display()
+        ))
     })
 }
 

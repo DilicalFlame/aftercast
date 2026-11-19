@@ -466,7 +466,7 @@ impl Default for Hotkeys {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Post {
     pub auto_after_finalize: bool,

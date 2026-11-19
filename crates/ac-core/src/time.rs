@@ -27,6 +27,11 @@ impl Timestamp {
         Self(DateTime::from_timestamp_millis(ms).expect("in range"))
     }
 
+    /// The system clock now; live sessions use a [`Clock`] instead.
+    pub fn now() -> Self {
+        Self::from_datetime(Utc::now())
+    }
+
     pub fn unix_ms(self) -> i64 {
         self.0.timestamp_millis()
     }

@@ -71,8 +71,12 @@ pub enum Command {
         /// Run only this stage
         #[arg(long, value_name = "STAGE", conflicts_with = "from")]
         only: Option<String>,
+        /// Re-run stages even when their inputs are unchanged
         #[arg(long)]
         force: bool,
+        /// Transcription language for this run (en, hi, auto)
+        #[arg(long)]
+        language: Option<String>,
     },
     /// Render suggested clips and topic videos
     Render {

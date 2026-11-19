@@ -11,6 +11,7 @@ publish.workspace = true
 ac-bot.workspace = true
 ac-capture.workspace = true
 ac-obs.workspace = true
+ac-post.workspace = true
 ac-server.workspace = true
 ac-template.workspace = true
 ac-tui.workspace = true
