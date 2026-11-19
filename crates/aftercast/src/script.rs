@@ -2,6 +2,7 @@
 //! to stdout. Lines look like `+5s checkpoint "Parser"`; the `+` delay advances the
 //! session clock without waiting (specs/14-roadmap.md, "Mock mode").
 
+use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
@@ -178,12 +179,11 @@ async fn print_events(mut events: broadcast::Receiver<std::sync::Arc<ac_core::ev
         match events.recv().await {
             Ok(event) => {
                 let json = serde_json::to_value(&*event).unwrap_or_default();
-                println!(
-                    "{} {} {}",
-                    event.t,
-                    json["type"].as_str().unwrap_or("?"),
-                    json["data"]
-                );
+                let kind = json["type"].as_str().unwrap_or("?");
+                // A closed stdout (reader gone) ends printing instead of panicking.
+                if writeln!(std::io::stdout(), "{} {kind} {}", event.t, json["data"]).is_err() {
+                    return;
+                }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => eprintln!("({n} events not shown)"),
             Err(broadcast::error::RecvError::Closed) => return,
