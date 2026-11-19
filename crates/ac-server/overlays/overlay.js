@@ -68,7 +68,8 @@
     latency(d) {
       const card = el("div", "card latency");
       root.replaceChildren(card);
-      tick(() => (card.textContent = `LAT ${Math.floor((Date.now() - d.start_ms) / 100)}`), 50);
+      // Whole seconds: readable on a phone and typed by hand; plenty for a delay of seconds.
+      tick(() => (card.textContent = `LAT ${Math.floor((Date.now() - d.start_ms) / 1000)}`), 100);
     },
     chapters(d) {
       root.replaceChildren(el("div", "card chapters", d.title || ""));

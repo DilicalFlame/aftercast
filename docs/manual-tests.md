@@ -168,7 +168,7 @@ viewer, and ideally a third account you made a moderator.
 
 ### Latency
 
-15. `:latency`. Expect: the `latency` overlay shows `LAT` with a counter.
+15. `:latency`. Expect: the `latency` overlay shows `LAT` with a counter that goes up once a second.
 16. Watch the stream on your phone; type `!lat <number you see>` in chat (as the owner)
     three times, a few seconds apart. Expect: `latency x.x s (n samples)` after each; after
     the third the overlay hides and the status bar shows `lat x.x s`. With the connection

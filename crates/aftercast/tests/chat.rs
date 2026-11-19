@@ -105,7 +105,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
          +5s chat dan !links\n\
          +5s chat eve !links\n\
          +1s latency\n\
-         +240s chat me owner !lat 2350\n\
+         +240s chat me owner !lat 235\n\
          +1s question show\n\
          quit\n");
     drop(stdin);
@@ -151,7 +151,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .collect();
     assert_eq!(modes, ["chat", "overlay"]);
 
-    // LAT 2350 is on screen 235 s after the start; seen in chat 240 s later, minus 0.5 s
+    // LAT 235 is on screen 235 s after the start; seen in chat 240 s later, minus 0.5 s
     // of chat delivery.
     let lat = of("latency.measured");
     assert_eq!(lat[0]["data"]["latency_s"], 4.5);

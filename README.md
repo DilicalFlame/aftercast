@@ -154,7 +154,7 @@ cap they go to the toast overlay.
 ### Latency
 
 Viewers see the stream late (seconds, or minutes on a slow uplink), so a mod's `!chapter`
-refers to the past. `:latency` puts a counter on the `latency` overlay; watch the stream on
+refers to the past. `:latency` puts a counter (seconds) on the `latency` overlay; watch the stream on
 your phone and type `!lat <number you see>` in chat (or `:lat <n>` in the palette), up to
 three times. The result is stored in the session and shown as `lat` in the status bar.
 
