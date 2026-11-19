@@ -51,6 +51,7 @@ dependencies = [
  "ac-core",
  "futures-util",
  "obws",
+ "serde",
  "serde_json",
  "tokio",
 ]

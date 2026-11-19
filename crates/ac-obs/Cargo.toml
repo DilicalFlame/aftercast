@@ -11,6 +11,7 @@ publish.workspace = true
 ac-core.workspace = true
 futures-util = { version = "0.3", default-features = false }
 obws = { version = "0.15", features = ["events"] }
+serde.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
 
 [dev-dependencies]

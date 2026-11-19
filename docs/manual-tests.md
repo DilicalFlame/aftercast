@@ -180,7 +180,9 @@ viewer, and ideally a third account you made a moderator.
 18. Set a quest (`:quest Parser` or the quest file). Expect: the `now` overlay shows it with
     the live timer. `:overlay now off` hides it; `:overlay now on` brings it back.
 19. Restart aftercast while OBS stays open. Expect: the overlays reconnect on their own and
-    show the current state again.
+    show the current state again. Then close aftercast, restart OBS (the overlay pages fail
+    to load), start aftercast and `:latency`. Expect: the counter shows in OBS without
+    pressing Refresh.
 20. With `<token>` from `<home>\state\api-token`:
     `curl -X POST http://127.0.0.1:7878/api/command -H "X-Aftercast-Token: <token>"
     -H "Content-Type: application/json" -d '{"cmd":"mark","by":"palette"}'` adds a mark;

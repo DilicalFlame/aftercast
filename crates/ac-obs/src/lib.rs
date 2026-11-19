@@ -54,6 +54,9 @@ pub enum Update {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
     SetScene(String),
+    /// Reloads every Browser source whose URL starts with one of these prefixes. OBS does
+    /// not retry a page that failed to load (aftercast was not running yet).
+    RefreshBrowsers(Vec<String>),
 }
 
 /// Where OBS listens.
@@ -167,10 +170,38 @@ async fn serve(
                         send(Update::Failed(format!("switching to scene {name:?}: {}", error_chain(&e))));
                     }
                 }
+                Some(Request::RefreshBrowsers(prefixes)) => {
+                    if let Err(e) = refresh_browsers(client, &prefixes).await {
+                        send(Update::Failed(format!("refreshing overlays: {}", error_chain(&e))));
+                    }
+                }
                 None => return Ok(()),
             },
         }
     }
+}
+
+async fn refresh_browsers(client: &obws::Client, prefixes: &[String]) -> obws::error::Result<()> {
+    #[derive(serde::Deserialize)]
+    struct Browser {
+        url: Option<String>,
+    }
+    for input in client.inputs().list(Some("browser_source")).await? {
+        let name = input.id.name.as_str();
+        let url = client
+            .inputs()
+            .settings::<Browser>(name.into())
+            .await?
+            .settings
+            .url;
+        if url.is_some_and(|u| prefixes.iter().any(|p| u.starts_with(p.as_str()))) {
+            client
+                .inputs()
+                .press_properties_button(name.into(), "refreshnocache")
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 async fn snapshot(client: &obws::Client) -> obws::error::Result<Snapshot> {

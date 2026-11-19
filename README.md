@@ -76,7 +76,8 @@ This writes `aftercast.toml` (config), templates and state folders. Edit
 ### 4. Overlays (optional)
 
 In OBS add a **Browser** source per overlay you want, 1920x1080, URL
-`http://127.0.0.1:7878/overlay/<name>`:
+`http://127.0.0.1:7878/overlay/<name>`. OBS can start before or after aftercast: when
+aftercast connects to OBS it refreshes these sources, so a page that failed to load recovers.
 
 | Overlay | Shows |
 |---|---|

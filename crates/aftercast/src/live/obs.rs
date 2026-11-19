@@ -63,6 +63,14 @@ impl Controller {
         self.service_state("obs", ServiceStatus::Ok);
         self.obs_scenes = Some(snap.scenes);
         let now = self.clock.now_ts();
+        // Overlay pages OBS loaded while aftercast was down show an error and never retry.
+        if let (ObsLink::Real(tx), Ok(addr)) = (&self.obs, &self.server) {
+            let port = addr.port();
+            let prefixes = ["127.0.0.1", "localhost"]
+                .map(|host| format!("http://{host}:{port}/overlay/"))
+                .to_vec();
+            let _ = tx.send(Request::RefreshBrowsers(prefixes));
+        }
 
         if let Some(scene) = snap.scene {
             self.scene_changed(scene, true);
