@@ -1,0 +1,12 @@
+{"v":1,"id":"01JD3K8Z9Q4V6M2T7X1B5N0C8R","t":"2026-11-19T09:30:02.114Z","mono_ms":0,"type":"session.start","src":"core","data":{"episode":42,"video_id":"abcdefghijk","resumed":false}}
+{"v":1,"id":"01JD3K90AA1111111111111111","t":"2026-11-19T09:30:03.500Z","mono_ms":1386,"type":"obs.record","src":"obs","data":{"state":"started","path":"D:/OBS/2026-11-19 14-58-49.mkv"}}
+{"v":1,"id":"01JD3K90AA2222222222222222","t":"2026-11-19T09:30:10.010Z","mono_ms":7896,"type":"desc.pushed","src":"youtube","data":{"chars":1240,"trigger":"start"}}
+{"v":1,"id":"01JD3K90AA3333333333333333","t":"2026-11-19T09:42:41.320Z","mono_ms":759206,"type":"checkpoint","src":"tui","data":{"cid":"01JD3KZZ000000000000000001","title":"Project setup","pressed_at":"2026-11-19T09:42:38.900Z","by":"tui"}}
+{"v":1,"id":"01JD3K90AA4444444444444444","t":"2026-11-19T09:55:00.000Z","mono_ms":1497886,"type":"quest.set","src":"external","data":{"id":"rust/R-C-07","title":"Build a TUI todo app","source":"external","extra":{"rank":"C"}}}
+{"v":1,"id":"01JD3K90AA5555555555555555","t":"2026-11-19T10:52:05.120Z","mono_ms":4923006,"type":"mark","src":"hotkey","data":{"label":"borrow checker rant","pressed_at":"2026-11-19T10:52:05.120Z","by":"hotkey"}}
+{"v":1,"id":"01JD3K90AA6666666666666666","t":"2026-11-19T11:10:12.000Z","mono_ms":6009886,"type":"question.add","src":"bot","data":{"qid":"q1","author":"bob","author_id":"UCxxxxxxxx","text":"why rust over go?"}}
+{"v":1,"id":"01JD3K90AA7777777777777777","t":"2026-11-19T11:10:15.000Z","mono_ms":6012886,"type":"question.show","src":"tui","data":{"qid":"q1"}}
+{"v":1,"id":"01JD3K90AA8888888888888888","t":"2026-11-19T11:30:00.000Z","mono_ms":7197886,"type":"privacy.start","src":"hotkey","data":{"by":"hotkey"}}
+{"v":1,"id":"01JD3K90AA9999999999999999","t":"2026-11-19T11:31:20.000Z","mono_ms":7277886,"type":"privacy.end","src":"hotkey","data":{}}
+{"v":1,"id":"01JD3K90AAAAAAAAAAAAAAAAAA","t":"2026-11-19T11:45:00.000Z","mono_ms":8097886,"type":"brb.start","src":"tui","data":{"return_scene":"Code","countdown_s":300}}
+{"v":1,"id":"01JD3K90AABBBBBBBBBBBBBBBB","t":"2026-11-19T11:51:30.000Z","mono_ms":8487886,"type":"brb.end","src":"tui","data":{}}

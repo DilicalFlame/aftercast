@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/manifest.schema.json",
+  "title": "derived/manifest.json",
+  "type": "object",
+  "required": [
+    "session",
+    "schema_version",
+    "master",
+    "duration_s",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "session": {
+      "type": "string"
+    },
+    "episode": {
+      "type": "integer"
+    },
+    "master": {
+      "type": "string"
+    },
+    "duration_s": {
+      "type": "number"
+    },
+    "fps": {
+      "type": "number"
+    },
+    "resolution": {
+      "type": "string"
+    },
+    "vod_offset_ms": {
+      "type": "integer"
+    },
+    "latency_s": {
+      "type": "number"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "name → path relative to session folder"
+    },
+    "tool_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+    }
+  }
+}

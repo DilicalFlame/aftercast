@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/suggestions.schema.json",
+  "title": "ai/suggestions.json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "session",
+    "items"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "session": {
+      "type": "string"
+    },
+    "generated_by": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "slug",
+          "ranges"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9]{1,8}$"
+          },
+          "kind": {
+            "enum": [
+              "short",
+              "clip",
+              "topic",
+              "compilation"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "maxLength": 60
+          },
+          "hook": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 5000
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ranges": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "start",
+                "end"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "start": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "seconds on the master (rec_t) timeline, ms precision"
+                },
+                "end": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "seconds on the master (rec_t) timeline, ms precision"
+                },
+                "speed": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 16,
+                  "default": 1
+                },
+                "session": {
+                  "type": "string",
+                  "description": "only for kind=compilation: other session folder name"
+                },
+                "label": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "keys_overlay": {
+            "type": "boolean",
+            "default": true
+          },
+          "captions": {
+            "type": "boolean",
+            "default": true
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/events.schema.json",
+  "title": "aftercast event (one line of events.jsonl)",
+  "type": "object",
+  "required": [
+    "v",
+    "id",
+    "t",
+    "mono_ms",
+    "type",
+    "data"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "description": "ULID"
+    },
+    "t": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+    },
+    "mono_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "type": {
+      "enum": [
+        "session.start",
+        "session.end",
+        "stream.status",
+        "stream.ended",
+        "obs.scene",
+        "obs.stream",
+        "obs.record",
+        "checkpoint",
+        "checkpoint.edit",
+        "checkpoint.delete",
+        "mark",
+        "note",
+        "brb.start",
+        "brb.end",
+        "privacy.start",
+        "privacy.end",
+        "quest.set",
+        "question.add",
+        "question.show",
+        "question.answered",
+        "question.dismiss",
+        "bot.cmd",
+        "bot.reply",
+        "mod.action",
+        "desc.rendered",
+        "desc.pushed",
+        "desc.push_failed",
+        "title.pushed",
+        "quota.spent",
+        "latency.measured",
+        "capture.state",
+        "capture.secret_dropped",
+        "service.error",
+        "service.state"
+      ]
+    },
+    "src": {
+      "type": "string",
+      "description": "emitting service, e.g. tui, obs, bot, youtube"
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session.start"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "episode": {
+                "type": "integer"
+              },
+              "video_id": {
+                "type": "string"
+              },
+              "resumed": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "episode",
+              "video_id",
+              "resumed"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "session.end"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "reason": {
+                "enum": [
+                  "quit",
+                  "finalized",
+                  "crash_recovered"
+                ]
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stream.status"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "enum": [
+                  "upcoming",
+                  "live",
+                  "ended"
+                ]
+              },
+              "source": {
+                "enum": [
+                  "youtube",
+                  "obs",
+                  "chat"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "stream.ended"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "enum": [
+                  "youtube",
+                  "obs",
+                  "chat"
+                ]
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "obs.scene"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "to": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "to"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "obs.stream"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "started",
+                  "stopped",
+                  "reconnecting"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "obs.record"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "started",
+                  "stopped",
+                  "paused",
+                  "resumed",
+                  "file_changed"
+                ]
+              },
+              "path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "checkpoint"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "cid": {
+                "type": "string",
+                "description": "stable checkpoint id (ULID)"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 100
+              },
+              "pressed_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+              },
+              "by": {
+                "enum": [
+                  "tui",
+                  "hotkey",
+                  "palette",
+                  "mod",
+                  "owner_chat"
+                ]
+              },
+              "latency_corrected_s": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "cid",
+              "title",
+              "pressed_at",
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "checkpoint.edit"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "cid": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 100
+              }
+            },
+            "required": [
+              "cid",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "checkpoint.delete"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "cid": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cid"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "mark"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "pressed_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+              },
+              "by": {
+                "enum": [
+                  "tui",
+                  "hotkey",
+                  "palette",
+                  "mod"
+                ]
+              },
+              "replay_path": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "pressed_at",
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "note"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "pressed_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+              }
+            },
+            "required": [
+              "text",
+              "pressed_at"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "brb.start"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "return_scene": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "countdown_s": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "brb.end"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "privacy.start"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "by": {
+                "enum": [
+                  "tui",
+                  "hotkey",
+                  "palette",
+                  "obs_scene"
+                ]
+              }
+            },
+            "required": [
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "privacy.end"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "quest.set"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "manual",
+                  "external"
+                ]
+              },
+              "extra": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "title",
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "question.add"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "qid": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "author_id": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 300
+              }
+            },
+            "required": [
+              "qid",
+              "author",
+              "author_id",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "question.show"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "qid": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "qid"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "question.answered"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "qid": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "qid"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "question.dismiss"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "qid": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "qid"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "bot.cmd"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "cmd": {
+                "type": "string"
+              },
+              "args": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "level": {
+                "enum": [
+                  "viewer",
+                  "member",
+                  "mod",
+                  "owner"
+                ]
+              }
+            },
+            "required": [
+              "cmd",
+              "args",
+              "author",
+              "level"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "bot.reply"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "cmd": {
+                "type": "string"
+              },
+              "mode": {
+                "enum": [
+                  "overlay",
+                  "chat",
+                  "both",
+                  "none"
+                ]
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "cmd",
+              "mode",
+              "text"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "mod.action"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "enum": [
+                  "delete",
+                  "ban",
+                  "timeout"
+                ]
+              },
+              "author_id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "author_id"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "desc.rendered"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "chars": {
+                "type": "integer"
+              },
+              "chapters": {
+                "type": "integer"
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "chars",
+              "chapters",
+              "ok"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "desc.pushed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "chars": {
+                "type": "integer"
+              },
+              "trigger": {
+                "enum": [
+                  "start",
+                  "end",
+                  "manual",
+                  "autosync",
+                  "cli"
+                ]
+              }
+            },
+            "required": [
+              "chars",
+              "trigger"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "desc.push_failed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "error": {
+                "type": "string"
+              },
+              "trigger": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "trigger"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "title.pushed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "quota.spent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "units": {
+                "type": "integer"
+              },
+              "remaining": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "method",
+              "units",
+              "remaining"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "latency.measured"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "latency_s": {
+                "type": "number"
+              },
+              "samples": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "latency_s",
+              "samples"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "capture.state"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "keys": {
+                "enum": [
+                  "on",
+                  "paused",
+                  "off",
+                  "error"
+                ]
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "keys"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "capture.secret_dropped"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "source": {
+                "enum": [
+                  "keys",
+                  "shell"
+                ]
+              }
+            },
+            "required": [
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "service.error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "error": {
+                "type": "string"
+              },
+              "retry_in_s": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "service",
+              "retry_in_s"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "service.state"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "service": {
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "ok",
+                  "retrying",
+                  "down"
+                ]
+              }
+            },
+            "required": [
+              "service",
+              "state"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ]
+}

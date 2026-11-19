@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/frames.schema.json",
+  "title": "derived/frames.json",
+  "type": "object",
+  "required": [
+    "interval_s",
+    "frames"
+  ],
+  "properties": {
+    "interval_s": {
+      "type": "number"
+    },
+    "width": {
+      "type": "integer"
+    },
+    "frames": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "t",
+          "file",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "t": {
+            "type": "number",
+            "minimum": 0,
+            "description": "seconds on the master (rec_t) timeline, ms precision"
+          },
+          "file": {
+            "type": "string",
+            "pattern": "^\\d{2}h\\d{2}m\\d{2}s(_\\d{3})?\\.jpg$"
+          },
+          "reason": {
+            "enum": [
+              "interval",
+              "scene"
+            ]
+          },
+          "scene_score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "phash": {
+            "type": "string"
+          },
+          "ocr": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      }
+    }
+  }
+}

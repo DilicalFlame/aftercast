@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod error;
+pub mod event;
 pub mod home;
 pub mod logging;
 pub mod state;

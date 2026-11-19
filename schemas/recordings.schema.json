@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/recordings.schema.json",
+  "title": "media/recordings.json",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": [
+      "path",
+      "start"
+    ],
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "start": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+      },
+      "stop": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "pauses": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "from",
+            "to"
+          ],
+          "properties": {
+            "from": {
+              "type": "string",
+              "format": "date-time",
+              "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+            },
+            "to": {
+              "type": "string",
+              "format": "date-time",
+              "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+            }
+          }
+        }
+      }
+    },
+    "additionalProperties": false
+  }
+}

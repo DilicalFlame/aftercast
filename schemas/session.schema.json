@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/session.schema.json",
+  "title": "session.toml (validated after TOML→JSON conversion)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "episode",
+    "platform",
+    "video_id",
+    "created_at",
+    "status",
+    "anchors"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "id": {
+      "type": "string"
+    },
+    "episode": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "platform": {
+      "const": "youtube"
+    },
+    "video_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{11}$"
+    },
+    "live_chat_id": {
+      "type": "string"
+    },
+    "title_at_start": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+    },
+    "status": {
+      "enum": [
+        "created",
+        "live",
+        "ended",
+        "finalized",
+        "posted"
+      ]
+    },
+    "anchors": {
+      "type": "object",
+      "properties": {
+        "session_start_wall": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+        },
+        "yt_actual_start": {
+          "type": "string"
+        },
+        "yt_actual_end": {
+          "type": "string"
+        },
+        "obs_stream_start": {
+          "type": "string"
+        },
+        "obs_record_start": {
+          "type": "string"
+        },
+        "vod_offset_ms": {
+          "type": "integer"
+        },
+        "latency_s": {
+          "type": "number"
+        },
+        "recordings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "start"
+            ],
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "start": {
+                "type": "string",
+                "format": "date-time",
+                "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+              },
+              "stop": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "pauses": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "from",
+                    "to"
+                  ],
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+                    },
+                    "to": {
+                      "type": "string",
+                      "format": "date-time",
+                      "description": "RFC 3339 UTC with ms, e.g. 2026-11-19T09:31:12.481Z"
+                    }
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

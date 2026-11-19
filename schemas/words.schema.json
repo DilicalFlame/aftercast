@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/words.schema.json",
+  "title": "derived/words.json",
+  "type": "object",
+  "required": [
+    "language",
+    "model",
+    "segments"
+  ],
+  "properties": {
+    "language": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "text"
+        ],
+        "properties": {
+          "start": {
+            "type": "number",
+            "minimum": 0,
+            "description": "seconds on the master (rec_t) timeline, ms precision"
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0,
+            "description": "seconds on the master (rec_t) timeline, ms precision"
+          },
+          "text": {
+            "type": "string"
+          },
+          "words": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "w",
+                "start",
+                "end"
+              ],
+              "properties": {
+                "w": {
+                  "type": "string"
+                },
+                "start": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "seconds on the master (rec_t) timeline, ms precision"
+                },
+                "end": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "seconds on the master (rec_t) timeline, ms precision"
+                },
+                "p": {
+                  "type": "number"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

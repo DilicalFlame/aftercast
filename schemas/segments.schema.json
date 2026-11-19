@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aftercast.local/schemas/segments.schema.json",
+  "title": "derived/segments.json",
+  "type": "object",
+  "required": [
+    "segments"
+  ],
+  "properties": {
+    "totals": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "start",
+          "end",
+          "kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "start": {
+            "type": "number",
+            "minimum": 0,
+            "description": "seconds on the master (rec_t) timeline, ms precision"
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0,
+            "description": "seconds on the master (rec_t) timeline, ms precision"
+          },
+          "kind": {
+            "enum": [
+              "speech",
+              "focus",
+              "dead",
+              "brb",
+              "redacted"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
