@@ -130,7 +130,9 @@ secret_patterns = [
   "AKIA[0-9A-Z]{16}", "AIza[0-9A-Za-z_-]{35}", "xox[baprs]-[A-Za-z0-9-]{10,}",
   "-----BEGIN [A-Z ]*PRIVATE KEY-----"
 ]
-git_roots = ["P:/"]             # scanned after the stream for commits in the session window
+# Folders searched (git_max_depth levels deep) after the stream for commits made during it,
+# e.g. ["D:/code"].
+git_roots = []
 git_max_depth = 3
 
 [hotkeys]

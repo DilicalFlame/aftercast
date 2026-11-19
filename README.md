@@ -20,9 +20,10 @@ Work in progress, built phase by phase.
 | 2 | OBS: scenes, BRB/privacy, recording anchors, pre-flight, global hotkeys | done |
 | 3 | Chat, bot, question queue, overlays, latency measurement, local API | done |
 | 4 | Keystroke and shell capture | done, manual test pending |
-| 5 to 7 | Post-processing pipeline, clip rendering, MCP server | planned |
+| 5 | Post-stream pipeline (`aftercast post`) | done, manual test pending |
+| 6 to 7 | Clip rendering, MCP server | planned |
 
-Commands for later phases (`post`, `render`, `mcp`, ...) exist but print "not yet implemented".
+Commands for later phases (`render`, `mcp`, ...) exist but print "not yet implemented".
 
 ## Install
 
@@ -197,6 +198,43 @@ These files are never uploaded or put in a description.
 
 Set `capture.keys = false` or `capture.shell = false` to turn either off.
 
+### After the stream: `aftercast post`
+
+`aftercast post` turns the last session (or `aftercast post 2026-11-19_ep042`) into an
+AI-ready dataset under the session's `derived/` folder:
+
+| Stage | Output |
+|---|---|
+| `ingest` | `media/master.mp4` (recording files joined, or linked if there is one MP4), `media/master.json` |
+| `vod`, `calibrate` | with `post.use_vod`: the YouTube VOD and its exact offset to the recording |
+| `audio` | `media/audio16k.wav` |
+| `transcribe` | `derived/words.json`, `transcript.srt`, `transcript.txt` (nothing said in privacy mode) |
+| `silence` | `derived/silence.json` |
+| `git` | `git.jsonl`: commits in `capture.git_roots` made during the stream |
+| `frames` | `derived/frames/*.jpg` every `frame_interval_s` and at scene changes, near-duplicates dropped |
+| `ocr` | with `post.ocr` and tesseract: screen text per frame |
+| `activity` | `derived/activity.csv`: speech, keys, shell, commits, chat, questions per 10 s |
+| `segments` | `derived/segments.json`: speech, focus (typing), dead, brb, redacted |
+| `secrets` | `derived/secrets.json`; ranges around leaked tokens are redacted |
+| `index` | `derived/index.md` (the digest an AI reads first) and `derived/manifest.json` |
+
+Stages whose inputs did not change are skipped, so rerunning is cheap and resumes after a
+failure. `--from frames` reruns from a stage on, `--only transcribe` one stage, `--force`
+everything; `--language hi` overrides `post.language` for this run. Each tool's command line
+and output go to `derived/logs/<stage>.log`. Nothing from privacy mode or around a leaked
+secret is kept in frames, transcript or the index.
+
+Transcription runs locally on the GPU with faster-whisper (once):
+
+```powershell
+pip install faster-whisper
+# CUDA 12 + cuDNN 9 for the GPU; `aftercast doctor` checks both
+```
+
+Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. whisperx
+(`pip install whisperx`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,
+`post.whisper_model` = path of a ggml `.bin`) work too.
+
 ### Other commands
 
 ```text
@@ -204,6 +242,7 @@ aftercast init               create the home folder
 aftercast doctor             check tools, config, clock, keyring, OBS
 aftercast auth login | status | logout | obs
 aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
+aftercast post [SESSION]     process a finished session (see above)
 ```
 
 ### Local API

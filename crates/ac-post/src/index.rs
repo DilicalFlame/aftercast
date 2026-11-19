@@ -278,23 +278,31 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
     let sd = (chat.iter().map(|c| (*c as f64 - mean).powi(2)).sum::<f64>() / minutes as f64).sqrt();
 
     let _ = writeln!(md, "## Timeline");
+    // A minute's label: redacted if any of it is (nothing of it is shown); otherwise speech
+    // or focus if it has any (whichever covers more); otherwise brb or dead, which collapse.
     let kind_of = |m: usize| -> Kind {
         let (a, b) = (m as f64 * 60.0, ((m + 1) as f64 * 60.0).min(duration));
-        let mut best = (Kind::Dead, 0.0);
+        let mut cover: BTreeMap<Kind, f64> = BTreeMap::new();
         for s in &segs.segments {
             let o = (s.end.min(b) - s.start.max(a)).max(0.0);
-            if o <= 0.0 {
-                continue;
-            }
-            // Any redacted second hides the whole minute.
-            if s.kind == Kind::Redacted {
-                return Kind::Redacted;
-            }
-            if o > best.1 {
-                best = (s.kind, o);
+            if o > 0.0 {
+                *cover.entry(s.kind).or_insert(0.0) += o;
             }
         }
-        best.0
+        let has = |k: Kind| cover.get(&k).copied().unwrap_or(0.0);
+        if has(Kind::Redacted) > 0.0 {
+            Kind::Redacted
+        } else if has(Kind::Speech) > 0.0 || has(Kind::Focus) > 0.0 {
+            if has(Kind::Speech) >= has(Kind::Focus) {
+                Kind::Speech
+            } else {
+                Kind::Focus
+            }
+        } else if has(Kind::Brb) > 0.0 {
+            Kind::Brb
+        } else {
+            Kind::Dead
+        }
     };
     let mut m = 0;
     while m < minutes {

@@ -238,3 +238,42 @@ viewer, and ideally a third account you made a moderator.
     `shell.jsonl`.
 14. Quit aftercast, run `echo while away`, restart the session. Expect: `echo while away`
     is copied once; nothing earlier appears twice.
+
+## Phase 5: post pipeline on a real session
+
+### Setup (once)
+
+1. `pip install faster-whisper`, then `aftercast doctor`. Expect: `faster-whisper` and `cuda`
+   ok (a CUDA device count of at least 1). If `cuda` fails, install CUDA 12 and cuDNN 9, or
+   set `post.whisper_compute_type = "int8_float16"` and retry.
+
+### A short stream
+
+2. Stream about 15 minutes with OBS recording: talk, code, press `c` twice, `m` once, `p` for
+   30 s, `b` for a minute, run a few commands in PowerShell, make one commit in a repository
+   under `capture.git_roots`. End the stream and finalize.
+3. `aftercast post`. Expect: every stage `done` (vod, calibrate, ocr `skipped`), a progress
+   bar per stage, then `index:` with the path. Time it: the target is under 1 hour for 5 hours
+   of stream, so roughly under 3 minutes here.
+4. Open `derived/index.md`. Expect: the header with episode, date and length; your chapters,
+   mark, commit and question; a block per minute with what you said (`[HH:MM:SS] ...`), the
+   commands (`> $ ...`) and frame names; the privacy minute shown only as `[redacted]`; the BRB
+   minute collapsed.
+5. Look through `derived/frames/`: no frame from the privacy minute; no near-identical frames
+   in a row; one frame per scene switch (not a burst during the stinger transition).
+6. Read `derived/transcript.txt` against the VOD in a few places. Expect the timestamps within
+   about a second. With Hinglish, compare `--language en` and `--language hi`
+   (`aftercast post --only transcribe --language hi`, then `aftercast post`).
+7. `aftercast post` again. Expect: every stage `up to date`, finishing in seconds.
+8. `aftercast post --from frames`. Expect: ingest to git `up to date`, frames to index `done`.
+9. Type `echo ghp_` plus 36 characters in PowerShell during a stream, then post. Expect: a
+   warning about a possible secret, `derived/secrets.json` with a `shell` entry (no token text)
+   and that minute `[redacted]` in `index.md`.
+
+### Optional
+
+10. Set `post.use_vod = true` and post a public or unlisted stream after YouTube finished
+    processing it. Expect: `media/vod.mp4`, `derived/calibration.json` with `accepted: true`
+    and a peak ratio of at least 3, and `vod_offset_ms` in `session.toml`.
+11. Install tesseract, set `post.ocr = true`, `aftercast post --from ocr`. Expect: `ocr:`
+    snippets after frame names in `index.md`.

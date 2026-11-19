@@ -1,6 +1,6 @@
 //! Stage 12, secrets: `derived/secrets.json` (never the secret itself), and every hit's
-//! range `[t - 5 s, t + 30 s]` redacted: marked in `segments.json`, its frames and transcript
-//! removed.
+//! range `[t - 5 s, t + 30 s]` marked redacted in `segments.json`. Then frames and transcript
+//! inside any redacted segment (privacy or secret) are removed.
 
 use std::fs;
 
@@ -10,7 +10,7 @@ use serde::Serialize;
 use crate::ctx::{inside, read_json, write_json};
 use crate::frames::Frames;
 use crate::media::round_ms;
-use crate::segments::{self, Segments};
+use crate::segments::{self, Kind, Segments};
 use crate::sources;
 use crate::transcribe::{self, Words};
 use crate::{Ctx, Result};
@@ -92,9 +92,6 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
         h.t = round_ms(h.t);
     }
     write_json(&ctx.derived("secrets.json"), &hits)?;
-    if hits.is_empty() {
-        return Ok(());
-    }
 
     let ranges: Vec<(f64, f64)> = hits
         .iter()
@@ -106,10 +103,19 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
         segs = segments::redact(segs, &[*r], &format!("secret ({})", h.source));
     }
     write_json(&seg_path, &segs)?;
+
+    // Every redacted segment (privacy rounded out to whole cells, and secrets): nothing
+    // inside one stays in frames or the transcript.
+    let redacted: Vec<(f64, f64)> = segs
+        .segments
+        .iter()
+        .filter(|s| s.kind == Kind::Redacted)
+        .map(|s| (s.start, s.end))
+        .collect();
     if let Some(f) = &mut frames {
         let dir = ctx.derived("frames");
         f.frames.retain(|fr| {
-            let keep = !inside(&ranges, fr.t);
+            let keep = !inside(&redacted, fr.t);
             if !keep {
                 let _ = fs::remove_file(dir.join(&fr.file));
                 let _ = fs::remove_file(ctx.derived("ocr").join(fr.file.replace(".jpg", ".txt")));
@@ -119,7 +125,10 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
         write_json(&frames_path, f)?;
     }
     if let Some(w) = words {
-        transcribe::write_outputs(ctx, &transcribe::without(w, &ranges))?;
+        transcribe::write_outputs(ctx, &transcribe::without(w, &redacted))?;
+    }
+    if hits.is_empty() {
+        return Ok(());
     }
     let sources: Vec<&str> = hits.iter().map(|h| h.source).collect();
     ctx.notes.push(format!(

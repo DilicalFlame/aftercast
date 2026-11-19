@@ -371,6 +371,14 @@ async fn execute(
         let Some(Line { delay, action }) = line else {
             continue;
         };
+        if !delay.is_zero() {
+            // Messages sent for earlier lines (OBS updates, chat) are timestamped when the
+            // session handles them: let it catch up before the clock moves on.
+            let (ack, done) = oneshot::channel();
+            if msgs.send(Msg::Barrier(ack)).is_ok() {
+                let _ = done.await;
+            }
+        }
         clock.advance(delay);
         let ends = matches!(action, Action::Quit | Action::Finalize);
         if let Action::Obs(update) = &action {
