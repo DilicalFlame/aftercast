@@ -6,3 +6,12 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+ac-core.workspace = true
+futures-util = { version = "0.3", default-features = false }
+obws = { version = "0.15", features = ["events"] }
+tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
+
+[dev-dependencies]
+serde_json.workspace = true
