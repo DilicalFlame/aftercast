@@ -4,6 +4,7 @@
   const name = document.body.dataset.overlay;
   const root = document.getElementById("root");
   let ticker = null;
+  let keysIdle = null;
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -72,6 +73,19 @@
     },
     chapters(d) {
       root.replaceChildren(el("div", "card chapters", d.title || ""));
+    },
+    // Shortcuts as key chips; typing only as an indicator (never the text, which could be
+    // a password typed into a terminal). Cleared after 1.5 s without keys.
+    keys(d) {
+      clearTimeout(keysIdle);
+      let card = root.querySelector(".keys");
+      if (!card) {
+        card = el("div", "card keys");
+        root.replaceChildren(card);
+      }
+      if (d.combo) card.replaceChildren(...d.combo.split("+").map((k) => el("kbd", null, k)));
+      else if (!card.querySelector(".typing")) card.replaceChildren(el("span", "typing", "typing"));
+      keysIdle = setTimeout(clear, 1500);
     },
   };
 

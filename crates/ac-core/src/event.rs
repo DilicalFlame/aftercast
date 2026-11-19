@@ -266,6 +266,10 @@ pub enum EventKind {
     },
     #[serde(rename = "capture.secret_dropped")]
     CaptureSecretDropped { source: CaptureSource },
+    /// A shell command; broadcast to the TUI only, never written to `events.jsonl`
+    /// (`shell.jsonl` is the record).
+    #[serde(rename = "shell.cmd")]
+    ShellCmd { cmd: String, cwd: String },
     #[serde(rename = "service.error")]
     ServiceError {
         service: String,

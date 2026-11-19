@@ -1,6 +1,7 @@
 //! Live session: startup, the controller loop, YouTube polling and README watching
 //! (specs/01-architecture.md, specs/04-session-and-folders.md "Lifecycle").
 
+mod capture;
 mod chat;
 mod obs;
 
@@ -27,7 +28,7 @@ use ac_core::state::State;
 use ac_core::time::{Clock, Timestamp};
 use ac_template::chapters::Chapter;
 use ac_template::{ContextInput, Description, README_NAME, RenderError, Renderer};
-use ac_tui::{Check, CheckState, View};
+use ac_tui::{Check, CheckState, KeysStatus, View};
 use ac_youtube::auth::Auth;
 use ac_youtube::quota::{QuotaGuard, Spent};
 use ac_youtube::{Broadcast, Client, LiveContent};
@@ -56,6 +57,12 @@ pub enum Msg {
     QuestFile,
     /// Answered once everything sent before it is handled and published (scripts).
     Barrier(oneshot::Sender<()>),
+    /// A key press from the keyboard hook (or a script), not yet filtered.
+    Key(ac_capture::keys::RawKey),
+    /// The keyboard hook started, or why it failed.
+    KeysHook(std::result::Result<(), String>),
+    /// Read new lines from the shell spool.
+    ShellPoll,
 }
 
 /// Everything a UI needs to drive and display a running session.
@@ -182,6 +189,16 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let server = serve(home, &config, &overlays, state_rx, &cmd_tx, &clock).await;
 
     let bot = config.bot.enabled.then(|| ac_bot::Bot::new(&config.bot));
+    let capture = capture::Capture::new(home, &config, &session);
+    if config.capture.shell {
+        let tx = msg_tx.clone();
+        tokio::spawn(async move {
+            let mut every = interval(Duration::from_secs(1));
+            while tx.send(Msg::ShellPoll).is_ok() {
+                every.tick().await;
+            }
+        });
+    }
     let mut controller = Controller {
         home: home.clone(),
         config_path: config_path.to_path_buf(),
@@ -215,6 +232,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         pending_title: None,
         overlays_off: BTreeSet::new(),
         overlay_sent: BTreeMap::new(),
+        capture,
     };
     let (view_tx, view_rx) = watch::channel(controller.snapshot());
     controller.view = Some(view_tx);
@@ -227,6 +245,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             resumed,
         },
     );
+    controller.capture_start();
     controller.on_broadcast(Ok(broadcast));
     controller.render();
     let handle = tokio::spawn(async move {
@@ -479,6 +498,7 @@ struct Controller {
     overlays_off: BTreeSet<String>,
     /// Last message sent per stateful overlay.
     overlay_sent: BTreeMap<&'static str, ac_server::OverlayMsg>,
+    capture: capture::Capture,
 }
 
 impl Controller {
@@ -517,16 +537,23 @@ impl Controller {
                         self.publish();
                         let _ = ack.send(());
                     }
+                    Msg::Key(raw) => self.on_key(raw),
+                    Msg::KeysHook(result) => self.keys_hook(result),
+                    Msg::ShellPoll => self.shell_poll(),
                 },
                 () = render_due => {
                     render_at = None;
                     self.render();
                 }
-                _ = flush.tick() => self.flush(),
+                _ = flush.tick() => {
+                    self.flush();
+                    self.write_keys(false);
+                }
                 else => break,
             }
             self.publish();
         }
+        self.write_keys(true);
         self.flush();
     }
 
@@ -909,6 +936,13 @@ impl Controller {
             pending_title: self.pending_title.clone(),
             latency_running: self.latency_run.is_some(),
             latency_s: self.latency(),
+            keys: match (&self.capture.hook, self.config.capture.keys) {
+                (_, false) => KeysStatus::Off,
+                (None, true) => KeysStatus::Starting,
+                (Some(Ok(())), true) => KeysStatus::On,
+                (Some(Err(_)), true) => KeysStatus::Error,
+            },
+            keys_per_min: self.keys_per_min(),
         }
     }
 
@@ -1008,6 +1042,37 @@ impl Controller {
             ),
             Err(e) => check("Overlay server listening", CheckState::Fail, e.clone()),
         });
+        if self.config.capture.keys {
+            list.push(match &self.capture.hook {
+                Some(Ok(())) => check("Key capture running", CheckState::Ok, String::new()),
+                Some(Err(e)) => check("Key capture running", CheckState::Fail, e.clone()),
+                None => check(
+                    "Key capture running",
+                    CheckState::Pending,
+                    "starts with the TUI".into(),
+                ),
+            });
+        }
+        if self.config.capture.shell {
+            // Optional: shown, never red.
+            let spool = self.home.path(&self.config.capture.shell_spool);
+            let recent = fs::metadata(&spool)
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t.elapsed().is_ok_and(|age| age.as_secs() < 24 * 3600));
+            list.push(if recent {
+                check(
+                    "Shell hook seen in last 24 h",
+                    CheckState::Ok,
+                    String::new(),
+                )
+            } else {
+                check(
+                    "Shell hook seen in last 24 h",
+                    CheckState::Pending,
+                    "optional: aftercast shell-hook pwsh".into(),
+                )
+            });
+        }
         list
     }
 

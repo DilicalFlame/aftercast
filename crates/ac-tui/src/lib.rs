@@ -51,6 +51,20 @@ pub struct View {
     pub latency_running: bool,
     /// Measured latency, else the configured default.
     pub latency_s: f64,
+    pub keys: KeysStatus,
+    /// Stored keys per minute, last minutes, oldest first.
+    pub keys_per_min: Vec<u32>,
+}
+
+/// Key capture as shown in the status bar (privacy is shown from the session state).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeysStatus {
+    /// `capture.keys = false`.
+    Off,
+    /// Waiting for the keyboard hook (or no hook: headless).
+    Starting,
+    On,
+    Error,
 }
 
 /// One pre-flight checklist item.
@@ -575,6 +589,13 @@ impl App {
         } else {
             format!("lat {:.1}s", view.latency_s)
         };
+        let keys = match view.keys {
+            KeysStatus::Off => "keys off".to_owned(),
+            KeysStatus::Error => "keys ✖".to_owned(),
+            _ if state.privacy => "keys ✖ privacy".to_owned(),
+            KeysStatus::Starting => "keys …".to_owned(),
+            KeysStatus::On => format!("keys {}", sparkline(&view.keys_per_min)),
+        };
         Line::from(vec![
             Span::styled(
                 format!(" #{:03} ", view.meta.episode),
@@ -587,7 +608,7 @@ impl App {
             badge(state.brb, "BRB"),
             badge(state.privacy, "PRIVACY"),
             Span::raw(format!(
-                " {obs} · YouTube {} · chat {} · quota {} · {latency} ",
+                " {obs} · YouTube {} · chat {} · {keys} · quota {} · {latency} ",
                 service("youtube"),
                 service("chat"),
                 thousands(view.quota_remaining)
@@ -1017,6 +1038,16 @@ fn readme_line(view: &View) -> Line<'static> {
     Line::from(parts)
 }
 
+/// `▁▃▅█` style bars scaled to the largest value.
+fn sparkline(values: &[u32]) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let max = values.iter().copied().max().unwrap_or(0).max(1);
+    values
+        .iter()
+        .map(|v| BARS[(*v as usize * (BARS.len() - 1)).div_ceil(max as usize)])
+        .collect()
+}
+
 /// One-line event description; `true` marks routine events shown dimmed.
 fn summary(e: &Event) -> (String, bool) {
     match &e.kind {
@@ -1086,6 +1117,19 @@ fn summary(e: &Event) -> (String, bool) {
             false,
         ),
         EventKind::TitlePushed { title } => (format!("title set to {title:?}"), false),
+        EventKind::CaptureState { keys, reason } => (
+            match reason {
+                Some(r) => format!("keys {keys:?}: {r}"),
+                None => format!("keys {keys:?}"),
+            }
+            .to_lowercase(),
+            false,
+        ),
+        EventKind::CaptureSecretDropped { source } => (
+            format!("secret dropped from {source:?} capture").to_lowercase(),
+            false,
+        ),
+        EventKind::ShellCmd { cmd, .. } => (format!("$ {cmd}"), true),
         EventKind::ServiceError { service, error, .. } => (
             format!("{service} error: {}", error.as_deref().unwrap_or("?")),
             false,
@@ -1329,6 +1373,8 @@ mod tests {
             pending_title: None,
             latency_running: false,
             latency_s: 4.2,
+            keys: KeysStatus::On,
+            keys_per_min: vec![0, 10, 40],
             preflight: vec![
                 Check {
                     label: "OBS connected".into(),
@@ -1388,6 +1434,7 @@ mod tests {
         assert!(text.contains("mark \"borrow checker rant\""), "{text}");
         assert!(text.contains("description pushed"), "{text}");
         assert!(text.contains("✖ 1 pre-flight"), "{text}");
+        assert!(text.contains("keys ▁▃█"), "{text}");
 
         // `c` captures the time first; typing then Enter sends the checkpoint.
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
@@ -1517,6 +1564,12 @@ mod tests {
             Command::ConfirmTitle { ok: true }
         );
         assert_eq!(app.title_answered.as_deref(), Some("New title"));
+    }
+
+    #[test]
+    fn sparkline_scales_to_the_peak() {
+        assert_eq!(sparkline(&[0, 10, 40, 20]), "▁▃█▅");
+        assert_eq!(sparkline(&[0, 0]), "▁▁");
     }
 
     #[test]

@@ -38,6 +38,7 @@ fn run(cli: Cli) -> Result<u8> {
         Some(Command::Init) => init(&home),
         Some(Command::Doctor) => Ok(doctor::run(&home, cli.config)),
         Some(Command::Auth { action }) => runtime()?.block_on(auth(&home, &config_path, action)),
+        Some(Command::ShellHook { shell }) => shell_hook(&home, &config_path, shell),
         None => runtime()?.block_on(live_session(&home, &config_path, &cli)),
         Some(_) => {
             eprintln!("not yet implemented");
@@ -81,6 +82,7 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
     let live::Handles {
         clock,
         commands,
+        msgs,
         mut view,
         controller,
         ..
@@ -98,6 +100,20 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
             "global hotkeys unavailable: {e}"
         )));
     }
+    if config.capture.keys {
+        let (keys, errors) = (msgs.clone(), msgs.clone());
+        let started = ac_capture::hook::spawn(
+            clock.clone(),
+            move |raw| {
+                let _ = keys.send(live::Msg::Key(raw));
+            },
+            move |e| {
+                let _ = errors.send(live::Msg::KeysHook(Err(e)));
+            },
+        );
+        let _ = msgs.send(live::Msg::KeysHook(started));
+    }
+    drop(msgs);
     let ui_commands = commands.clone();
     let ui_view = view.clone();
     let ui =
@@ -152,6 +168,21 @@ fn hotkeys(
             A::Privacy => commands.send(C::Privacy { on: None, by }),
         };
     })
+}
+
+/// Prints the shell snippet that spools commands for capture.
+fn shell_hook(home: &Home, config_path: &std::path::Path, shell: cli::Shell) -> Result<u8> {
+    let config = Config::load(config_path)?;
+    match shell {
+        cli::Shell::Pwsh => {
+            let spool = home.path(&config.capture.shell_spool);
+            print!("{}", ac_capture::shell::pwsh_hook(&spool));
+            Ok(exit::OK)
+        }
+        cli::Shell::Bash | cli::Shell::Zsh => Err(error::AppError::Usage(
+            "only PowerShell is supported for now: aftercast shell-hook pwsh".into(),
+        )),
+    }
 }
 
 async fn auth(home: &Home, config_path: &std::path::Path, action: AuthAction) -> Result<u8> {

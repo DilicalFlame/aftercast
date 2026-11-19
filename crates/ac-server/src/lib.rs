@@ -22,8 +22,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::{broadcast, mpsc, watch};
 
-/// Built-in overlays (`keys` arrives with key capture in phase 4).
-pub const OVERLAYS: [&str; 6] = ["now", "question", "toast", "brb", "latency", "chapters"];
+/// Built-in overlays.
+pub const OVERLAYS: [&str; 7] = [
+    "now", "question", "toast", "brb", "latency", "chapters", "keys",
+];
 const PAGE: &str = include_str!("../overlays/overlay.html");
 const SCRIPT: &str = include_str!("../overlays/overlay.js");
 const STYLE: &str = include_str!("../overlays/overlay.css");

@@ -77,3 +77,32 @@ html, body {
   bottom: 40px;
   font-size: 24px;
 }
+
+.keys {
+  left: 50%;
+  bottom: 60px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-family: var(--font-mono), monospace;
+  font-size: 32px;
+}
+
+.keys kbd {
+  font: inherit;
+  padding: 4px 16px;
+  border: 2px solid var(--muted);
+  border-bottom-width: 5px;
+  border-radius: 8px;
+}
+
+.keys .typing {
+  color: var(--muted);
+  animation: pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from { opacity: 0.4; }
+  to { opacity: 1; }
+}

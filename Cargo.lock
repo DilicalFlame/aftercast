@@ -149,6 +149,7 @@ dependencies = [
  "ac-template",
  "ac-tui",
  "ac-youtube",
+ "chrono",
  "clap",
  "futures-util",
  "httpdate",
@@ -162,6 +163,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "ulid",
+ "zstd",
 ]
 
 [[package]]

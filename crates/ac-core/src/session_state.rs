@@ -194,6 +194,7 @@ impl SessionState {
             | EventKind::TitlePushed { .. }
             | EventKind::CaptureState { .. }
             | EventKind::CaptureSecretDropped { .. }
+            | EventKind::ShellCmd { .. }
             | EventKind::ServiceError { .. } => {}
         }
         if self.log.len() == LOG_LEN {

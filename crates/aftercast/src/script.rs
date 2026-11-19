@@ -14,6 +14,8 @@ use ac_core::time::Clock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{broadcast, oneshot};
 
+use ac_capture::keys::RawKey;
+
 use crate::error::{AppError, Result};
 use crate::live::{Handles, Msg};
 
@@ -53,6 +55,18 @@ pub enum Action {
     Lat(u64),
     /// `title yes|no` answers a pending `!title`.
     Title(bool),
+    /// `key <app> <combo>`, e.g. `key Code.exe Ctrl+S`: one key press in that app.
+    Key {
+        app: String,
+        combo: String,
+    },
+    /// `type <app> <text>`: one key press per character.
+    Type {
+        app: String,
+        text: String,
+    },
+    /// `shell`: read the shell spool now.
+    Shell,
     /// Only advance the clock.
     Wait,
 }
@@ -128,6 +142,18 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
             "no" => Action::Title(false),
             _ => return Err("title yes|no".into()),
         },
+        "key" | "type" => {
+            let (app, rest) = args
+                .split_once(' ')
+                .ok_or_else(|| format!("{name} <app> <keys>"))?;
+            let (app, rest) = (app.to_owned(), rest.to_owned());
+            if name == "key" {
+                Action::Key { app, combo: rest }
+            } else {
+                Action::Type { app, text: rest }
+            }
+        }
+        "shell" => Action::Shell,
         "wait" | "" => Action::Wait,
         other => return Err(format!("unknown command {other:?}")),
     };
@@ -181,6 +207,52 @@ fn chat_line(args: &str) -> Result<Action, String> {
         level,
         text: unquote(text.trim()),
     })
+}
+
+/// A synthetic press typing `c`, as the hook reports it.
+fn char_key(app: &str, c: char, t: ac_core::time::Timestamp) -> RawKey {
+    let key = match c {
+        'a'..='z' | 'A'..='Z' => format!("Key{}", c.to_ascii_uppercase()),
+        '0'..='9' => format!("Num{c}"),
+        ' ' => "Space".into(),
+        _ => "Unknown".into(),
+    };
+    RawKey {
+        t,
+        key,
+        ch: Some(c),
+        mods: if c.is_ascii_uppercase() {
+            vec!["Shift"]
+        } else {
+            vec![]
+        },
+        app: app.into(),
+        title: String::new(),
+    }
+}
+
+/// A synthetic press like `Ctrl+Shift+P` or `F5`.
+fn combo_key(app: &str, combo: &str, t: ac_core::time::Timestamp) -> RawKey {
+    let parts: Vec<&str> = combo.split('+').collect();
+    let (key, held) = parts.split_last().unwrap_or((&"", &[]));
+    let mods = ac_capture::keys::MODS
+        .iter()
+        .copied()
+        .filter(|m| held.iter().any(|h| h.eq_ignore_ascii_case(m)))
+        .collect();
+    let key = match key.chars().collect::<Vec<_>>().as_slice() {
+        [c] if c.is_ascii_alphabetic() => format!("Key{}", c.to_ascii_uppercase()),
+        [c] if c.is_ascii_digit() => format!("Num{c}"),
+        _ => key.to_string(),
+    };
+    RawKey {
+        t,
+        key,
+        ch: None,
+        mods,
+        app: app.into(),
+        title: String::new(),
+    }
 }
 
 fn parse_delay(spec: &str) -> Result<Duration, String> {
@@ -243,7 +315,13 @@ impl Action {
                 at: pressed_at,
             },
             Self::Title(ok) => Command::ConfirmTitle { ok },
-            Self::Wait | Self::Obs(_) | Self::Chat { .. } | Self::Question(..) => return None,
+            Self::Wait
+            | Self::Obs(_)
+            | Self::Chat { .. }
+            | Self::Question(..)
+            | Self::Key { .. }
+            | Self::Type { .. }
+            | Self::Shell => return None,
         })
     }
 }
@@ -293,6 +371,18 @@ async fn execute(
         }
         let mut cmd = action.clone().command(clock);
         match action {
+            Action::Key { app, combo } => {
+                let _ = msgs.send(Msg::Key(combo_key(&app, &combo, clock.now_ts())));
+            }
+            Action::Type { app, text } => {
+                for c in text.chars() {
+                    let _ = msgs.send(Msg::Key(char_key(&app, c, clock.now_ts())));
+                    clock.advance(Duration::from_millis(100));
+                }
+            }
+            Action::Shell => {
+                let _ = msgs.send(Msg::ShellPoll);
+            }
             Action::Chat {
                 author,
                 level,
