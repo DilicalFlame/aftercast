@@ -18,8 +18,8 @@ Work in progress, built phase by phase.
 | 0 | CLI skeleton, config, `init`, `doctor` | done |
 | 1 | Sessions, events, YouTube description and chapters, TUI | done |
 | 2 | OBS: scenes, BRB/privacy, recording anchors, pre-flight, global hotkeys | done |
-| 3 | Chat, bot, question queue, overlays, latency measurement, local API | done, manual test pending |
-| 4 | Keystroke and shell capture | next |
+| 3 | Chat, bot, question queue, overlays, latency measurement, local API | done |
+| 4 | Keystroke and shell capture | done, manual test pending |
 | 5 to 7 | Post-processing pipeline, clip rendering, MCP server | planned |
 
 Commands for later phases (`post`, `render`, `mcp`, ...) exist but print "not yet implemented".
@@ -87,6 +87,7 @@ aftercast connects to OBS it refreshes these sources, so a page that failed to l
 | `brb` | "Be right back" card with a timer |
 | `latency` | the counter used by `:latency` |
 | `chapters` | the latest chapter title |
+| `keys` | shortcuts you press (`Ctrl` `S`) and a "typing" indicator, never the typed text |
 
 Pages are transparent and reconnect by themselves when aftercast restarts. To restyle, put
 `overlay.css`, `overlay.js` or `<name>.html` in `<home>\overlays\`; theme colors and fonts
@@ -171,12 +172,32 @@ YouTube description on every save, including the chapter list. Templates use
 `{{ variable }}` syntax. The description is pushed at stream start, at the end
 (`:finalize`) and whenever you press `s` then `Enter`.
 
+### Capture (private)
+
+While the TUI runs, aftercast records key presses and shell commands into the session
+folder, for keystroke overlays in rendered clips and as signals for finding clips later.
+These files are never uploaded or put in a description.
+
+- `keys.jsonl.zst`: key presses. Typed characters are kept only in the apps listed in
+  `capture.keys_allow_apps` (VS Code, Windows Terminal, ...); in every other app only
+  shortcuts with Ctrl, Alt or Win are kept. Nothing is kept while privacy mode is on or while
+  the window title matches `capture.keys_deny_title_patterns` (password managers, `.env`,
+  sign-in pages). Typed text matching `capture.secret_patterns` (GitHub, AWS, OpenAI
+  tokens, private keys) is dropped before it reaches the disk. Window titles are never
+  stored. The status bar shows `keys` with a keys-per-minute sparkline.
+- `shell.jsonl`: PowerShell commands, with secrets replaced by `[REDACTED]`. Add the hook
+  once: `aftercast shell-hook pwsh >> $PROFILE`, then open a new terminal. Commands PSReadLine
+  keeps out of history (lines with `password`, `token`, ...) are not captured either.
+
+Set `capture.keys = false` or `capture.shell = false` to turn either off.
+
 ### Other commands
 
 ```text
-aftercast init       create the home folder
-aftercast doctor     check tools, config, clock, keyring, OBS
+aftercast init               create the home folder
+aftercast doctor             check tools, config, clock, keyring, OBS
 aftercast auth login | status | logout | obs
+aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
 ```
 
 ### Local API

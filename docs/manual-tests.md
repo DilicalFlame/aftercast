@@ -190,3 +190,46 @@ viewer, and ideally a third account you made a moderator.
     `curl -X POST http://127.0.0.1:7878/api/command -H "X-Aftercast-Token: <token>"
     -H "Content-Type: application/json" -d '{"cmd":"mark","by":"palette"}'` adds a mark;
     a wrong token gets 401. `curl http://127.0.0.1:7878/api/state` returns the session state.
+
+## Phase 4: key and shell capture on Windows
+
+### Setup (once)
+
+1. `aftercast shell-hook pwsh >> $PROFILE`, open a new Windows Terminal tab, run `echo hi`.
+   Expect: `<home>\state\shell-spool.jsonl` has a line with `"cmd":"echo hi"`.
+2. In OBS add a Browser source for `http://127.0.0.1:7878/overlay/keys` (1920x1080).
+
+### Keys
+
+3. Start a session. Expect: pre-flight `Key capture running` ✔, `Shell hook seen in last
+   24 h` ✔, status bar `keys` with a sparkline, and `keys on` in the event log.
+4. Type a few lines in VS Code, press `Ctrl+S`. Expect: the sparkline grows; the `keys`
+   overlay shows `Ctrl` `S` chips for a moment and a pulsing "typing" while you type, never
+   the letters.
+5. Type in Chrome (address bar), then press `Ctrl+T`. Quit with `q`, `y`.
+   Expect (run `zstd -dc keys.jsonl.zst` in the session folder, or the snippet below): the VS
+   Code characters are there; for `chrome.exe` only the `Ctrl+T` line with `"ch":null`;
+   no window titles anywhere.
+   `python -c "import zstandard,sys;print(zstandard.ZstdDecompressor().stream_reader(open('keys.jsonl.zst','rb')).read().decode())"`
+6. Press `Ctrl+Alt+M` in VS Code. Expect: a `mark` event, and no `KeyM` record with
+   `Ctrl`/`Alt` in the keys file.
+7. Open Bitwarden (or a window titled "Sign in ...") and type. Expect: nothing recorded.
+8. Press `p` (privacy), type in VS Code, press `p` again. Expect: status bar `keys ✖
+   privacy` while on; nothing typed during privacy is in the file.
+9. In VS Code type `ghp_` followed by 36 letters and digits, keep typing a few more
+   characters, wait 5 s, quit. Expect: `capture.secret_dropped` (source keys) in the log;
+   the keys file has no `ghp_` and none of the 36 characters.
+
+### Shell
+
+10. During a session run `cargo --version` in PowerShell. Expect within a second: a dimmed
+    `$ cargo --version` in the event log and a line in `<session>\shell.jsonl`;
+    `events.jsonl` has no `shell.cmd`.
+11. Run `echo ghp_` followed by 36 characters. Expect: `[REDACTED]` in `shell.jsonl` and
+    `capture.secret_dropped` (source shell).
+12. Run `$password = "x"`. Expect: not in the spool at all (PSReadLine keeps it out of
+    history, so the hook skips it).
+13. Privacy on, run `echo hidden`, privacy off. Expect: `echo hidden` is not in
+    `shell.jsonl`.
+14. Quit aftercast, run `echo while away`, restart the session. Expect: `echo while away`
+    is copied once; nothing earlier appears twice.
