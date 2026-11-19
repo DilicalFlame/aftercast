@@ -1,5 +1,6 @@
 //! Config, paths, session, events, state, time, quota ledger and errors.
 
+pub mod chat;
 pub mod command;
 pub mod config;
 pub mod error;

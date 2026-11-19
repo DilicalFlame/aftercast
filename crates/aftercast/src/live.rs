@@ -471,6 +471,8 @@ impl Controller {
                 );
                 self.done = true;
             }
+            // Wired up with the chat, bot and overlay services.
+            other => self.notice = Some(format!("not available yet: {other:?}")),
         }
     }
 

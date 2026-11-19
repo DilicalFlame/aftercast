@@ -1,10 +1,17 @@
-//! Commands: requests sent by the TUI, scripts or (later) the bot and local API to the
+//! Commands: requests sent by the TUI, scripts, hotkeys, the bot and the local API to the
 //! session controller, which turns them into events (specs/01-architecture.md).
+//!
+//! The local API (`POST /api/command`) takes them as JSON, e.g.
+//! `{"cmd": "mark", "label": "nice", "by": "palette"}`; a missing `pressed_at` is filled
+//! with the time the request arrived.
+
+use serde::{Deserialize, Serialize};
 
 use crate::event::By;
 use crate::time::Timestamp;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum Command {
     /// Time is captured when the key is pressed, before the title prompt opens.
     Checkpoint {
@@ -20,6 +27,7 @@ pub enum Command {
         cid: String,
     },
     Mark {
+        #[serde(default)]
         label: Option<String>,
         pressed_at: Timestamp,
         by: By,
@@ -30,11 +38,13 @@ pub enum Command {
     },
     /// BRB on/off; `None` toggles.
     Brb {
+        #[serde(default)]
         on: Option<bool>,
         by: By,
     },
     /// Privacy mode on/off; `None` toggles.
     Privacy {
+        #[serde(default)]
         on: Option<bool>,
         by: By,
     },
@@ -46,6 +56,31 @@ pub enum Command {
     Quest {
         title: String,
     },
+    /// Show, answer or dismiss a viewer question.
+    Question {
+        qid: String,
+        action: QuestionAction,
+    },
+    /// Send a chat message as the channel (`:say`).
+    Say {
+        text: String,
+    },
+    /// Turn an overlay on or off (`:overlay <name> on|off`).
+    Overlay {
+        name: String,
+        on: bool,
+    },
+    /// Start (or stop) the latency measurement (`:latency`).
+    Latency,
+    /// The counter value seen on the stream (`!lat <n>`, `:lat <n>`) at time `at`.
+    LatencySample {
+        counter: u64,
+        at: Timestamp,
+    },
+    /// Answer to a pending `!title` from chat.
+    ConfirmTitle {
+        ok: bool,
+    },
     /// Re-render the description now (no push).
     Render,
     /// Push the description now (`s` + Enter, `:sync`).
@@ -56,4 +91,37 @@ pub enum Command {
     Reload,
     /// End the session without finalizing.
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionAction {
+    Show,
+    Answer,
+    Dismiss,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_json_shape() {
+        let cmd: Command = serde_json::from_str(
+            r#"{"cmd":"mark","label":"nice","by":"palette","pressed_at":"2026-11-19T10:00:00.000Z"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(cmd, Command::Mark { label: Some(l), by: By::Palette, .. } if l == "nice")
+        );
+        let cmd: Command = serde_json::from_str(r#"{"cmd":"brb","by":"tui"}"#).unwrap();
+        assert_eq!(
+            cmd,
+            Command::Brb {
+                on: None,
+                by: By::Tui
+            }
+        );
+        assert!(serde_json::from_str::<Command>(r#"{"cmd":"explode"}"#).is_err());
+    }
 }

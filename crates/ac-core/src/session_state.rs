@@ -5,12 +5,14 @@ use std::collections::{BTreeMap, VecDeque};
 use crate::event::{
     By, Event, EventKind, OutputState, PushTrigger, QuestSource, ServiceStatus, StreamStatus,
 };
+use serde::Serialize;
+
 use crate::time::Timestamp;
 
 /// Events kept for the TUI event log.
 const LOG_LEN: usize = 200;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Checkpoint {
     pub cid: String,
     pub title: String,
@@ -18,7 +20,7 @@ pub struct Checkpoint {
     pub by: By,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Quest {
     pub t: Timestamp,
     pub id: Option<String>,
@@ -26,7 +28,8 @@ pub struct Quest {
     pub source: QuestSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum QuestionState {
     Open,
     Shown,
@@ -34,7 +37,7 @@ pub enum QuestionState {
     Dismissed,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Question {
     pub qid: String,
     pub author: String,
@@ -43,7 +46,7 @@ pub struct Question {
     pub shown_at: Option<Timestamp>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SessionState {
     pub episode: u32,
     pub video_id: String,
@@ -72,6 +75,7 @@ pub struct SessionState {
     pub quota_remaining: Option<i64>,
     pub latency_s: Option<f64>,
     pub services: BTreeMap<String, ServiceStatus>,
+    #[serde(skip)]
     pub log: VecDeque<Event>,
 }
 
