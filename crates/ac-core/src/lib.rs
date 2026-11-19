@@ -5,6 +5,7 @@ pub mod error;
 pub mod home;
 pub mod logging;
 pub mod state;
+pub mod time;
 
 pub use config::Config;
 pub use error::{Error, Result, exit};
