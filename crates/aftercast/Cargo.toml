@@ -9,8 +9,19 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+httpdate.workspace = true
+keyring.workspace = true
 tracing.workspace = true
 ac-core.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["linux-native"] }

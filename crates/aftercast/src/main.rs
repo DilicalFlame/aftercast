@@ -1,4 +1,5 @@
 mod cli;
+mod doctor;
 
 use std::process::ExitCode;
 
@@ -22,6 +23,7 @@ fn run(cli: Cli) -> Result<u8> {
     ac_core::logging::init(&home.logs_dir(), cli.verbose);
     match cli.command {
         Some(Command::Init) => init(&home),
+        Some(Command::Doctor) => Ok(doctor::run(&home, cli.config)),
         _ => {
             eprintln!("not yet implemented");
             Ok(exit::GENERIC)

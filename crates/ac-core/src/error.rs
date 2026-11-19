@@ -10,6 +10,7 @@ pub mod exit {
     pub const OK: u8 = 0;
     pub const GENERIC: u8 = 1;
     pub const CONFIG: u8 = 2;
+    pub const AUTH: u8 = 3;
     pub const TOOL_MISSING: u8 = 4;
 }
 

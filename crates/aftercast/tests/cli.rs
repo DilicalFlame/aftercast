@@ -49,3 +49,23 @@ fn init_creates_tree_then_skips_existing() {
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(stdout(&out).matches("exists, skipped").count(), 5);
 }
+
+#[test]
+fn doctor_with_invalid_toml_exits_2() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("aftercast.toml");
+    std::fs::write(
+        &config,
+        "[channel]
+episode_pad = \"3\"
+",
+    )
+    .unwrap();
+    let out = aftercast(dir.path(), &["doctor"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(
+        stdout(&out).contains("aftercast.toml:2:15: "),
+        "{}",
+        stdout(&out)
+    );
+}
