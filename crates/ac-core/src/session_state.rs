@@ -41,6 +41,7 @@ pub enum QuestionState {
 pub struct Question {
     pub qid: String,
     pub author: String,
+    pub author_id: String,
     pub text: String,
     pub state: QuestionState,
     pub shown_at: Option<Timestamp>,
@@ -136,10 +137,14 @@ impl SessionState {
                 source: *source,
             }),
             EventKind::QuestionAdd {
-                qid, author, text, ..
+                qid,
+                author,
+                author_id,
+                text,
             } => self.questions.push(Question {
                 qid: qid.clone(),
                 author: author.clone(),
+                author_id: author_id.clone(),
                 text: text.clone(),
                 state: QuestionState::Open,
                 shown_at: None,

@@ -6,8 +6,10 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
-use ac_core::command::Command;
-use ac_core::event::By;
+use ac_core::chat::{ChatKind, ChatMessage};
+use ac_core::command::{Command, QuestionAction};
+use ac_core::event::{By, Level};
+use ac_core::session_state::QuestionState;
 use ac_core::time::Clock;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{broadcast, oneshot};
@@ -37,6 +39,20 @@ pub enum Action {
     Scene(String),
     /// Something OBS reports (`--mock` only), e.g. `obs record started D:/a.mkv`.
     Obs(ac_obs::Update),
+    /// A chat message: `chat <author> [owner|mod|member] <text>`.
+    Chat {
+        author: String,
+        level: Level,
+        text: String,
+    },
+    /// `question show|answer|dismiss [n]`: the n-th question in the queue (default 1).
+    Question(QuestionAction, usize),
+    Say(String),
+    Overlay(String, bool),
+    Latency,
+    Lat(u64),
+    /// `title yes|no` answers a pending `!title`.
+    Title(bool),
     /// Only advance the clock.
     Wait,
 }
@@ -81,6 +97,37 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
         }),
         "scene" => Action::Scene(required("name")?),
         "obs" => Action::Obs(obs_update(&args)?),
+        "chat" => chat_line(&args)?,
+        "question" => {
+            let (what, n) = args.split_once(' ').unwrap_or((args.as_str(), "1"));
+            let action = match what {
+                "show" => QuestionAction::Show,
+                "answer" => QuestionAction::Answer,
+                "dismiss" => QuestionAction::Dismiss,
+                _ => return Err("question show|answer|dismiss [n]".into()),
+            };
+            let n = n
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad question number {n:?}"))?;
+            Action::Question(action, n)
+        }
+        "say" => Action::Say(required("text")?),
+        "overlay" => match args.split_once(' ') {
+            Some((name, "on")) => Action::Overlay(name.into(), true),
+            Some((name, "off")) => Action::Overlay(name.into(), false),
+            _ => return Err("overlay <name> on|off".into()),
+        },
+        "latency" => Action::Latency,
+        "lat" => Action::Lat(
+            args.parse()
+                .map_err(|_| format!("lat: bad number {args:?}"))?,
+        ),
+        "title" => match args.as_str() {
+            "yes" => Action::Title(true),
+            "no" => Action::Title(false),
+            _ => return Err("title yes|no".into()),
+        },
         "wait" | "" => Action::Wait,
         other => return Err(format!("unknown command {other:?}")),
     };
@@ -115,6 +162,24 @@ fn obs_update(args: &str) -> Result<ac_obs::Update, String> {
             retry_in: Duration::from_secs(1),
         },
         _ => return Err(format!("bad obs line {args:?}")),
+    })
+}
+
+/// `<author> [owner|mod|member] <text>`.
+fn chat_line(args: &str) -> Result<Action, String> {
+    let (author, rest) = args
+        .split_once(' ')
+        .ok_or_else(|| "chat <author> [owner|mod|member] <text>".to_owned())?;
+    let (level, text) = match rest.split_once(' ') {
+        Some(("owner", text)) => (Level::Owner, text),
+        Some(("mod", text)) => (Level::Mod, text),
+        Some(("member", text)) => (Level::Member, text),
+        _ => (Level::Viewer, rest),
+    };
+    Ok(Action::Chat {
+        author: author.into(),
+        level,
+        text: unquote(text.trim()),
     })
 }
 
@@ -170,7 +235,15 @@ impl Action {
                 by: By::Palette,
             },
             Self::Scene(name) => Command::Scene { name },
-            Self::Wait | Self::Obs(_) => return None,
+            Self::Say(text) => Command::Say { text },
+            Self::Overlay(name, on) => Command::Overlay { name, on },
+            Self::Latency => Command::Latency,
+            Self::Lat(counter) => Command::LatencySample {
+                counter,
+                at: pressed_at,
+            },
+            Self::Title(ok) => Command::ConfirmTitle { ok },
+            Self::Wait | Self::Obs(_) | Self::Chat { .. } | Self::Question(..) => return None,
         })
     }
 }
@@ -178,7 +251,7 @@ impl Action {
 /// Runs the session headless until the script (or stdin) ends, then quits.
 pub async fn run(handles: Handles, script: Option<&Path>) -> Result<()> {
     let printer = tokio::spawn(print_events(handles.events));
-    let result = execute(&handles.clock, &handles.msgs, script).await;
+    let result = execute(&handles.clock, &handles.msgs, &handles.view, script).await;
     // Ends the session if the script did not; ignored when it already stopped.
     let (ack, _) = oneshot::channel();
     let _ = handles.msgs.send(Msg::Command(Command::Quit, ack));
@@ -195,6 +268,7 @@ pub async fn run(handles: Handles, script: Option<&Path>) -> Result<()> {
 async fn execute(
     clock: &Clock,
     msgs: &tokio::sync::mpsc::UnboundedSender<Msg>,
+    view: &tokio::sync::watch::Receiver<ac_tui::View>,
     script: Option<&Path>,
 ) -> Result<()> {
     // Lines run as they arrive, so stdin works interactively.
@@ -217,7 +291,51 @@ async fn execute(
             // Same queue as commands, so it is handled before the next line.
             let _ = msgs.send(Msg::Obs(update.clone()));
         }
-        if let Some(cmd) = action.command(clock) {
+        let mut cmd = action.clone().command(clock);
+        match action {
+            Action::Chat {
+                author,
+                level,
+                text,
+            } => {
+                let now = clock.now_ts();
+                let msg = ChatMessage {
+                    id: format!("script-{n}"),
+                    t_received: now,
+                    t_published: Some(now),
+                    author_channel_id: format!("UC-{author}"),
+                    author_name: author,
+                    is_owner: level == Level::Owner,
+                    is_moderator: level == Level::Mod,
+                    is_member: level == Level::Member,
+                    kind: ChatKind::Text,
+                    text,
+                    amount: None,
+                };
+                let _ = msgs.send(Msg::Chat(ac_youtube::chat::ChatUpdate::Message(msg)));
+            }
+            Action::Question(action, nth) => {
+                // Wait until earlier lines (a chat message) are handled and published.
+                let (ack, done) = oneshot::channel();
+                if msgs.send(Msg::Barrier(ack)).is_ok() {
+                    let _ = done.await;
+                }
+                let qid = view
+                    .borrow()
+                    .state
+                    .questions
+                    .iter()
+                    .filter(|q| matches!(q.state, QuestionState::Open | QuestionState::Shown))
+                    .nth(nth.saturating_sub(1))
+                    .map(|q| q.qid.clone());
+                match qid {
+                    Some(qid) => cmd = Some(Command::Question { qid, action }),
+                    None => eprintln!("script line {n}: no question {nth} in the queue"),
+                }
+            }
+            _ => {}
+        }
+        if let Some(cmd) = cmd {
             let (ack, done) = oneshot::channel();
             if msgs.send(Msg::Command(cmd, ack)).is_err() {
                 break;
@@ -281,6 +399,31 @@ mod tests {
                 state: ac_core::event::OutputState::FileChanged,
                 path: Some("D:/OBS/b.mkv".into())
             })
+        );
+        assert_eq!(
+            line("chat ana mod !chapter \"Parser\"").action,
+            Action::Chat {
+                author: "ana".into(),
+                level: Level::Mod,
+                text: "!chapter \"Parser\"".into()
+            }
+        );
+        assert_eq!(
+            line("chat bob !q why rust?").action,
+            Action::Chat {
+                author: "bob".into(),
+                level: Level::Viewer,
+                text: "!q why rust?".into()
+            }
+        );
+        assert_eq!(
+            line("question dismiss 2").action,
+            Action::Question(QuestionAction::Dismiss, 2)
+        );
+        assert_eq!(line("lat 2400").action, Action::Lat(2400));
+        assert_eq!(
+            line("overlay toast off").action,
+            Action::Overlay("toast".into(), false)
         );
         assert_eq!(parse("  # comment").unwrap(), None);
         assert_eq!(parse("").unwrap(), None);

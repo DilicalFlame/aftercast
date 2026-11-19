@@ -90,6 +90,18 @@ impl Renderer {
         Ok(Description { markdown, text })
     }
 
+    /// Renders a short template (a bot reply) with `ctx`; no description rules apply.
+    pub fn render_str(&self, name: &str, src: &str, ctx: &Value) -> Result<String, RenderError> {
+        self.env
+            .render_named_str(name, src, minijinja::value::Serde(ctx))
+            .map_err(|e| RenderError::Template {
+                name: name.into(),
+                line: e.line().unwrap_or(1),
+                col: 1,
+                message: e.to_string(),
+            })
+    }
+
     fn template_error(&self, readme: &str, mut e: &minijinja::Error) -> RenderError {
         // Errors inside an include are wrapped; report the innermost location.
         while let Some(inner) = std::error::Error::source(e).and_then(|s| s.downcast_ref()) {

@@ -8,7 +8,8 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ac_core::command::Command;
+use ac_core::chat::ChatMessage;
+use ac_core::command::{Command, QuestionAction};
 use ac_core::event::{By, Event, EventKind, OutputState, ServiceStatus, StreamStatus};
 use ac_core::session::SessionMeta;
 use ac_core::session_state::SessionState;
@@ -43,6 +44,13 @@ pub struct View {
     /// One-line feedback for the last action, e.g. "description unchanged".
     pub notice: Option<String>,
     pub preflight: Vec<Check>,
+    /// Last chat messages, oldest first.
+    pub chat: Arc<VecDeque<ChatMessage>>,
+    /// A `!title` from chat waiting for `y`/`n`.
+    pub pending_title: Option<String>,
+    pub latency_running: bool,
+    /// Measured latency, else the configured default.
+    pub latency_s: f64,
 }
 
 /// One pre-flight checklist item.
@@ -117,12 +125,25 @@ enum Mode {
     },
     /// The stream ended: finalize, keep open, or post-process.
     Ended,
+    /// A `!title` from the owner's chat waits for confirmation.
+    ConfirmTitle(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pane {
+    Chat,
+    Questions,
     Chapters,
     Log,
+}
+
+impl Pane {
+    const ORDER: [Pane; 4] = [Pane::Chat, Pane::Questions, Pane::Chapters, Pane::Log];
+
+    fn step(self, delta: isize) -> Self {
+        let i = Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) as isize;
+        Self::ORDER[(i + delta).rem_euclid(Self::ORDER.len() as isize) as usize]
+    }
 }
 
 struct App {
@@ -132,7 +153,11 @@ struct App {
     mode: Mode,
     focus: Pane,
     chapters: ListState,
+    questions: ListState,
     log_scroll: usize,
+    chat_scroll: usize,
+    /// The `!title` last answered, so a stale snapshot does not ask again.
+    title_answered: Option<String>,
     message: Option<String>,
     end_prompted: bool,
     exit: bool,
@@ -154,7 +179,10 @@ impl App {
             mode: Mode::Preflight,
             focus: Pane::Chapters,
             chapters: ListState::default(),
+            questions: ListState::default(),
             log_scroll: 0,
+            chat_scroll: 0,
+            title_answered: None,
             message: None,
             end_prompted: false,
             exit: false,
@@ -176,6 +204,12 @@ impl App {
                 if self.mode == Mode::Ended {
                     self.mode = Mode::Normal;
                 }
+            }
+            if self.mode == Mode::Normal
+                && let Some(title) = &view.pending_title
+                && self.title_answered.as_ref() != Some(title)
+            {
+                self.mode = Mode::ConfirmTitle(title.clone());
             }
             terminal.draw(|frame| self.draw(frame, &view))?;
             if event::poll(Duration::from_millis(250))?
@@ -298,6 +332,14 @@ impl App {
                     self.message = Some(format!("deleted checkpoint {title:?}"));
                 }
             }
+            Mode::ConfirmTitle(title) => match key.code {
+                KeyCode::Char('y') | KeyCode::Char('n') | KeyCode::Esc => {
+                    let ok = key.code == KeyCode::Char('y');
+                    self.send(Command::ConfirmTitle { ok });
+                    self.title_answered = Some(title);
+                }
+                _ => self.mode = Mode::ConfirmTitle(title),
+            },
             Mode::Ended => match key.code {
                 KeyCode::Char('f') => self.finish(Command::Finalize),
                 KeyCode::Char('k') | KeyCode::Esc => {}
@@ -334,11 +376,13 @@ impl App {
                 on: None,
                 by: By::Tui,
             }),
-            KeyCode::Tab | KeyCode::BackTab => {
-                self.focus = match self.focus {
-                    Pane::Chapters => Pane::Log,
-                    Pane::Log => Pane::Chapters,
-                }
+            KeyCode::Tab => self.focus = self.focus.step(1),
+            KeyCode::BackTab => self.focus = self.focus.step(-1),
+            KeyCode::Enter if self.focus == Pane::Questions => {
+                self.question(view, QuestionAction::Show)
+            }
+            KeyCode::Char('x') if self.focus == Pane::Questions => {
+                self.question(view, QuestionAction::Dismiss)
             }
             KeyCode::Char('j') | KeyCode::Down => self.move_selection(1, view),
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1, view),
@@ -373,8 +417,26 @@ impl App {
                         .select(Some((current + delta).clamp(0, len as isize - 1) as usize));
                 }
             }
-            // The log shows newest at the bottom; "down" moves towards newer events.
+            Pane::Questions => {
+                let len = queue(&view.state).len();
+                if len > 0 {
+                    let current = self.questions.selected().unwrap_or(0) as isize;
+                    self.questions
+                        .select(Some((current + delta).clamp(0, len as isize - 1) as usize));
+                }
+            }
+            // The log and chat show newest at the bottom; "down" moves towards newer lines.
             Pane::Log => self.log_scroll = self.log_scroll.saturating_add_signed(-delta),
+            Pane::Chat => self.chat_scroll = self.chat_scroll.saturating_add_signed(-delta),
+        }
+    }
+
+    /// Sends `action` for the selected question.
+    fn question(&mut self, view: &View, action: QuestionAction) {
+        let selected = self.questions.selected();
+        if let Some(q) = selected.and_then(|i| queue(&view.state).get(i).copied()) {
+            let qid = q.qid.clone();
+            self.send(Command::Question { qid, action });
         }
     }
 
@@ -441,12 +503,18 @@ impl App {
         ])
         .areas(frame.area());
         let [left, right] =
-            Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+            Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
                 .areas(body);
+        let [chat, questions] =
+            Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(left);
+        let [chapters, log] =
+            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(right);
 
         frame.render_widget(Paragraph::new(self.status_line(view)), status);
-        self.draw_chapters(frame, left, view);
-        self.draw_log(frame, right, view);
+        self.draw_chat(frame, chat, view);
+        self.draw_questions(frame, questions, view);
+        self.draw_chapters(frame, chapters, view);
+        self.draw_log(frame, log, view);
         frame.render_widget(Paragraph::new(readme_line(view)), readme);
         let note = self.message.as_ref().or(view.notice.as_ref());
         frame.render_widget(
@@ -502,6 +570,11 @@ impl App {
             .iter()
             .filter(|c| c.state == CheckState::Fail)
             .count();
+        let latency = if view.latency_running {
+            "LAT measuring".to_owned()
+        } else {
+            format!("lat {:.1}s", view.latency_s)
+        };
         Line::from(vec![
             Span::styled(
                 format!(" #{:03} ", view.meta.episode),
@@ -514,8 +587,9 @@ impl App {
             badge(state.brb, "BRB"),
             badge(state.privacy, "PRIVACY"),
             Span::raw(format!(
-                " {obs} · YouTube {} · quota {} ",
+                " {obs} · YouTube {} · chat {} · quota {} · {latency} ",
                 service("youtube"),
+                service("chat"),
                 thousands(view.quota_remaining)
             )),
             if failing > 0 {
@@ -568,6 +642,47 @@ impl App {
         frame.render_stateful_widget(list, area, &mut self.chapters);
     }
 
+    fn draw_chat(&self, frame: &mut Frame, area: Rect, view: &View) {
+        let height = area.height.saturating_sub(2) as usize;
+        let len = view.chat.len();
+        let end = len.saturating_sub(self.chat_scroll.min(len));
+        let lines: Vec<Line> = view
+            .chat
+            .range(end.saturating_sub(height)..end)
+            .map(chat_line)
+            .collect();
+        let block = pane_block(" Chat ".into(), self.focus == Pane::Chat);
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+
+    fn draw_questions(&mut self, frame: &mut Frame, area: Rect, view: &View) {
+        let queue = queue(&view.state);
+        let items: Vec<ListItem> = queue
+            .iter()
+            .map(|q| {
+                let shown = q.state == ac_core::session_state::QuestionState::Shown;
+                let mark = if shown { "▶ " } else { "  " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(mark, Style::new().fg(ACCENT)),
+                    Span::styled(format!("{}: ", q.author), Style::new().fg(MUTED)),
+                    Span::raw(q.text.clone()),
+                ]))
+            })
+            .collect();
+        let title = format!(" Questions ({}) ", queue.len());
+        let block = pane_block(title, self.focus == Pane::Questions);
+        let last = items.len().checked_sub(1);
+        match self.questions.selected() {
+            None if last.is_some() => self.questions.select(Some(0)),
+            Some(i) if last.is_none_or(|l| i > l) => self.questions.select(last),
+            _ => {}
+        }
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED));
+        frame.render_stateful_widget(list, area, &mut self.questions);
+    }
+
     fn draw_log(&self, frame: &mut Frame, area: Rect, view: &View) {
         let height = area.height.saturating_sub(2) as usize;
         let events: Vec<&Event> = view.state.log.iter().collect();
@@ -603,6 +718,7 @@ impl App {
         match &self.mode {
             Mode::Input { .. } => " [Enter] save  [Esc] cancel".into(),
             Mode::Preview { .. } => " [Enter] push  [j/k] scroll  [Esc] close".into(),
+            _ if self.focus == Pane::Questions => " [Enter] show/answer [x] dismiss [j/k] move [Tab] focus [c]heckpoint [m]ark [b]rb [p]rivacy [:] command [?] help".into(),
             _ => " [c]heckpoint [m]ark [b]rb [p]rivacy [n]ote [s]ync [e]dit [d]elete [Tab] focus [:] command [?] help [q]uit".into(),
         }
     }
@@ -677,7 +793,7 @@ impl App {
                 frame.render_widget(widget, popup);
                 return;
             }
-            Mode::Help => (" Help (any key closes) ".into(), help_lines(), 72, 28),
+            Mode::Help => (" Help (any key closes) ".into(), help_lines(), 76, 33),
             Mode::Preflight => {
                 let lines: Vec<Line> = view.preflight.iter().map(check_line).collect();
                 let height = lines.len() as u16 + 2;
@@ -705,6 +821,15 @@ impl App {
                 ))],
                 70,
                 3,
+            ),
+            Mode::ConfirmTitle(title) => (
+                " Title change from chat ".into(),
+                vec![
+                    Line::raw(format!("Set the YouTube title to {title:?}?")),
+                    Line::raw("[y] set (51 quota units)   [n] drop"),
+                ],
+                84,
+                4,
             ),
             Mode::Ended => (
                 " Stream ended ".into(),
@@ -791,13 +916,64 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
         "scene" => Command::Scene {
             name: need("a scene name")?,
         },
-        "say" | "overlay" | "latency" => {
-            return Err(format!(":{name} arrives with chat and overlays (phase 3)"));
+        "say" => Command::Say {
+            text: need("text")?,
+        },
+        "overlay" => {
+            let (overlay, state) = args.split_once(' ').unwrap_or((args.as_str(), ""));
+            let on = match state.trim() {
+                "on" => true,
+                "off" => false,
+                _ => return Err(":overlay <name> on|off".into()),
+            };
+            Command::Overlay {
+                name: overlay.to_owned(),
+                on,
+            }
         }
+        "latency" => Command::Latency,
+        "lat" => Command::LatencySample {
+            counter: need("the number shown on stream")?
+                .parse()
+                .map_err(|_| ":lat takes the number shown on stream".to_owned())?,
+            at: now,
+        },
         "" => return Err(String::new()),
         other => return Err(format!("unknown command :{other} (try :help)")),
     };
     Ok(Palette::Command(cmd))
+}
+
+/// Questions waiting or on screen, in the order they were asked.
+fn queue(state: &SessionState) -> Vec<&ac_core::session_state::Question> {
+    use ac_core::session_state::QuestionState;
+    state
+        .questions
+        .iter()
+        .filter(|q| matches!(q.state, QuestionState::Open | QuestionState::Shown))
+        .collect()
+}
+
+fn chat_line(m: &ChatMessage) -> Line<'_> {
+    use ac_core::chat::ChatKind;
+    let name_style = if m.is_owner || m.is_moderator {
+        Style::new().fg(ACCENT).bold()
+    } else {
+        Style::new().fg(MUTED)
+    };
+    let mut spans = vec![Span::styled(format!("{}: ", m.author_name), name_style)];
+    if let Some(amount) = &m.amount {
+        spans.push(Span::styled(
+            format!("[{amount}] "),
+            Style::new().fg(Color::Black).bg(ACCENT),
+        ));
+    }
+    let text_style = match m.kind {
+        ChatKind::Text | ChatKind::Superchat | ChatKind::Supersticker => Style::new(),
+        _ => Style::new().fg(MUTED).italic(),
+    };
+    spans.push(Span::styled(m.text.as_str(), text_style));
+    Line::from(spans)
 }
 
 fn sorted_checkpoints(state: &SessionState) -> Vec<&ac_core::session_state::Checkpoint> {
@@ -892,6 +1068,24 @@ fn summary(e: &Event) -> (String, bool) {
         EventKind::ServiceState { service, state } => {
             (format!("{service} {state:?}").to_lowercase(), true)
         }
+        EventKind::BotCmd {
+            cmd, args, author, ..
+        } => (
+            format!("{author}: !{cmd} {args}").trim_end().to_owned(),
+            true,
+        ),
+        EventKind::BotReply { mode, text, .. } => {
+            (format!("bot ({mode:?}): {text}").to_lowercase(), true)
+        }
+        EventKind::QuestionAdd { author, .. } => (format!("question from {author}"), false),
+        EventKind::QuestionShow { .. } => ("question on stream".into(), false),
+        EventKind::QuestionAnswered { .. } => ("question answered".into(), false),
+        EventKind::QuestionDismiss { .. } => ("question dismissed".into(), true),
+        EventKind::LatencyMeasured { latency_s, samples } => (
+            format!("latency {latency_s:.1} s ({samples} samples)"),
+            false,
+        ),
+        EventKind::TitlePushed { title } => (format!("title set to {title:?}"), false),
         EventKind::ServiceError { service, error, .. } => (
             format!("{service} error: {}", error.as_deref().unwrap_or("?")),
             false,
@@ -912,6 +1106,8 @@ fn help_lines() -> Vec<Line<'static>> {
         "p        privacy on/off (OBS privacy scene)",
         "s        preview description; Enter pushes it",
         "e / d    edit / delete the selected chapter (Chapters pane)",
+        "Enter    show question on stream; again: answered (Questions pane)",
+        "x        dismiss question (Questions pane)",
         "Tab      switch pane      j/k, arrows  move",
         ":        command palette  ?  help      q  quit",
         "",
@@ -922,6 +1118,9 @@ fn help_lines() -> Vec<Line<'static>> {
         ":finalize   final push and end the session",
         ":reload   re-read config and templates",
         ":brb  :back   :privacy [on|off]   :scene <name>",
+        ":say <text>   chat message as the channel (20 quota units)",
+        ":overlay <name> on|off   now, question, toast, brb, latency, chapters",
+        ":latency   start/stop measuring; :lat <n> enters the number seen",
         ":preflight   show the pre-flight checklist",
         ":quit",
         "",
@@ -1032,6 +1231,28 @@ mod tests {
             }))
         );
         assert!(palette("privacy maybe", now()).is_err());
+        assert_eq!(
+            palette("say hello chat", now()),
+            Ok(Palette::Command(Command::Say {
+                text: "hello chat".into()
+            }))
+        );
+        assert_eq!(
+            palette("overlay toast off", now()),
+            Ok(Palette::Command(Command::Overlay {
+                name: "toast".into(),
+                on: false
+            }))
+        );
+        assert!(palette("overlay toast", now()).is_err());
+        assert_eq!(
+            palette("lat 2350", now()),
+            Ok(Palette::Command(Command::LatencySample {
+                counter: 2350,
+                at: now()
+            }))
+        );
+        assert!(palette("lat soon", now()).is_err());
         assert_eq!(palette("preflight", now()), Ok(Palette::Preflight));
         assert!(
             palette("frobnicate", now())
@@ -1092,6 +1313,22 @@ mod tests {
             render_error: None,
             quota_remaining: 9310,
             notice: Some("description pushed (8 chars)".into()),
+            chat: Arc::new(VecDeque::from([ChatMessage {
+                id: "m1".into(),
+                t_received: start,
+                t_published: None,
+                author_channel_id: "UCbob".into(),
+                author_name: "bob".into(),
+                is_owner: false,
+                is_moderator: false,
+                is_member: false,
+                kind: ac_core::chat::ChatKind::Text,
+                text: "!q why rust over go?".into(),
+                amount: None,
+            }])),
+            pending_title: None,
+            latency_running: false,
+            latency_s: 4.2,
             preflight: vec![
                 Check {
                     label: "OBS connected".into(),
@@ -1224,6 +1461,62 @@ mod tests {
             .collect();
         assert_eq!(times, [first, first.add_secs(1.0)]);
         assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn questions_pane_shows_and_dismisses_and_title_asks() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        for (qid, author) in [("q1", "bob"), ("q2", "cy")] {
+            let kind = EventKind::QuestionAdd {
+                qid: qid.into(),
+                author: author.into(),
+                author_id: format!("UC{author}"),
+                text: "why rust?".into(),
+            };
+            view.state.apply(&Event::new(&clock, "bot", kind));
+        }
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let text = screen(&mut app, &view);
+        assert!(text.contains("Questions (2)"), "{text}");
+        assert!(
+            text.contains("bob: !q why rust over go?"),
+            "chat pane: {text}"
+        );
+        assert!(text.contains("chat …"), "{text}");
+        assert!(text.contains("lat 4.2s"), "{text}");
+
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        press(&mut app, KeyCode::BackTab); // Chapters -> Questions
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Question {
+                qid: "q2".into(),
+                action: QuestionAction::Show
+            }
+        );
+        press(&mut app, KeyCode::Char('x'));
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Question {
+                qid: "q2".into(),
+                action: QuestionAction::Dismiss
+            }
+        );
+
+        app.mode = Mode::ConfirmTitle("New title".into());
+        assert!(screen(&mut app, &view).contains("Set the YouTube title"));
+        press(&mut app, KeyCode::Char('y'));
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::ConfirmTitle { ok: true }
+        );
+        assert_eq!(app.title_answered.as_deref(), Some("New title"));
     }
 
     #[test]

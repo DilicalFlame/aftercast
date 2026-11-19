@@ -1,15 +1,18 @@
 //! Live session: startup, the controller loop, YouTube polling and README watching
 //! (specs/01-architecture.md, specs/04-session-and-folders.md "Lifecycle").
 
+mod chat;
 mod obs;
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use ac_core::Home;
+use ac_core::chat::ChatMessage;
 use ac_core::command::Command;
 use ac_core::config::Config;
 use ac_core::event::EventLog;
@@ -21,7 +24,7 @@ use ac_core::recordings::Recordings;
 use ac_core::session::{NewSession, Session, Status};
 use ac_core::session_state::SessionState;
 use ac_core::state::State;
-use ac_core::time::Clock;
+use ac_core::time::{Clock, Timestamp};
 use ac_template::chapters::Chapter;
 use ac_template::{ContextInput, Description, README_NAME, RenderError, Renderer};
 use ac_tui::{Check, CheckState, View};
@@ -48,6 +51,11 @@ pub enum Msg {
     Broadcast(Result<Broadcast, String>),
     ReadmeChanged,
     Obs(ac_obs::Update),
+    Chat(ac_youtube::chat::ChatUpdate),
+    /// The external current-quest file changed.
+    QuestFile,
+    /// Answered once everything sent before it is handled and published (scripts).
+    Barrier(oneshot::Sender<()>),
 }
 
 /// Everything a UI needs to drive and display a running session.
@@ -130,6 +138,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let (events_tx, events_rx) = broadcast::channel(4096);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let yt = Arc::new(yt);
+    let started = clock.now_ts();
 
     let watcher = watch_readme(&session.dir, msg_tx.clone())
         .inspect_err(|e| tracing::warn!("README watcher unavailable: {e}"))
@@ -145,6 +154,34 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
 
     let obs = connect_obs(&config, opts.mock.is_some(), &msg_tx);
 
+    let chat_id = session
+        .meta
+        .live_chat_id
+        .clone()
+        .or(broadcast.chat_id.clone());
+    if let Some(chat_id) = chat_id.filter(|_| broadcast.actual_end.is_none()) {
+        let (yt, tx) = (yt.clone(), msg_tx.clone());
+        tokio::spawn(async move {
+            yt.run_chat(&chat_id, |u| {
+                let _ = tx.send(Msg::Chat(u));
+            })
+            .await;
+        });
+    }
+    let quest_watcher = watch_quest_file(home, &config, msg_tx.clone());
+    let chat_log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(session.dir.join("chat.jsonl"))
+        .map(std::io::BufWriter::new)
+        .inspect_err(|e| tracing::error!("chat.jsonl: {e}"))
+        .ok();
+
+    let overlays = ac_server::Overlays::default();
+    let (state_tx, state_rx) = watch::channel(session_state.clone());
+    let server = serve(home, &config, &overlays, state_rx, &cmd_tx, &clock).await;
+
+    let bot = config.bot.enabled.then(|| ac_bot::Bot::new(&config.bot));
     let mut controller = Controller {
         home: home.clone(),
         config_path: config_path.to_path_buf(),
@@ -167,6 +204,17 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         pending_scenes: VecDeque::new(),
         recordings,
         privacy_return: None,
+        bot,
+        overlays,
+        server,
+        state_tx,
+        chat: Arc::default(),
+        chat_log,
+        started,
+        latency_run: None,
+        pending_title: None,
+        overlays_off: BTreeSet::new(),
+        overlay_sent: BTreeMap::new(),
     };
     let (view_tx, view_rx) = watch::channel(controller.snapshot());
     controller.view = Some(view_tx);
@@ -182,7 +230,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     controller.on_broadcast(Ok(broadcast));
     controller.render();
     let handle = tokio::spawn(async move {
-        let _watcher = watcher; // dropping it stops watching
+        // Dropping a watcher stops it.
+        let _watchers = (watcher, quest_watcher);
         if controller.config.youtube.push_on_start {
             controller.push(PushTrigger::Start, false).await;
         }
@@ -259,6 +308,71 @@ fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -
         }
     }
     obs::ObsLink::Real(tx)
+}
+
+/// Starts the overlay and local API server on `127.0.0.1:[overlay].port`. A failure
+/// (port taken) leaves the session running and shows in the pre-flight checklist.
+async fn serve(
+    home: &Home,
+    config: &Config,
+    overlays: &ac_server::Overlays,
+    state: watch::Receiver<SessionState>,
+    commands: &mpsc::UnboundedSender<Command>,
+    clock: &Arc<Clock>,
+) -> std::result::Result<SocketAddr, String> {
+    let token_file = home.join("state/api-token");
+    let token =
+        ac_server::token(&token_file).map_err(|e| format!("{}: {e}", token_file.display()))?;
+    let shared = ac_server::Shared {
+        overlays: overlays.clone(),
+        state,
+        commands: commands.clone(),
+        clock: clock.clone(),
+        token,
+        dir: home.join("overlays"),
+        theme: ac_server::theme(&config.overlay),
+    };
+    let port = config.overlay.port;
+    let (addr, server) = ac_server::bind(port, shared)
+        .await
+        .map_err(|e| format!("127.0.0.1:{port}: {e}"))?;
+    tokio::spawn(async move {
+        if let Err(e) = server.await {
+            tracing::error!("overlay server: {e}");
+        }
+    });
+    Ok(addr)
+}
+
+/// Watches `[external].current_quest_file` (its folder, so replace-saves are seen) and
+/// reads it once now.
+fn watch_quest_file(
+    home: &Home,
+    config: &Config,
+    tx: mpsc::UnboundedSender<Msg>,
+) -> Option<notify::RecommendedWatcher> {
+    let rel = &config.external.current_quest_file;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    let path = home.path(rel);
+    let name = path.file_name()?.to_owned();
+    let _ = tx.send(Msg::QuestFile);
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else { return };
+        let ours = event.paths.iter().any(|p| p.file_name() == Some(&name));
+        if ours && (event.kind.is_modify() || event.kind.is_create()) {
+            let _ = tx.send(Msg::QuestFile);
+        }
+    })
+    .inspect_err(|e| tracing::warn!("quest file watcher: {e}"))
+    .ok()?;
+    let dir = path.parent()?;
+    watcher
+        .watch(dir, RecursiveMode::NonRecursive)
+        .inspect_err(|e| tracing::warn!("watching {}: {e}", dir.display()))
+        .ok()?;
+    Some(watcher)
 }
 
 /// No link given: resume the last session.
@@ -346,6 +460,25 @@ struct Controller {
     recordings: Recordings,
     /// Scene to restore when privacy ends.
     privacy_return: Option<String>,
+    /// `None` when `[bot].enabled = false`.
+    bot: Option<ac_bot::Bot>,
+    overlays: ac_server::Overlays,
+    /// Overlay server address, or why it is not listening.
+    server: std::result::Result<SocketAddr, String>,
+    /// Session state for the local API.
+    state_tx: watch::Sender<SessionState>,
+    /// Last chat messages for the TUI.
+    chat: Arc<VecDeque<ChatMessage>>,
+    chat_log: Option<std::io::BufWriter<fs::File>>,
+    /// Chat commands typed before this (history sent on connect) are not executed.
+    started: Timestamp,
+    latency_run: Option<chat::LatencyRun>,
+    /// A `!title` waiting for confirmation in the TUI.
+    pending_title: Option<String>,
+    /// Overlays turned off with `:overlay <name> off`.
+    overlays_off: BTreeSet<String>,
+    /// Last message sent per stateful overlay.
+    overlay_sent: BTreeMap<&'static str, ac_server::OverlayMsg>,
 }
 
 impl Controller {
@@ -378,6 +511,12 @@ impl Controller {
                     Msg::Broadcast(result) => self.on_broadcast(result),
                     Msg::ReadmeChanged => render_at = Some(Instant::now() + README_DEBOUNCE),
                     Msg::Obs(update) => self.on_obs(update),
+                    Msg::Chat(update) => self.on_chat(update),
+                    Msg::QuestFile => self.quest_file(),
+                    Msg::Barrier(ack) => {
+                        self.publish();
+                        let _ = ack.send(());
+                    }
                 },
                 () = render_due => {
                     render_at = None;
@@ -471,8 +610,33 @@ impl Controller {
                 );
                 self.done = true;
             }
-            // Wired up with the chat, bot and overlay services.
-            other => self.notice = Some(format!("not available yet: {other:?}")),
+            Command::Question { qid, action } => self.question(qid, action),
+            Command::Say { text } => {
+                self.send_chat(text.clone());
+                self.emit(
+                    "tui",
+                    EventKind::BotReply {
+                        cmd: "say".into(),
+                        mode: ac_core::event::BotReplyMode::Chat,
+                        text,
+                    },
+                );
+            }
+            Command::Overlay { name, on } => {
+                if !ac_server::OVERLAYS.contains(&name.as_str()) {
+                    self.notice = Some(format!(
+                        "no overlay {name:?} (have: {})",
+                        ac_server::OVERLAYS.join(", ")
+                    ));
+                } else if on {
+                    self.overlays_off.remove(&name);
+                } else {
+                    self.overlays_off.insert(name);
+                }
+            }
+            Command::Latency => self.latency_toggle(),
+            Command::LatencySample { counter, at } => self.latency_sample(counter, at),
+            Command::ConfirmTitle { ok } => self.confirm_title(ok).await,
         }
     }
 
@@ -495,6 +659,9 @@ impl Controller {
     fn flush(&mut self) {
         if let Err(e) = self.log.flush() {
             tracing::error!("flushing events: {e}");
+        }
+        if let Some(Err(e)) = self.chat_log.as_mut().map(std::io::Write::flush) {
+            tracing::error!("flushing chat.jsonl: {e}");
         }
     }
 
@@ -738,6 +905,10 @@ impl Controller {
             quota_remaining: self.yt.quota().remaining(self.clock.now_ts()),
             notice: self.notice.clone(),
             preflight: self.preflight(),
+            chat: self.chat_pane(),
+            pending_title: self.pending_title.clone(),
+            latency_running: self.latency_run.is_some(),
+            latency_s: self.latency(),
         }
     }
 
@@ -829,10 +1000,20 @@ impl Controller {
             ok_if(remaining >= i64::from(reserve)),
             format!("{remaining} left, reserve {reserve}"),
         ));
+        list.push(match &self.server {
+            Ok(addr) => check(
+                "Overlay server listening",
+                CheckState::Ok,
+                format!("http://{addr}/overlay/<name>"),
+            ),
+            Err(e) => check("Overlay server listening", CheckState::Fail, e.clone()),
+        });
         list
     }
 
-    fn publish(&self) {
+    fn publish(&mut self) {
+        self.sync_overlays();
+        self.state_tx.send_replace(self.state.clone());
         if let Some(view) = &self.view {
             view.send_replace(self.snapshot());
         }
