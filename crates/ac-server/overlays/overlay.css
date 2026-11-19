@@ -1,0 +1,79 @@
+html, body {
+  margin: 0;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-sans), sans-serif;
+}
+
+#root {
+  position: absolute;
+  inset: 0;
+}
+
+.card {
+  position: absolute;
+  background: var(--bg);
+  border-left: 6px solid var(--accent);
+  border-radius: 8px;
+  padding: 16px 24px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
+}
+
+.now {
+  left: 40px;
+  top: 40px;
+  display: flex;
+  gap: 24px;
+  font-size: 28px;
+}
+
+.now .timer, .brb .timer {
+  color: var(--muted);
+  font-family: var(--font-mono), monospace;
+}
+
+.question {
+  left: 40px;
+  right: 40px;
+  bottom: 60px;
+  font-size: 36px;
+}
+
+.question .author {
+  color: var(--accent);
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+
+.toast {
+  right: 40px;
+  top: 40px;
+  max-width: 700px;
+  font-size: 28px;
+}
+
+.brb {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  font-size: 72px;
+  padding: 40px 80px;
+}
+
+.latency {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-mono), monospace;
+  font-size: 160px;
+}
+
+.chapters {
+  left: 40px;
+  bottom: 40px;
+  font-size: 24px;
+}
