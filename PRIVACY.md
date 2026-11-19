@@ -17,8 +17,9 @@ With it, aftercast:
   times, live chat id);
 - updates that video's description (chapters and links rendered from your own session
   README), keeping its title, category and tags unchanged;
-- in later versions: reads your live chat, posts chat messages you or your bot rules
-  send, and sets thumbnails you generate.
+- reads your stream's live chat, posts chat messages you or your bot commands send, and
+  changes the video title when you confirm a `!title` request;
+- in later versions: sets thumbnails you generate.
 
 It does not read your Google profile, email address, contacts or any other Google data.
 
@@ -27,8 +28,10 @@ It does not read your Google profile, email address, contacts or any other Googl
 - **OAuth tokens** are stored in your operating system's credential store (Windows
   Credential Manager) under the service name `aftercast`. They never leave your computer
   except in requests to Google's own APIs.
-- **Session data** (events, rendered descriptions, logs, recordings metadata) is written to
-  the folder you choose as the aftercast home, on your own disk.
+- **Session data** (events, chat messages, rendered descriptions, logs, recordings
+  metadata) is written to the folder you choose as the aftercast home, on your own disk.
+- The overlay and local API server listens only on `127.0.0.1`; other computers cannot
+  reach it.
 - aftercast sends data **only to Google** (YouTube Data API and OAuth endpoints) and to
   programs on your own machine (OBS via `127.0.0.1`). It does not send data to the
   developer, to Anthropic, or to any other third party.
