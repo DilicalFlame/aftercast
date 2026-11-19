@@ -1,7 +1,7 @@
 //! OBS in the controller (specs/07-obs.md): scene control for BRB/privacy, scene changes
 //! from any source, stream/record anchors and `media/recordings.json`.
 
-use ac_core::event::{By, EventKind, OutputState, ServiceStatus, Source};
+use ac_core::event::{By, EventKind, OutputState, ServiceStatus, Source, StreamStatus};
 use ac_core::recordings::Reconciled;
 use ac_core::session::Status;
 use ac_obs::{Request, Snapshot, Update};
@@ -84,6 +84,7 @@ impl Controller {
                     state: OutputState::Started,
                 },
             );
+            self.stream_restarted();
         } else if !snap.stream.active && streaming {
             self.stream_changed(OutputState::Stopped);
         }
@@ -168,9 +169,12 @@ impl Controller {
     fn stream_changed(&mut self, state: OutputState) {
         self.emit("obs", EventKind::ObsStream { state });
         match state {
-            OutputState::Started if self.session.meta.anchors.obs_stream_start.is_none() => {
-                self.session.meta.anchors.obs_stream_start = Some(self.clock.now_ts());
-                self.save_session();
+            OutputState::Started => {
+                if self.session.meta.anchors.obs_stream_start.is_none() {
+                    self.session.meta.anchors.obs_stream_start = Some(self.clock.now_ts());
+                    self.save_session();
+                }
+                self.stream_restarted();
             }
             OutputState::Stopped if !self.state.ended => {
                 self.emit(
@@ -183,6 +187,28 @@ impl Controller {
             }
             _ => {}
         }
+    }
+
+    /// OBS streams again after its stop ended the session (a flaky connection makes OBS
+    /// give up, then the streamer restarts): back to live, unless YouTube has already
+    /// reported the broadcast's end or the session was finalized.
+    fn stream_restarted(&mut self) {
+        if !self.state.ended
+            || self.session.meta.status != Status::Ended
+            || self.session.meta.anchors.yt_actual_end.is_some()
+        {
+            return;
+        }
+        self.emit(
+            "obs",
+            EventKind::StreamStatus {
+                status: StreamStatus::Live,
+                source: Source::Obs,
+            },
+        );
+        self.session.meta.status = Status::Live;
+        self.save_session();
+        self.notice = Some("OBS is streaming again; session is live".into());
     }
 
     fn record_changed(&mut self, state: OutputState, path: Option<String>) {

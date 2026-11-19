@@ -170,6 +170,12 @@ impl App {
             if view.state.ended && !self.end_prompted && self.mode == Mode::Normal {
                 self.end_prompted = true;
                 self.mode = Mode::Ended;
+            } else if !view.state.ended && self.end_prompted {
+                // The stream restarted: drop the end modal, prompt again on the next end.
+                self.end_prompted = false;
+                if self.mode == Mode::Ended {
+                    self.mode = Mode::Normal;
+                }
             }
             terminal.draw(|frame| self.draw(frame, &view))?;
             if event::poll(Duration::from_millis(250))?

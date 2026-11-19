@@ -92,7 +92,8 @@ impl SessionState {
             }
             EventKind::StreamStatus { status, .. } => {
                 self.stream = Some(*status);
-                self.ended |= *status == StreamStatus::Ended;
+                // `live` after an end means OBS started streaming again (a restart).
+                self.ended = *status == StreamStatus::Ended;
             }
             EventKind::StreamEnded { .. } => {
                 self.stream = Some(StreamStatus::Ended);

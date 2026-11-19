@@ -25,10 +25,10 @@ fn assert_valid(v: &jsonschema::Validator, json: &Value) {
     assert!(errors.is_empty(), "{json}: {errors:?}");
 }
 
-#[test]
-fn mock_obs_brb_scenes_recordings_and_down() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().join("Streams");
+/// Runs a headless mock session with `script`; returns the session folder and its
+/// events, each validated against the schema.
+fn run(tmp: &Path, script: &str) -> (PathBuf, Vec<Value>) {
+    let home = tmp.join("Streams");
     let bin = env!("CARGO_BIN_EXE_aftercast");
     let init = Command::new(bin)
         .arg("--home")
@@ -36,10 +36,63 @@ fn mock_obs_brb_scenes_recordings_and_down() {
         .arg("init")
         .output();
     assert!(init.unwrap().status.success());
+    let script_path = tmp.join("script.txt");
+    fs::write(&script_path, script).unwrap();
+    let fixture: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/basic");
+    let out = Command::new(bin)
+        .arg("--home")
+        .arg(&home)
+        .arg("--mock")
+        .arg(&fixture)
+        .args(["abcdefghijk", "--no-tui", "--script"])
+        .arg(&script_path)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let only_child = |dir: PathBuf| fs::read_dir(dir).unwrap().next().unwrap().unwrap().path();
+    let dir = only_child(only_child(home.join("sessions")));
+    let events_schema = validator("events.schema.json");
+    let events: Vec<Value> = fs::read_to_string(dir.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    events.iter().for_each(|e| assert_valid(&events_schema, e));
+    (dir, events)
+}
 
-    let script = tmp.path().join("obs.txt");
-    fs::write(
-        &script,
+#[test]
+fn obs_restart_after_stop_makes_the_session_live_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (dir, events) = run(
+        tmp.path(),
+        "+1s obs stream started\n+5s obs stream stopped\n+30s obs stream started\nquit\n",
+    );
+    let kinds: Vec<String> = events
+        .iter()
+        .filter(|e| e["type"] == "stream.ended" || e["type"] == "stream.status")
+        .map(|e| format!("{} {} {}", e["type"], e["data"]["status"], e["src"]))
+        .collect();
+    assert_eq!(
+        kinds[kinds.len() - 2..],
+        [
+            r#""stream.ended" null "obs""#,
+            r#""stream.status" "live" "obs""#
+        ]
+    );
+    let toml = fs::read_to_string(dir.join("session.toml")).unwrap();
+    assert!(toml.contains("status = \"live\""), "{toml}");
+}
+
+#[test]
+fn mock_obs_brb_scenes_recordings_and_down() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (dir, events) = run(
+        tmp.path(),
         "\
 +1s obs record started D:/OBS/a.mkv
 +1s obs stream started
@@ -57,33 +110,7 @@ fn mock_obs_brb_scenes_recordings_and_down() {
 +1s obs down
 quit
 ",
-    )
-    .unwrap();
-    let fixture: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/basic");
-    let out = Command::new(bin)
-        .arg("--home")
-        .arg(&home)
-        .arg("--mock")
-        .arg(&fixture)
-        .args(["abcdefghijk", "--no-tui", "--script"])
-        .arg(&script)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
     );
-
-    let only_child = |dir: PathBuf| fs::read_dir(dir).unwrap().next().unwrap().unwrap().path();
-    let dir = only_child(only_child(home.join("sessions")));
-    let events_schema = validator("events.schema.json");
-    let events: Vec<Value> = fs::read_to_string(dir.join("events.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-    events.iter().for_each(|e| assert_valid(&events_schema, e));
 
     let of = |ty: &str| -> Vec<&Value> { events.iter().filter(|e| e["type"] == ty).collect() };
     let scenes: Vec<&str> = of("obs.scene")
