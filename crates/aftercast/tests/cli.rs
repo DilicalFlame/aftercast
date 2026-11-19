@@ -1,0 +1,51 @@
+//! End-to-end tests of the `aftercast` binary.
+
+use std::path::Path;
+use std::process::{Command, Output};
+
+fn aftercast(home: &Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_aftercast"))
+        .arg("--home")
+        .arg(home)
+        .args(args)
+        .output()
+        .expect("binary runs")
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn stubbed_subcommand_exits_1() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = aftercast(dir.path(), &["sessions"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not yet implemented"));
+}
+
+#[test]
+fn init_creates_tree_then_skips_existing() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("Streams");
+
+    let out = aftercast(&home, &["init"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(!stdout(&out).contains("skipped"));
+    for path in [
+        "aftercast.toml",
+        "templates/session-readme.md",
+        "templates/partials/links.md",
+        "templates/partials/support.md",
+        "state/state.toml",
+    ] {
+        assert!(home.join(path).is_file(), "{path}");
+    }
+    for path in ["overlays", "logs", "library", "sessions"] {
+        assert!(home.join(path).is_dir(), "{path}");
+    }
+
+    let out = aftercast(&home, &["init"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(stdout(&out).matches("exists, skipped").count(), 5);
+}

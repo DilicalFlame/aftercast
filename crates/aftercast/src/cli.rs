@@ -8,8 +8,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 #[command(
     name = "aftercast",
     version,
-    about = "TUI companion for live coding streams on YouTube",
-    args_conflicts_with_subcommands = true
+    about = "TUI companion for live coding streams on YouTube"
 )]
 pub struct Cli {
     /// Stream link or 11-char video id; omit to pick from your broadcasts
@@ -156,7 +155,10 @@ mod tests {
         assert!(cli.command.is_none());
         let cli = Cli::parse_from(["aftercast", "render", "ep042", "--ids", "001,T01"]);
         assert!(matches!(cli.command, Some(Command::Render { ids, .. }) if ids == ["001", "T01"]));
-        let cli = Cli::parse_from(["aftercast", "init", "--home", "X"]);
-        assert_eq!(cli.home, Some(PathBuf::from("X")));
+        for args in [["init", "--home", "X"], ["--home", "X", "init"]] {
+            let cli = Cli::parse_from(std::iter::once("aftercast").chain(args));
+            assert!(matches!(cli.command, Some(Command::Init)));
+            assert_eq!(cli.home, Some(PathBuf::from("X")));
+        }
     }
 }

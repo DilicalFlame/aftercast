@@ -1,0 +1,150 @@
+# aftercast global configuration
+# Location: $AFTERCAST_HOME/aftercast.toml   (e.g. P:\Streams\aftercast.toml)
+# Secrets: use "keyring:<name>" or "env:<NAME>" instead of plain values.
+
+[channel]
+series = "Insomnia Driven Development"
+short = "IDD"
+episode_prefix = "ep"          # session folder: 2026-11-19_ep042
+episode_pad = 3
+# Title handling: "keep" = never touch the YouTube title;
+# "format" = set title from title_format at session start (costs one videos.update).
+title_mode = "keep"
+title_format = "{{ channel.short }} #{{ stream.episode_padded }} · {{ quest.title | default('Live coding') }}"
+
+[paths]
+sessions = "sessions"          # relative to home
+templates = "templates"
+editor = "code"                # used by :open readme  (e.g. "nvim", "code")
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+yt_dlp = "yt-dlp"
+python = "python"              # for the faster-whisper/whisperx backend
+whisper_cli = "whisper-cli"    # for the whisper.cpp backend
+tesseract = "tesseract"
+
+[youtube]
+client_secret_file = "state/client_secret.json"   # OAuth desktop client from Google Cloud
+token_profile = "main"                           # keyring entry aftercast/youtube/main
+# Description push policy. Pushing costs quota (videos.update).
+push_on_start = true
+push_on_end = true
+live_autosync = false           # true = push automatically after README saves (debounced)
+autosync_debounce_s = 5
+autosync_min_interval_s = 90
+daily_quota_reserve = 1500      # never spend below this many remaining units
+# bot_profile = "bot"           # optional separate bot account (must be a moderator of the channel)
+
+[obs]
+url = "ws://127.0.0.1:4455"
+password = "keyring:obs"
+require_recording = true        # pre-flight warns loudly if OBS is not recording
+
+[obs.scenes]
+main = "Code"
+brb = "BRB"
+privacy = "Privacy"
+starting = "Starting Soon"
+ending = "Ending"
+
+[stream]
+default_latency_s = 5.0         # used until measured (:latency)
+first_chapter_title = "Start"
+chapter_on_quest_change = true
+chapter_on_brb = false          # add "Break" chapters
+chapter_on_question = false     # add "Q: ..." chapter when a question is shown
+
+[readme]
+seed_template = "session-readme.md"   # copied into each new session as README.md
+max_chars = 5000
+expose_env = ["DISCORD_INVITE"]       # only these env vars are available as {{ env.X }}
+link_style = "text_colon_url"         # [text](url) → "text: url"
+
+[vars]
+github = "https://github.com/your-handle"
+discord = "https://discord.gg/xxxx"
+twitter = "https://x.com/your-handle"
+roadmaps = "https://github.com/your-handle/roadmaps"
+tagline = "I will sleep when it compiles..."
+
+[vars.support]
+upi = "you@upi"
+kofi = "https://ko-fi.com/you"
+
+[bot]
+enabled = true
+prefix = "!"
+global_cooldown_s = 3
+user_cooldown_s = 20
+default_reply = "overlay"       # overlay | chat | both
+max_chat_replies_per_hour = 30  # hard cap to protect quota
+
+[bot.commands]
+# Custom static commands: name = { text = "...", reply = "chat|overlay|both" }. Templates allowed.
+links   = { text = "GitHub {{ vars.github }} · Discord {{ vars.discord }}", reply = "chat" }
+discord = { text = "{{ vars.discord }}", reply = "chat" }
+support = { text = "Support the stream: {{ vars.support.kofi }} · UPI {{ vars.support.upi }}", reply = "chat" }
+
+[bot.moderation]
+delete_links_from_non_mods = false
+banned_words = []
+
+[overlay]
+port = 7878
+font_mono = "JetBrains Mono"
+font_sans = "Inter"
+bg = "#303030"
+accent = "#FF5555"
+fg = "#FFFFFF"
+muted = "#9A9A9A"
+
+[capture]
+keys = true
+# Keystrokes with text are only stored while one of these apps is focused (process name, case-insensitive).
+keys_allow_apps = ["Code.exe", "WindowsTerminal.exe", "nvim.exe", "alacritty.exe", "wezterm-gui.exe"]
+# In other apps only modifier shortcuts are stored (e.g. Ctrl+S), never characters.
+keys_deny_title_patterns = ["(?i)password", "(?i)bitwarden", "(?i)1password", "(?i)\\.env", "(?i)secret", "(?i)login", "(?i)sign in"]
+shell = true
+shell_spool = "state/shell-spool.jsonl"
+secret_patterns = [
+  "sk-[A-Za-z0-9_-]{20,}", "ghp_[A-Za-z0-9]{30,}", "github_pat_[A-Za-z0-9_]{30,}",
+  "AKIA[0-9A-Z]{16}", "AIza[0-9A-Za-z_-]{35}", "xox[baprs]-[A-Za-z0-9-]{10,}",
+  "-----BEGIN [A-Z ]*PRIVATE KEY-----"
+]
+git_roots = ["P:/"]             # scanned after the stream for commits in the session window
+git_max_depth = 3
+
+[hotkeys]
+mark = "Ctrl+Alt+M"
+checkpoint = "Ctrl+Alt+C"
+privacy = "Ctrl+Alt+P"
+brb = "Ctrl+Alt+B"
+
+[post]
+auto_after_finalize = false
+use_vod = false                 # also download the YouTube VOD (for calibration / fallback)
+transcriber = "faster-whisper"  # faster-whisper | whisperx | whisper-cpp
+whisper_model = "large-v3"      # RTX 4060 8GB: large-v3 float16 fits; use int8_float16 if VRAM is tight
+whisper_compute_type = "float16"
+language = "auto"               # "en", "hi", or "auto" (Hinglish: test both)
+frame_interval_s = 30
+scene_threshold = 0.30
+phash_max_distance = 6          # frames within this hamming distance of the previous kept frame are dropped
+frame_width = 1280
+silence_db = -35
+silence_min_s = 4.0
+focus_min_keys_per_10s = 3      # silent but typing ≥ this → "focus", not "dead"
+ocr = false
+
+[render]
+encoder = "h264_nvenc"          # h264_nvenc | libx264
+cq = 21
+pad_start_ms = 250
+pad_end_ms = 400
+short_max_s = 60
+keys_overlay = "alpha"          # burn | alpha | none
+captions = "srt"                # burn | srt | none
+
+[external]
+# Optional: a future quest app writes the current quest here; aftercast watches it.
+current_quest_file = ""         # e.g. "P:/quests/current.json"

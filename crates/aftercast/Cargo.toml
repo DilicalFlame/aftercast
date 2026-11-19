@@ -9,3 +9,7 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+ac-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
