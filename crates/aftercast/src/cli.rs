@@ -116,6 +116,8 @@ pub enum AuthAction {
     Login,
     Status,
     Logout,
+    /// Store the obs-websocket password (read from stdin) in the OS keyring
+    Obs,
 }
 
 #[derive(Debug, Subcommand)]

@@ -76,9 +76,45 @@ pub fn run(home: &Home, config_path: Option<PathBuf>) -> u8 {
     checks.extend(transcriber(&config));
     checks.push(clock());
     checks.push(keyring());
+    checks.push(obs(&config));
 
     print_table(&checks);
     exit_code(&checks)
+}
+
+/// OBS reachability and configured scenes. Only a warning: OBS may simply not be running.
+fn obs(config: &Config) -> Check {
+    let hint = "start OBS (30.2+), enable Tools > WebSocket Server Settings";
+    let password = crate::secret::resolve(&config.obs.password).unwrap_or(None);
+    let probe = ac_obs::Target::parse(&config.obs.url, password).and_then(|target| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        rt.block_on(async {
+            tokio::time::timeout(Duration::from_secs(3), ac_obs::probe(&target))
+                .await
+                .unwrap_or_else(|_| Err("timed out".into()))
+        })
+    });
+    match probe {
+        Ok(snap) => {
+            let missing: Vec<&str> = config
+                .obs
+                .scenes
+                .all()
+                .into_iter()
+                .filter(|s| !snap.scenes.iter().any(|have| have == s))
+                .collect();
+            if missing.is_empty() {
+                Check::new("obs", Status::Ok, format!("{} scenes", snap.scenes.len()))
+            } else {
+                let detail = format!("missing scenes: {}", missing.join(", "));
+                Check::new("obs", Status::Warn, detail)
+            }
+        }
+        Err(e) => Check::new("obs", Status::Warn, format!("{e} ({hint})")),
+    }
 }
 
 /// Overall exit code: the highest-severity failure (config > missing tool > auth > other).

@@ -2,7 +2,9 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::event::{By, Event, EventKind, PushTrigger, QuestSource, ServiceStatus, StreamStatus};
+use crate::event::{
+    By, Event, EventKind, OutputState, PushTrigger, QuestSource, ServiceStatus, StreamStatus,
+};
 use crate::time::Timestamp;
 
 /// Events kept for the TUI event log.
@@ -56,7 +58,14 @@ pub struct SessionState {
     pub questions: Vec<Question>,
     pub brb_starts: Vec<Timestamp>,
     pub brb: bool,
+    /// Scene to return to when BRB ends (from `brb.start`).
+    pub brb_return: Option<String>,
     pub privacy: bool,
+    /// Current OBS program scene, as last reported.
+    pub scene: Option<String>,
+    /// Last OBS stream / record output state.
+    pub obs_stream: Option<OutputState>,
+    pub obs_record: Option<OutputState>,
     /// Last render: (chars, chapters, error).
     pub last_render: Option<(usize, usize, Option<String>)>,
     pub last_push: Option<(Timestamp, PushTrigger)>,
@@ -137,11 +146,20 @@ impl SessionState {
             EventKind::QuestionDismiss { qid } => {
                 self.question(qid, QuestionState::Dismissed, None)
             }
-            EventKind::BrbStart { .. } => {
+            EventKind::BrbStart { return_scene, .. } => {
                 self.brb = true;
+                self.brb_return.clone_from(return_scene);
                 self.brb_starts.push(e.t);
             }
             EventKind::BrbEnd {} => self.brb = false,
+            EventKind::ObsScene { to, .. } => self.scene = Some(to.clone()),
+            EventKind::ObsStream { state } => self.obs_stream = Some(*state),
+            EventKind::ObsRecord { state, .. } => {
+                // A file split does not change whether OBS is recording.
+                if *state != OutputState::FileChanged {
+                    self.obs_record = Some(*state);
+                }
+            }
             EventKind::PrivacyStart { .. } => self.privacy = true,
             EventKind::PrivacyEnd {} => self.privacy = false,
             EventKind::DescRendered {
@@ -159,9 +177,6 @@ impl SessionState {
                 self.services.insert(service.clone(), *state);
             }
             EventKind::SessionEnd { .. }
-            | EventKind::ObsScene { .. }
-            | EventKind::ObsStream { .. }
-            | EventKind::ObsRecord { .. }
             | EventKind::BotCmd { .. }
             | EventKind::BotReply { .. }
             | EventKind::ModAction { .. }

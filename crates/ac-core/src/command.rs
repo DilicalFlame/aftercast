@@ -28,6 +28,20 @@ pub enum Command {
         text: String,
         pressed_at: Timestamp,
     },
+    /// BRB on/off; `None` toggles.
+    Brb {
+        on: Option<bool>,
+        by: By,
+    },
+    /// Privacy mode on/off; `None` toggles.
+    Privacy {
+        on: Option<bool>,
+        by: By,
+    },
+    /// Switch the OBS program scene (`:scene`).
+    Scene {
+        name: String,
+    },
     /// Manual quest label (`:quest`).
     Quest {
         title: String,

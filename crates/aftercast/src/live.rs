@@ -1,6 +1,9 @@
 //! Live session: startup, the controller loop, YouTube polling and README watching
 //! (specs/01-architecture.md, specs/04-session-and-folders.md "Lifecycle").
 
+mod obs;
+
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,15 +14,17 @@ use ac_core::command::Command;
 use ac_core::config::Config;
 use ac_core::event::EventLog;
 use ac_core::event::{
-    EndReason, Event, EventKind, PushTrigger, QuestSource, ServiceStatus, Source, StreamStatus,
+    EndReason, Event, EventKind, OutputState, PushTrigger, QuestSource, ServiceStatus, Source,
+    StreamStatus,
 };
+use ac_core::recordings::Recordings;
 use ac_core::session::{NewSession, Session, Status};
 use ac_core::session_state::SessionState;
 use ac_core::state::State;
 use ac_core::time::Clock;
 use ac_template::chapters::Chapter;
 use ac_template::{ContextInput, Description, README_NAME, RenderError, Renderer};
-use ac_tui::View;
+use ac_tui::{Check, CheckState, View};
 use ac_youtube::auth::Auth;
 use ac_youtube::quota::{QuotaGuard, Spent};
 use ac_youtube::{Broadcast, Client, LiveContent};
@@ -42,6 +47,7 @@ pub enum Msg {
     Spent(Spent),
     Broadcast(Result<Broadcast, String>),
     ReadmeChanged,
+    Obs(ac_obs::Update),
 }
 
 /// Everything a UI needs to drive and display a running session.
@@ -119,6 +125,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             clock.advance(Duration::from_secs_f64(behind));
         }
     }
+    let recordings = Recordings::load(&session.recordings_file())?;
     let renderer = Renderer::new(&home.path(&config.paths.templates));
     let (events_tx, events_rx) = broadcast::channel(4096);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -135,6 +142,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             msg_tx.clone(),
         ));
     }
+
+    let obs = connect_obs(&config, opts.mock.is_some(), &msg_tx);
 
     let mut controller = Controller {
         home: home.clone(),
@@ -153,6 +162,11 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         render_error: None,
         notice: None,
         done: false,
+        obs,
+        obs_scenes: None,
+        pending_scenes: VecDeque::new(),
+        recordings,
+        privacy_return: None,
     };
     let (view_tx, view_rx) = watch::channel(controller.snapshot());
     controller.view = Some(view_tx);
@@ -203,6 +217,48 @@ fn client(home: &Home, config: &Config, mock: Option<&Path>, clock: Arc<Clock>) 
             )
         }
     })
+}
+
+/// Starts the OBS service (or, with `--mock`, a fake OBS that has the configured scenes).
+fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -> obs::ObsLink {
+    if mock {
+        let scenes: Vec<String> = config
+            .obs
+            .scenes
+            .all()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let _ = msgs.send(Msg::Obs(ac_obs::Update::Connected(ac_obs::Snapshot {
+            scene: Some(config.obs.scenes.main.clone()),
+            scenes: scenes.clone(),
+            ..Default::default()
+        })));
+        return obs::ObsLink::Fake {
+            scenes,
+            msgs: msgs.clone(),
+        };
+    }
+    let (tx, rx) = mpsc::unbounded_channel();
+    let password = crate::secret::resolve(&config.obs.password)
+        .inspect_err(|e| tracing::warn!("OBS password: {e}"))
+        .ok()
+        .flatten();
+    match ac_obs::Target::parse(&config.obs.url, password) {
+        Ok(target) => {
+            let msgs = msgs.clone();
+            tokio::spawn(ac_obs::run(target, rx, move |u| {
+                let _ = msgs.send(Msg::Obs(u));
+            }));
+        }
+        Err(error) => {
+            let _ = msgs.send(Msg::Obs(ac_obs::Update::Down {
+                error,
+                retry_in: Duration::ZERO,
+            }));
+        }
+    }
+    obs::ObsLink::Real(tx)
 }
 
 /// No link given: resume the last session.
@@ -282,6 +338,14 @@ struct Controller {
     render_error: Option<String>,
     notice: Option<String>,
     done: bool,
+    obs: obs::ObsLink,
+    /// Scenes in OBS while connected; `None` while OBS is unreachable.
+    obs_scenes: Option<Vec<String>>,
+    /// Scene switches sent to OBS whose echo has not arrived yet.
+    pending_scenes: VecDeque<String>,
+    recordings: Recordings,
+    /// Scene to restore when privacy ends.
+    privacy_return: Option<String>,
 }
 
 impl Controller {
@@ -313,6 +377,7 @@ impl Controller {
                     }),
                     Msg::Broadcast(result) => self.on_broadcast(result),
                     Msg::ReadmeChanged => render_at = Some(Instant::now() + README_DEBOUNCE),
+                    Msg::Obs(update) => self.on_obs(update),
                 },
                 () = render_due => {
                     render_at = None;
@@ -372,6 +437,15 @@ impl Controller {
             }
             Command::Note { text, pressed_at } => {
                 self.emit("tui", EventKind::Note { text, pressed_at })
+            }
+            Command::Brb { on, by } => self.brb(on, by),
+            Command::Privacy { on, by } => self.privacy(on, by),
+            Command::Scene { name } => {
+                if self.obs_scenes.as_ref().is_some_and(|s| !s.contains(&name)) {
+                    self.notice = Some(format!("OBS has no scene named {name:?}"));
+                } else {
+                    self.switch_scene(name);
+                }
             }
             Command::Quest { title } => self.emit_render(
                 "tui",
@@ -563,7 +637,7 @@ impl Controller {
         let broadcast = match result {
             Ok(b) => b,
             Err(error) => {
-                self.service_state(ServiceStatus::Retrying);
+                self.service_state("youtube", ServiceStatus::Retrying);
                 self.emit(
                     "youtube",
                     EventKind::ServiceError {
@@ -575,7 +649,7 @@ impl Controller {
                 return;
             }
         };
-        self.service_state(ServiceStatus::Ok);
+        self.service_state("youtube", ServiceStatus::Ok);
         let anchors = &mut self.session.meta.anchors;
         let mut changed = false;
         // actualStartTime never changes for a video; keep the first one seen.
@@ -625,12 +699,12 @@ impl Controller {
         }
     }
 
-    fn service_state(&mut self, state: ServiceStatus) {
-        if self.state.services.get("youtube") != Some(&state) {
+    fn service_state(&mut self, service: &str, state: ServiceStatus) {
+        if self.state.services.get(service) != Some(&state) {
             self.emit(
-                "youtube",
+                service,
                 EventKind::ServiceState {
-                    service: "youtube".into(),
+                    service: service.into(),
                     state,
                 },
             );
@@ -661,7 +735,99 @@ impl Controller {
             render_error: self.render_error.clone(),
             quota_remaining: self.yt.quota().remaining(self.clock.now_ts()),
             notice: self.notice.clone(),
+            preflight: self.preflight(),
         }
+    }
+
+    /// Pre-flight checklist (specs/02-cli-and-tui.md); failures stay red until resolved.
+    fn preflight(&self) -> Vec<Check> {
+        let check = |label: &str, state, detail: String| Check {
+            label: label.into(),
+            state,
+            detail,
+        };
+        let ok_if = |ok: bool| if ok { CheckState::Ok } else { CheckState::Fail };
+        let meta = &self.session.meta;
+        let mut list = vec![
+            check(
+                "Config valid",
+                CheckState::Ok,
+                self.config_path.display().to_string(),
+            ),
+            check(
+                "Templates found",
+                ok_if(self.render_error.is_none()),
+                self.render_error.clone().unwrap_or_default(),
+            ),
+            check(
+                "YouTube signed in, broadcast resolved",
+                CheckState::Ok,
+                meta.video_id.clone(),
+            ),
+            check(
+                "liveChatId present",
+                ok_if(meta.live_chat_id.is_some()),
+                String::new(),
+            ),
+        ];
+        let obs = &self.config.obs;
+        let connected = self.obs_scenes.is_some();
+        let missing: Vec<&str> = obs
+            .scenes
+            .all()
+            .into_iter()
+            .filter(|s| {
+                self.obs_scenes
+                    .as_ref()
+                    .is_some_and(|have| !have.iter().any(|h| h == s))
+            })
+            .collect();
+        list.push(check("OBS connected", ok_if(connected), obs.url.clone()));
+        list.push(check(
+            "OBS scenes exist",
+            match (connected, missing.is_empty()) {
+                (false, _) => CheckState::Pending,
+                (true, ok) => ok_if(ok),
+            },
+            if missing.is_empty() {
+                String::new()
+            } else {
+                format!("missing: {}", missing.join(", "))
+            },
+        ));
+        // Without a connection the output state is unknown, not failed.
+        let output = |active: bool, required: bool| match (active, connected) {
+            (true, _) => CheckState::Ok,
+            (false, true) if required => CheckState::Fail,
+            _ => CheckState::Pending,
+        };
+        let streaming = self.state.obs_stream == Some(OutputState::Started);
+        list.push(check(
+            "OBS streaming",
+            output(streaming, true),
+            String::new(),
+        ));
+        let recording = matches!(
+            self.state.obs_record,
+            Some(OutputState::Started | OutputState::Resumed)
+        );
+        list.push(check(
+            "OBS recording",
+            output(recording, obs.require_recording),
+            if recording {
+                String::new()
+            } else {
+                "the local recording is the editing source".into()
+            },
+        ));
+        let remaining = self.yt.quota().remaining(self.clock.now_ts());
+        let reserve = self.config.youtube.daily_quota_reserve;
+        list.push(check(
+            "Quota remaining >= reserve",
+            ok_if(remaining >= i64::from(reserve)),
+            format!("{remaining} left, reserve {reserve}"),
+        ));
+        list
     }
 
     fn publish(&self) {

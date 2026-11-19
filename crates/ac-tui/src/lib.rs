@@ -3,12 +3,13 @@
 //! The UI only reads [`View`] snapshots and sends [`Command`]s; the controller owns state.
 //! Times are captured when a key is pressed, before any prompt opens.
 
+use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
 use ac_core::command::Command;
-use ac_core::event::{By, Event, EventKind, StreamStatus};
+use ac_core::event::{By, Event, EventKind, OutputState, ServiceStatus, StreamStatus};
 use ac_core::session::SessionMeta;
 use ac_core::session_state::SessionState;
 use ac_core::time::{Clock, Timestamp, chapter_ts, hms, vod_t};
@@ -41,23 +42,54 @@ pub struct View {
     pub quota_remaining: i64,
     /// One-line feedback for the last action, e.g. "description unchanged".
     pub notice: Option<String>,
+    pub preflight: Vec<Check>,
 }
+
+/// One pre-flight checklist item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Check {
+    pub label: String,
+    pub state: CheckState,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckState {
+    Ok,
+    Fail,
+    /// Not known yet (e.g. OBS not connected).
+    Pending,
+}
+
+/// Input that arrives from outside the terminal, e.g. global hotkeys.
+#[derive(Debug, Clone, PartialEq)]
+pub enum External {
+    /// Checkpoint hotkey: time captured at the press, title asked in the TUI.
+    Checkpoint(Timestamp),
+    Message(String),
+}
+
+/// A hotkey checkpoint without a title after this long is saved as "Checkpoint N".
+const HOTKEY_TITLE_TIMEOUT_S: f64 = 600.0;
 
 /// Runs the TUI until the user quits or finalizes. Blocking: call from a dedicated thread.
 pub fn run(
     clock: Arc<Clock>,
     view: watch::Receiver<View>,
     commands: mpsc::UnboundedSender<Command>,
+    external: std::sync::mpsc::Receiver<External>,
 ) -> io::Result<()> {
     let mut terminal = ratatui::init();
-    let result = App::new(clock, view, commands).run(&mut terminal);
+    let mut app = App::new(clock, view, commands);
+    app.external = Some(external);
+    let result = app.run(&mut terminal);
     ratatui::restore();
     result
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum Prompt {
-    Checkpoint,
+    Checkpoint { by: By },
     Mark,
     Note,
     Edit { cid: String },
@@ -77,6 +109,7 @@ enum Mode {
         scroll: u16,
     },
     Help,
+    Preflight,
     ConfirmQuit,
     ConfirmDelete {
         cid: String,
@@ -103,6 +136,9 @@ struct App {
     message: Option<String>,
     end_prompted: bool,
     exit: bool,
+    external: Option<std::sync::mpsc::Receiver<External>>,
+    /// Hotkey checkpoints waiting for their title prompt.
+    pending: VecDeque<Timestamp>,
 }
 
 impl App {
@@ -115,19 +151,22 @@ impl App {
             clock,
             view,
             commands,
-            mode: Mode::Normal,
+            mode: Mode::Preflight,
             focus: Pane::Chapters,
             chapters: ListState::default(),
             log_scroll: 0,
             message: None,
             end_prompted: false,
             exit: false,
+            external: None,
+            pending: VecDeque::new(),
         }
     }
 
     fn run(mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         while !self.exit {
             let view = self.view.borrow_and_update().clone();
+            self.poll_external(&view);
             if view.state.ended && !self.end_prompted && self.mode == Mode::Normal {
                 self.end_prompted = true;
                 self.mode = Mode::Ended;
@@ -141,6 +180,47 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Queues hotkey checkpoints, opens their title prompt when the UI is free, and saves
+    /// untitled ones after [`HOTKEY_TITLE_TIMEOUT_S`].
+    fn poll_external(&mut self, view: &View) {
+        while let Some(msg) = self.external.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            match msg {
+                External::Checkpoint(t) => self.pending.push_back(t),
+                External::Message(m) => self.message = Some(m),
+            }
+        }
+        let hotkey = Prompt::Checkpoint { by: By::Hotkey };
+        let now = self.clock.now_ts();
+        let expired = |t: Timestamp| now.secs_since(t) >= HOTKEY_TITLE_TIMEOUT_S;
+        if let Mode::Input {
+            prompt,
+            text,
+            pressed_at,
+        } = &self.mode
+            && *prompt == hotkey
+            && expired(*pressed_at)
+        {
+            let (text, pressed_at) = (text.trim().to_owned(), *pressed_at);
+            self.mode = Mode::Normal;
+            self.submit(hotkey.clone(), text, pressed_at, view);
+        }
+        while let Some(&t) = self.pending.front()
+            && expired(t)
+        {
+            self.pending.pop_front();
+            self.submit(hotkey.clone(), String::new(), t, view);
+        }
+        if self.mode == Mode::Normal
+            && let Some(pressed_at) = self.pending.pop_front()
+        {
+            self.mode = Mode::Input {
+                prompt: hotkey,
+                text: String::new(),
+                pressed_at,
+            };
+        }
     }
 
     fn send(&mut self, cmd: Command) {
@@ -199,7 +279,7 @@ impl App {
                 }
                 _ => self.mode = Mode::Preview { scroll },
             },
-            Mode::Help => {}
+            Mode::Help | Mode::Preflight => {}
             Mode::ConfirmQuit => match key.code {
                 KeyCode::Char('y') => self.finish(Command::Quit),
                 KeyCode::Char('f') => self.finish(Command::Finalize),
@@ -233,16 +313,21 @@ impl App {
             pressed_at,
         };
         match code {
-            KeyCode::Char('c') => self.mode = input(Prompt::Checkpoint),
+            KeyCode::Char('c') => self.mode = input(Prompt::Checkpoint { by: By::Tui }),
             KeyCode::Char('m') => self.mode = input(Prompt::Mark),
             KeyCode::Char('n') => self.mode = input(Prompt::Note),
             KeyCode::Char(':') => self.mode = input(Prompt::Palette),
             KeyCode::Char('s') => self.mode = Mode::Preview { scroll: 0 },
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
-            KeyCode::Char('b' | 'p') => {
-                self.message = Some("BRB and privacy need OBS (phase 2)".into())
-            }
+            KeyCode::Char('b') => self.send(Command::Brb {
+                on: None,
+                by: By::Tui,
+            }),
+            KeyCode::Char('p') => self.send(Command::Privacy {
+                on: None,
+                by: By::Tui,
+            }),
             KeyCode::Tab | KeyCode::BackTab => {
                 self.focus = match self.focus {
                     Pane::Chapters => Pane::Log,
@@ -298,7 +383,7 @@ impl App {
 
     fn submit(&mut self, prompt: Prompt, text: String, pressed_at: Timestamp, view: &View) {
         match prompt {
-            Prompt::Checkpoint => {
+            Prompt::Checkpoint { by } => {
                 let title = if text.is_empty() {
                     format!("Checkpoint {}", view.state.checkpoints.len() + 1)
                 } else {
@@ -307,7 +392,7 @@ impl App {
                 self.send(Command::Checkpoint {
                     title,
                     pressed_at,
-                    by: By::Tui,
+                    by,
                 });
             }
             Prompt::Mark => self.send(Command::Mark {
@@ -329,6 +414,7 @@ impl App {
                     self.exit |= ends;
                 }
                 Ok(Palette::Help) => self.mode = Mode::Help,
+                Ok(Palette::Preflight) => self.mode = Mode::Preflight,
                 Err(message) => self.message = Some(message),
             },
         }
@@ -378,11 +464,38 @@ impl App {
             .yt_actual_start
             .map(|start| hms(anchors.yt_actual_end.unwrap_or(now).secs_since(start)))
             .unwrap_or_default();
-        let youtube = match view.state.services.get("youtube") {
-            Some(ac_core::event::ServiceStatus::Ok) | None => "ok",
-            Some(ac_core::event::ServiceStatus::Retrying) => "retrying",
-            Some(ac_core::event::ServiceStatus::Down) => "down",
+        let service = |name: &str| match view.state.services.get(name) {
+            Some(ServiceStatus::Ok) => "ok",
+            Some(ServiceStatus::Retrying) => "retrying",
+            Some(ServiceStatus::Down) => "down",
+            None => "…",
         };
+        let state = &view.state;
+        let obs = if state.services.get("obs") == Some(&ServiceStatus::Ok) {
+            let rec = match state.obs_record {
+                Some(OutputState::Started | OutputState::Resumed) => " ● REC",
+                Some(OutputState::Paused) => " ‖ REC",
+                _ => " ○ not recording",
+            };
+            format!("OBS: {}{rec}", state.scene.as_deref().unwrap_or("?"))
+        } else {
+            format!("OBS {}", service("obs"))
+        };
+        let badge = |on: bool, text: &str| {
+            if on {
+                Span::styled(
+                    format!(" {text} "),
+                    Style::new().fg(Color::Black).bg(ACCENT),
+                )
+            } else {
+                Span::raw("")
+            }
+        };
+        let failing = view
+            .preflight
+            .iter()
+            .filter(|c| c.state == CheckState::Fail)
+            .count();
         Line::from(vec![
             Span::styled(
                 format!(" #{:03} ", view.meta.episode),
@@ -392,11 +505,22 @@ impl App {
                 format!(" {dot} {label} {elapsed} "),
                 Style::new().fg(ACCENT).bold(),
             ),
+            badge(state.brb, "BRB"),
+            badge(state.privacy, "PRIVACY"),
             Span::raw(format!(
-                "· YouTube {youtube} · quota {} · ",
+                " {obs} · YouTube {} · quota {} ",
+                service("youtube"),
                 thousands(view.quota_remaining)
             )),
-            Span::styled(view.session.clone(), Style::new().fg(MUTED)),
+            if failing > 0 {
+                Span::styled(
+                    format!("· ✖ {failing} pre-flight "),
+                    Style::new().fg(ACCENT).bold(),
+                )
+            } else {
+                Span::raw("")
+            },
+            Span::styled(format!("· {}", view.session), Style::new().fg(MUTED)),
         ])
     }
 
@@ -473,7 +597,7 @@ impl App {
         match &self.mode {
             Mode::Input { .. } => " [Enter] save  [Esc] cancel".into(),
             Mode::Preview { .. } => " [Enter] push  [j/k] scroll  [Esc] close".into(),
-            _ => " [c]heckpoint [m]ark [n]ote [s]ync [e]dit [d]elete [Tab] focus [:] command [?] help [q]uit".into(),
+            _ => " [c]heckpoint [m]ark [b]rb [p]rivacy [n]ote [s]ync [e]dit [d]elete [Tab] focus [:] command [?] help [q]uit".into(),
         }
     }
 
@@ -486,7 +610,8 @@ impl App {
                 pressed_at,
             } => {
                 let label = match prompt {
-                    Prompt::Checkpoint => "Checkpoint title",
+                    Prompt::Checkpoint { by: By::Hotkey } => "Checkpoint title (hotkey)",
+                    Prompt::Checkpoint { .. } => "Checkpoint title",
                     Prompt::Mark => "Mark label (optional)",
                     Prompt::Note => "Private note",
                     Prompt::Edit { .. } => "Edit chapter title",
@@ -546,7 +671,17 @@ impl App {
                 frame.render_widget(widget, popup);
                 return;
             }
-            Mode::Help => (" Help (any key closes) ".into(), help_lines(), 72, 22),
+            Mode::Help => (" Help (any key closes) ".into(), help_lines(), 72, 28),
+            Mode::Preflight => {
+                let lines: Vec<Line> = view.preflight.iter().map(check_line).collect();
+                let height = lines.len() as u16 + 2;
+                (
+                    " Pre-flight (any key closes, :preflight reopens) ".into(),
+                    lines,
+                    90,
+                    height,
+                )
+            }
             Mode::ConfirmQuit => {
                 let mut body = vec![Line::raw(
                     "Quit aftercast? The session can be resumed later.",
@@ -592,6 +727,7 @@ impl App {
 enum Palette {
     Command(Command),
     Help,
+    Preflight,
 }
 
 /// Parses a palette line (specs/02, "Command palette"); `now` is when Enter was pressed.
@@ -628,9 +764,27 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
         "reload" => Command::Reload,
         "quit" | "q" => Command::Quit,
         "help" | "?" => return Ok(Palette::Help),
-        "break" | "b" | "brb" | "back" | "privacy" | "scene" => {
-            return Err(format!(":{name} needs OBS (phase 2)"));
-        }
+        "preflight" => return Ok(Palette::Preflight),
+        "break" | "b" | "brb" => Command::Brb {
+            on: Some(true),
+            by: By::Palette,
+        },
+        "back" => Command::Brb {
+            on: Some(false),
+            by: By::Palette,
+        },
+        "privacy" => Command::Privacy {
+            on: match args.as_str() {
+                "on" => Some(true),
+                "off" => Some(false),
+                "" => None,
+                _ => return Err(":privacy takes on or off".into()),
+            },
+            by: By::Palette,
+        },
+        "scene" => Command::Scene {
+            name: need("a scene name")?,
+        },
         "say" | "overlay" | "latency" => {
             return Err(format!(":{name} arrives with chat and overlays (phase 3)"));
         }
@@ -716,6 +870,22 @@ fn summary(e: &Event) -> (String, bool) {
             (format!("stream {status:?}").to_lowercase(), false)
         }
         EventKind::StreamEnded { .. } => ("stream ended".into(), false),
+        EventKind::ObsScene { to, .. } => (format!("scene {to:?}"), true),
+        EventKind::ObsStream { state } => (format!("OBS stream {state:?}").to_lowercase(), false),
+        EventKind::ObsRecord {
+            state,
+            path: Some(p),
+        } => (format!("recording {state:?} {p}").to_lowercase(), false),
+        EventKind::ObsRecord { state, .. } => {
+            (format!("recording {state:?}").to_lowercase(), false)
+        }
+        EventKind::BrbStart { .. } => ("BRB on".into(), false),
+        EventKind::BrbEnd {} => ("BRB off".into(), false),
+        EventKind::PrivacyStart { .. } => ("privacy on".into(), false),
+        EventKind::PrivacyEnd {} => ("privacy off".into(), false),
+        EventKind::ServiceState { service, state } => {
+            (format!("{service} {state:?}").to_lowercase(), true)
+        }
         EventKind::ServiceError { service, error, .. } => (
             format!("{service} error: {}", error.as_deref().unwrap_or("?")),
             false,
@@ -732,6 +902,8 @@ fn help_lines() -> Vec<Line<'static>> {
         "c        checkpoint (time taken at key press, then type the title)",
         "m        mark a good moment (optional label)",
         "n        private note (never published)",
+        "b        BRB on/off (OBS BRB scene, back to the previous scene)",
+        "p        privacy on/off (OBS privacy scene)",
         "s        preview description; Enter pushes it",
         "e / d    edit / delete the selected chapter (Chapters pane)",
         "Tab      switch pane      j/k, arrows  move",
@@ -743,11 +915,35 @@ fn help_lines() -> Vec<Line<'static>> {
         ":sync   push the description now",
         ":finalize   final push and end the session",
         ":reload   re-read config and templates",
+        ":brb  :back   :privacy [on|off]   :scene <name>",
+        ":preflight   show the pre-flight checklist",
         ":quit",
+        "",
+        "Global hotkeys (any app): Ctrl+Alt+M mark, Ctrl+Alt+C checkpoint,",
+        "Ctrl+Alt+B BRB, Ctrl+Alt+P privacy (configurable in [hotkeys])",
     ]
     .into_iter()
     .map(Line::raw)
     .collect()
+}
+
+fn check_line(c: &Check) -> Line<'static> {
+    let (mark, style) = match c.state {
+        CheckState::Ok => ("✔", Style::new().fg(Color::Green)),
+        CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
+        CheckState::Pending => ("…", Style::new().fg(MUTED)),
+    };
+    let mut spans = vec![
+        Span::styled(format!(" {mark} "), style),
+        Span::styled(c.label.clone(), style),
+    ];
+    if !c.detail.is_empty() {
+        spans.push(Span::styled(
+            format!("  {}", c.detail),
+            Style::new().fg(MUTED),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -809,7 +1005,28 @@ mod tests {
                 .unwrap_err()
                 .contains("needs a title")
         );
-        assert!(palette("brb", now()).unwrap_err().contains("OBS"));
+        assert_eq!(
+            palette("brb", now()),
+            Ok(Palette::Command(Command::Brb {
+                on: Some(true),
+                by: By::Palette
+            }))
+        );
+        assert_eq!(
+            palette("privacy off", now()),
+            Ok(Palette::Command(Command::Privacy {
+                on: Some(false),
+                by: By::Palette
+            }))
+        );
+        assert_eq!(
+            palette("scene Starting Soon", now()),
+            Ok(Palette::Command(Command::Scene {
+                name: "Starting Soon".into()
+            }))
+        );
+        assert!(palette("privacy maybe", now()).is_err());
+        assert_eq!(palette("preflight", now()), Ok(Palette::Preflight));
         assert!(
             palette("frobnicate", now())
                 .unwrap_err()
@@ -869,6 +1086,18 @@ mod tests {
             render_error: None,
             quota_remaining: 9310,
             notice: Some("description pushed (8 chars)".into()),
+            preflight: vec![
+                Check {
+                    label: "OBS connected".into(),
+                    state: CheckState::Ok,
+                    detail: "ws://127.0.0.1:4455".into(),
+                },
+                Check {
+                    label: "OBS recording".into(),
+                    state: CheckState::Fail,
+                    detail: "the local recording is the editing source".into(),
+                },
+            ],
         }
     }
 
@@ -898,6 +1127,12 @@ mod tests {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock.clone(), rx, cmd_tx);
 
+        // The pre-flight checklist opens first; any key closes it.
+        let text = screen(&mut app, &view);
+        assert!(text.contains("Pre-flight"), "{text}");
+        assert!(text.contains("✖ OBS recording"), "{text}");
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &view);
+
         let text = screen(&mut app, &view);
         if std::env::var_os("SHOW_TUI").is_some() {
             println!("{text}");
@@ -909,6 +1144,7 @@ mod tests {
         assert!(text.contains("Project setup"), "{text}");
         assert!(text.contains("mark \"borrow checker rant\""), "{text}");
         assert!(text.contains("description pushed"), "{text}");
+        assert!(text.contains("✖ 1 pre-flight"), "{text}");
 
         // `c` captures the time first; typing then Enter sends the checkpoint.
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
@@ -942,6 +1178,46 @@ mod tests {
         assert!(screen(&mut app, &view).contains("Description preview"));
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Sync);
+    }
+
+    #[test]
+    fn hotkey_checkpoints_prompt_in_order_and_save_untitled_after_timeout() {
+        let clock = Arc::new(Clock::new());
+        let view = sample_view(&clock);
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let (ext_tx, ext_rx) = std::sync::mpsc::channel();
+        let mut app = App::new(clock.clone(), rx, cmd_tx);
+        app.external = Some(ext_rx);
+        app.mode = Mode::Normal;
+        let first = clock.now_ts();
+        ext_tx.send(External::Checkpoint(first)).unwrap();
+        ext_tx
+            .send(External::Checkpoint(first.add_secs(1.0)))
+            .unwrap();
+        app.poll_external(&view);
+        assert!(screen(&mut app, &view).contains("Checkpoint title (hotkey)"));
+
+        // Ten minutes later both are saved with default titles at their press times.
+        clock.advance(Duration::from_secs(601));
+        app.poll_external(&view);
+        let saved: Vec<Command> = std::iter::from_fn(|| cmd_rx.try_recv().ok()).collect();
+        let times: Vec<_> = saved
+            .iter()
+            .map(|c| match c {
+                Command::Checkpoint {
+                    pressed_at,
+                    by: By::Hotkey,
+                    title,
+                } => {
+                    assert!(title.starts_with("Checkpoint "));
+                    *pressed_at
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(times, [first, first.add_secs(1.0)]);
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]

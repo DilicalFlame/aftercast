@@ -32,6 +32,11 @@ pub enum Action {
     Sync,
     Finalize,
     Quit,
+    Brb(Option<bool>),
+    Privacy(Option<bool>),
+    Scene(String),
+    /// Something OBS reports (`--mock` only), e.g. `obs record started D:/a.mkv`.
+    Obs(ac_obs::Update),
     /// Only advance the clock.
     Wait,
 }
@@ -67,10 +72,50 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
         "sync" => Action::Sync,
         "finalize" => Action::Finalize,
         "quit" => Action::Quit,
+        "brb" => Action::Brb(Some(true)),
+        "back" => Action::Brb(Some(false)),
+        "privacy" => Action::Privacy(match args.as_str() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        }),
+        "scene" => Action::Scene(required("name")?),
+        "obs" => Action::Obs(obs_update(&args)?),
         "wait" | "" => Action::Wait,
         other => return Err(format!("unknown command {other:?}")),
     };
     Ok(Some(Line { delay, action }))
+}
+
+/// `scene <name>`, `stream started|stopped|reconnecting`,
+/// `record started|stopped|paused|resumed|file_changed [path]`, `down`.
+fn obs_update(args: &str) -> Result<ac_obs::Update, String> {
+    use ac_core::event::OutputState;
+    use ac_obs::Update;
+    let (what, rest) = args.split_once(' ').unwrap_or((args, ""));
+    let rest = rest.trim();
+    let state = || {
+        let (state, path) = rest.split_once(' ').unwrap_or((rest, ""));
+        let state: OutputState = serde_json::from_value(serde_json::Value::String(state.into()))
+            .map_err(|_| format!("obs {what}: unknown state {state:?}"))?;
+        Ok::<_, String>((
+            state,
+            Some(path.trim().to_owned()).filter(|p| !p.is_empty()),
+        ))
+    };
+    Ok(match what {
+        "scene" if !rest.is_empty() => Update::Scene(rest.to_owned()),
+        "stream" => Update::Stream(state()?.0),
+        "record" => {
+            let (state, path) = state()?;
+            Update::Record { state, path }
+        }
+        "down" => Update::Down {
+            error: "connection to OBS lost".into(),
+            retry_in: Duration::from_secs(1),
+        },
+        _ => return Err(format!("bad obs line {args:?}")),
+    })
 }
 
 fn parse_delay(spec: &str) -> Result<Duration, String> {
@@ -116,7 +161,16 @@ impl Action {
             Self::Sync => Command::Sync,
             Self::Finalize => Command::Finalize,
             Self::Quit => Command::Quit,
-            Self::Wait => return None,
+            Self::Brb(on) => Command::Brb {
+                on,
+                by: By::Palette,
+            },
+            Self::Privacy(on) => Command::Privacy {
+                on,
+                by: By::Palette,
+            },
+            Self::Scene(name) => Command::Scene { name },
+            Self::Wait | Self::Obs(_) => return None,
         })
     }
 }
@@ -159,6 +213,10 @@ async fn execute(
         };
         clock.advance(delay);
         let ends = matches!(action, Action::Quit | Action::Finalize);
+        if let Action::Obs(update) = &action {
+            // Same queue as commands, so it is handled before the next line.
+            let _ = msgs.send(Msg::Obs(update.clone()));
+        }
         if let Some(cmd) = action.command(clock) {
             let (ack, done) = oneshot::channel();
             if msgs.send(Msg::Command(cmd, ack)).is_err() {
@@ -216,6 +274,14 @@ mod tests {
         );
         assert_eq!(line("+10s").action, Action::Wait);
         assert_eq!(line("sync").action, Action::Sync);
+        assert_eq!(line("privacy").action, Action::Privacy(None));
+        assert_eq!(
+            line("obs record file_changed D:/OBS/b.mkv").action,
+            Action::Obs(ac_obs::Update::Record {
+                state: ac_core::event::OutputState::FileChanged,
+                path: Some("D:/OBS/b.mkv".into())
+            })
+        );
         assert_eq!(parse("  # comment").unwrap(), None);
         assert_eq!(parse("").unwrap(), None);
     }
@@ -225,5 +291,7 @@ mod tests {
         assert!(parse("checkpoint").is_err());
         assert!(parse("+5x sync").is_err());
         assert!(parse("explode").is_err());
+        assert!(parse("obs record exploded").is_err());
+        assert!(parse("obs scene").is_err());
     }
 }

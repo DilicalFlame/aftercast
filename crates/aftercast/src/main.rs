@@ -3,6 +3,7 @@ mod doctor;
 mod error;
 mod live;
 mod script;
+mod secret;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -84,9 +85,24 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
         controller,
         ..
     } = handles;
+    let (external_tx, external) = std::sync::mpsc::channel();
+    let config = ac_core::Config::load(config_path)?;
+    if let Err(e) = hotkeys(
+        &config.hotkeys,
+        clock.clone(),
+        commands.clone(),
+        external_tx.clone(),
+    ) {
+        tracing::warn!("global hotkeys: {e}");
+        let _ = external_tx.send(ac_tui::External::Message(format!(
+            "global hotkeys unavailable: {e}"
+        )));
+    }
     let ui_commands = commands.clone();
     let ui_view = view.clone();
-    let ui = tokio::task::spawn_blocking(move || ac_tui::run(clock, ui_view, ui_commands)).await;
+    let ui =
+        tokio::task::spawn_blocking(move || ac_tui::run(clock, ui_view, ui_commands, external))
+            .await;
     // However the UI ended, end the session cleanly (ignored if it already ended).
     let _ = commands.send(ac_core::command::Command::Quit);
     drop(commands);
@@ -102,8 +118,47 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
     Ok(exit::OK)
 }
 
+/// Registers the global hotkeys. Time is captured at the press; a checkpoint's title
+/// prompt opens in the TUI.
+fn hotkeys(
+    keys: &ac_core::config::Hotkeys,
+    clock: std::sync::Arc<Clock>,
+    commands: tokio::sync::mpsc::UnboundedSender<ac_core::command::Command>,
+    external: std::sync::mpsc::Sender<ac_tui::External>,
+) -> std::result::Result<(), String> {
+    use ac_capture::HotkeyAction as A;
+    use ac_core::command::Command as C;
+    use ac_core::event::By;
+    let parsed = ac_capture::parse(&[
+        (A::Mark, &keys.mark),
+        (A::Checkpoint, &keys.checkpoint),
+        (A::Privacy, &keys.privacy),
+        (A::Brb, &keys.brb),
+    ])?;
+    ac_capture::spawn(parsed, move |action| {
+        let pressed_at = clock.now_ts();
+        let by = By::Hotkey;
+        let _ = match action {
+            A::Checkpoint => {
+                let _ = external.send(ac_tui::External::Checkpoint(pressed_at));
+                return;
+            }
+            A::Mark => commands.send(C::Mark {
+                label: None,
+                pressed_at,
+                by,
+            }),
+            A::Brb => commands.send(C::Brb { on: None, by }),
+            A::Privacy => commands.send(C::Privacy { on: None, by }),
+        };
+    })
+}
+
 async fn auth(home: &Home, config_path: &std::path::Path, action: AuthAction) -> Result<u8> {
     let config = Config::load(config_path)?;
+    if let AuthAction::Obs = action {
+        return obs_password(&config.obs.password);
+    }
     let profile = &config.youtube.token_profile;
     let secret: PathBuf = home.path(&config.youtube.client_secret_file);
     match action {
@@ -132,6 +187,7 @@ async fn auth(home: &Home, config_path: &std::path::Path, action: AuthAction) ->
                 client.quota().remaining(clock.now_ts())
             );
         }
+        AuthAction::Obs => unreachable!("handled above"),
         AuthAction::Logout => {
             if auth::logout(profile).await? {
                 println!("Signed out of profile {profile}.");
@@ -140,5 +196,20 @@ async fn auth(home: &Home, config_path: &std::path::Path, action: AuthAction) ->
             }
         }
     }
+    Ok(exit::OK)
+}
+
+/// `auth obs`: reads the obs-websocket password from stdin into the keyring entry that
+/// `[obs].password = "keyring:<name>"` names.
+fn obs_password(reference: &str) -> Result<u8> {
+    let Some(name) = reference.strip_prefix("keyring:") else {
+        eprintln!("[obs].password is {reference:?}, not a keyring reference; nothing to store.");
+        return Ok(exit::CONFIG);
+    };
+    eprint!("OBS websocket password (Tools > WebSocket Server Settings): ");
+    let mut password = String::new();
+    std::io::stdin().read_line(&mut password)?;
+    secret::store(name, password.trim_end_matches(['\r', '\n'])).map_err(error::AppError::Usage)?;
+    println!("Stored in the OS keyring ({} / {name}).", secret::SERVICE);
     Ok(exit::OK)
 }

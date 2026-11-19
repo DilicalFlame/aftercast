@@ -166,7 +166,7 @@ impl Default for Obs {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ObsScenes {
     pub main: String,
@@ -174,6 +174,18 @@ pub struct ObsScenes {
     pub privacy: String,
     pub starting: String,
     pub ending: String,
+}
+
+impl ObsScenes {
+    pub fn all(&self) -> [&str; 5] {
+        [
+            &self.main,
+            &self.brb,
+            &self.privacy,
+            &self.starting,
+            &self.ending,
+        ]
+    }
 }
 
 impl Default for ObsScenes {
