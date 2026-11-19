@@ -177,6 +177,10 @@ impl Session {
         self.dir.join("README.md")
     }
 
+    pub fn recordings_file(&self) -> PathBuf {
+        self.dir.join("media/recordings.json")
+    }
+
     pub fn events_file(&self) -> PathBuf {
         self.dir.join("events.jsonl")
     }
