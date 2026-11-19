@@ -87,7 +87,7 @@ aftercast connects to OBS it refreshes these sources, so a page that failed to l
 | `brb` | "Be right back" card with a timer |
 | `latency` | the counter used by `:latency` |
 | `chapters` | the latest chapter title |
-| `keys` | shortcuts you press (`Ctrl` `S`) and a "typing" indicator, never the typed text |
+| `keys` | what you type (last 24 characters) and shortcuts as key chips (`Ctrl` `S`) |
 
 Pages are transparent and reconnect by themselves when aftercast restarts. To restyle, put
 `overlay.css`, `overlay.js` or `<name>.html` in `<home>\overlays\`; theme colors and fonts
@@ -178,13 +178,19 @@ While the TUI runs, aftercast records key presses and shell commands into the se
 folder, for keystroke overlays in rendered clips and as signals for finding clips later.
 These files are never uploaded or put in a description.
 
-- `keys.jsonl.zst`: key presses. Typed characters are kept only in the apps listed in
-  `capture.keys_allow_apps` (VS Code, Windows Terminal, ...); in every other app only
-  shortcuts with Ctrl, Alt or Win are kept. Nothing is kept while privacy mode is on or while
-  the window title matches `capture.keys_deny_title_patterns` (password managers, `.env`,
-  sign-in pages). Typed text matching `capture.secret_patterns` (GitHub, AWS, OpenAI
-  tokens, private keys) is dropped before it reaches the disk. Window titles are never
+- `keys.jsonl.zst`: key presses with the typed characters, in every app. Nothing is
+  recorded (or shown on the `keys` overlay) while privacy mode is on, in apps listed in
+  `capture.keys_deny_apps` (password managers, Windows sign-in and UAC prompts), in windows
+  whose title matches `capture.keys_deny_title_patterns` (password, sign in, log in, 2FA,
+  incognito, `.env`, ...), or while a password box has focus (asked through Windows UI
+  Automation, so it works in browsers too). Apps in `capture.keys_trusted_apps` (editors,
+  terminals) skip that password-box question, because asking Electron apps like VS Code turns
+  on their screen reader mode. Typed text matching `capture.secret_patterns` (GitHub, AWS,
+  OpenAI tokens, private keys) is dropped before it reaches the disk. Window titles are never
   stored. The status bar shows `keys` with a keys-per-minute sparkline.
+
+  **A password typed at a terminal prompt (ssh, sudo, gpg) is not detected**: it looks like
+  any other typing and would appear on the overlay. Press `p` (or `Ctrl+Alt+P`) first.
 - `shell.jsonl`: PowerShell commands, with secrets replaced by `[REDACTED]`. Add the hook
   once: `aftercast shell-hook pwsh >> $PROFILE`, then open a new terminal. Commands PSReadLine
   keeps out of history (lines with `password`, `token`, ...) are not captured either.

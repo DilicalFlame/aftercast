@@ -124,9 +124,11 @@ impl Controller {
             }
         }
         if !self.overlays_off.contains("keys") {
-            let data = match rec.combo() {
-                Some(combo) => json!({ "combo": combo }),
-                None => json!({ "typing": true }),
+            let data = match (rec.combo(), &rec.ch) {
+                (Some(combo), _) => json!({ "combo": combo }),
+                (None, Some(ch)) => json!({ "ch": ch }),
+                (None, None) if rec.k == "BackSpace" => json!({ "back": true }),
+                (None, None) => json!({ "key": rec.k }),
             };
             self.overlays.send(OverlayMsg {
                 overlay: "keys".into(),

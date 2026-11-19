@@ -104,6 +104,7 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
         let (keys, errors) = (msgs.clone(), msgs.clone());
         let started = ac_capture::hook::spawn(
             clock.clone(),
+            config.capture.keys_trusted_apps.clone(),
             move |raw| {
                 let _ = keys.send(live::Msg::Key(raw));
             },

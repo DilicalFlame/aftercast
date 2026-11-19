@@ -204,16 +204,21 @@ viewer, and ideally a third account you made a moderator.
 3. Start a session. Expect: pre-flight `Key capture running` ✔, `Shell hook seen in last
    24 h` ✔, status bar `keys` with a sparkline, and `keys on` in the event log.
 4. Type a few lines in VS Code, press `Ctrl+S`. Expect: the sparkline grows; the `keys`
-   overlay shows `Ctrl` `S` chips for a moment and a pulsing "typing" while you type, never
-   the letters.
-5. Type in Chrome (address bar), then press `Ctrl+T`. Quit with `q`, `y`.
-   Expect (run `zstd -dc keys.jsonl.zst` in the session folder, or the snippet below): the VS
-   Code characters are there; for `chrome.exe` only the `Ctrl+T` line with `"ch":null`;
-   no window titles anywhere.
+   overlay shows what you type (last 24 characters, Backspace removes, Enter starts over),
+   `Ctrl` `S` chips for a moment, and clears after 1.5 s idle.
+5. Type in Chrome (address bar), press `Ctrl+T`, also type in WezTerm and VS Code.
+   VS Code must not offer "screen reader optimized" mode. Quit with `q`, `y`.
+   Expect (run `zstd -dc keys.jsonl.zst` in the session folder, or the snippet below): the
+   characters for every app, the `Ctrl+T` line with `"ch":null`, no window titles anywhere.
    `python -c "import zstandard,sys;print(zstandard.ZstdDecompressor().stream_reader(open('keys.jsonl.zst','rb')).read().decode())"`
+   Note the `app` name for a plain PowerShell window; if it is neither `pwsh.exe` nor
+   `conhost.exe`, add it to `keys_trusted_apps`.
 6. Press `Ctrl+Alt+M` in VS Code. Expect: a `mark` event, and no `KeyM` record with
    `Ctrl`/`Alt` in the keys file.
-7. Open Bitwarden (or a window titled "Sign in ...") and type. Expect: nothing recorded.
+7. Password boxes and denied windows: type into a website's password field (e.g. a login
+   form whose tab title has no "sign in"), into Bitwarden, into a Windows credential prompt
+   (`runas /user:x cmd`) and into an InPrivate/Incognito window. Expect for each: nothing on
+   the overlay and nothing in the keys file. Typing in the username field next to it shows.
 8. Press `p` (privacy), type in VS Code, press `p` again. Expect: status bar `keys ✖
    privacy` while on; nothing typed during privacy is in the file.
 9. In VS Code type `ghp_` followed by 36 letters and digits, keep typing a few more

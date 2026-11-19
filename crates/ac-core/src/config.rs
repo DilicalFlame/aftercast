@@ -337,7 +337,12 @@ impl Default for Overlay {
 #[serde(default, deny_unknown_fields)]
 pub struct Capture {
     pub keys: bool,
-    pub keys_allow_apps: Vec<String>,
+    /// Editors and terminals: typed text is kept without asking Windows whether the focused
+    /// field is a password box (which would switch Electron apps into screen reader mode).
+    #[serde(alias = "keys_allow_apps")]
+    pub keys_trusted_apps: Vec<String>,
+    /// Apps where nothing is recorded or shown (password managers, Windows sign-in prompts).
+    pub keys_deny_apps: Vec<String>,
     pub keys_deny_title_patterns: Vec<Pattern>,
     pub shell: bool,
     pub shell_spool: PathBuf,
@@ -350,7 +355,7 @@ impl Default for Capture {
     fn default() -> Self {
         Self {
             keys: true,
-            keys_allow_apps: [
+            keys_trusted_apps: [
                 "Code.exe",
                 "Code - Insiders.exe",
                 "Cursor.exe",
@@ -367,14 +372,36 @@ impl Default for Capture {
             ]
             .map(String::from)
             .into(),
+            keys_deny_apps: [
+                "Bitwarden.exe",
+                "1Password.exe",
+                "KeePass.exe",
+                "KeePassXC.exe",
+                "Dashlane.exe",
+                "NordPass.exe",
+                "Enpass.exe",
+                "Proton Pass.exe",
+                "CredentialUIBroker.exe",
+                "consent.exe",
+                "LogonUI.exe",
+                "LockApp.exe",
+            ]
+            .map(String::from)
+            .into(),
             keys_deny_title_patterns: patterns(&[
-                "(?i)password",
+                "(?i)passw",
+                "(?i)passcode",
                 "(?i)bitwarden",
                 "(?i)1password",
+                "(?i)keepass",
                 r"(?i)\.env",
                 "(?i)secret",
-                "(?i)login",
-                "(?i)sign in",
+                "(?i)credential",
+                "(?i)log ?in",
+                "(?i)sign ?in",
+                "(?i)sign ?up",
+                "(?i)two-factor|2fa|verification code|one-time code",
+                "(?i)incognito|inprivate|private browsing",
             ]),
             shell: true,
             shell_spool: "state/shell-spool.jsonl".into(),
@@ -596,7 +623,11 @@ mod tests {
         assert_eq!(empty.readme.link_style, file.readme.link_style);
         assert_eq!(empty.bot.user_cooldown_s, file.bot.user_cooldown_s);
         assert_eq!(empty.overlay.accent, file.overlay.accent);
-        assert_eq!(empty.capture.keys_allow_apps, file.capture.keys_allow_apps);
+        assert_eq!(
+            empty.capture.keys_trusted_apps,
+            file.capture.keys_trusted_apps
+        );
+        assert_eq!(empty.capture.keys_deny_apps, file.capture.keys_deny_apps);
         assert_eq!(
             empty.capture.keys_deny_title_patterns.len(),
             file.capture.keys_deny_title_patterns.len()

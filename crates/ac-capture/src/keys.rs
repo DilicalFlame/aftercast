@@ -36,6 +36,8 @@ pub struct RawKey {
     pub app: String,
     /// Foreground window title; only used for the deny rule, never stored.
     pub title: String,
+    /// The focused field is (or may be) a password box.
+    pub password: bool,
 }
 
 /// One line of `keys.jsonl.zst`.
@@ -67,7 +69,7 @@ impl KeyRecord {
 
 /// The filtering rules, applied before anything is stored.
 pub struct Filter {
-    allow: Vec<String>,
+    deny_apps: Vec<String>,
     deny: Vec<Regex>,
     /// aftercast's own global hotkeys: `(mods, key)`.
     hotkeys: Vec<(Vec<String>, String)>,
@@ -76,8 +78,8 @@ pub struct Filter {
 impl Filter {
     pub fn new(cfg: &config::Capture, hotkeys: &[&str]) -> Self {
         Self {
-            allow: cfg
-                .keys_allow_apps
+            deny_apps: cfg
+                .keys_deny_apps
                 .iter()
                 .map(|a| a.to_lowercase())
                 .collect(),
@@ -90,9 +92,15 @@ impl Filter {
         }
     }
 
-    /// What may be stored of `raw`, if anything.
+    /// What may be stored (and shown) of `raw`, if anything: nothing in privacy mode, in a
+    /// denied app or window, or in a password box; otherwise the key with its character.
     pub fn check(&self, raw: &RawKey, privacy: bool) -> Option<KeyRecord> {
-        if privacy || self.deny.iter().any(|re| re.is_match(&raw.title)) || is_modifier(&raw.key) {
+        if privacy
+            || raw.password
+            || self.deny_apps.contains(&raw.app.to_lowercase())
+            || self.deny.iter().any(|re| re.is_match(&raw.title))
+            || is_modifier(&raw.key)
+        {
             return None;
         }
         let mods: Vec<String> = raw.mods.iter().map(|m| m.to_string()).collect();
@@ -103,14 +111,10 @@ impl Filter {
         {
             return None;
         }
-        let allowed = self.allow.contains(&raw.app.to_lowercase());
         let shortcut = raw.mods.iter().any(|m| *m != "Shift");
-        if !allowed && !shortcut {
-            return None;
-        }
         let ch = raw
             .ch
-            .filter(|c| allowed && !shortcut && (!c.is_control() || *c == '\n' || *c == '\t'))
+            .filter(|c| !shortcut && (!c.is_control() || *c == '\n' || *c == '\t'))
             .map(String::from);
         Some(KeyRecord {
             t: raw.t,
@@ -323,6 +327,7 @@ mod tests {
             mods: mods.to_vec(),
             app: app.into(),
             title: "main.rs - aftercast".into(),
+            password: false,
         }
     }
 
@@ -359,12 +364,34 @@ mod tests {
     }
 
     #[test]
-    fn allowed_apps_keep_characters_case_insensitively() {
+    fn denied_apps_and_password_boxes_drop_everything() {
+        let f = filter();
+        for app in ["Bitwarden.exe", "keepassxc.EXE", "CredentialUIBroker.exe"] {
+            assert!(
+                f.check(&raw(app, "KeyA", Some('a'), &[]), false).is_none(),
+                "{app}"
+            );
+            assert!(
+                f.check(&raw(app, "KeyV", None, &["Ctrl"]), false).is_none(),
+                "{app}"
+            );
+        }
+        let mut k = raw("chrome.exe", "KeyA", Some('a'), &[]);
+        k.password = true;
+        assert!(f.check(&k, false).is_none());
+    }
+
+    #[test]
+    fn every_app_keeps_characters() {
         let f = filter();
         let r = f
             .check(&raw("code.EXE", "KeyA", Some('a'), &[]), false)
             .unwrap();
         assert_eq!((r.k.as_str(), r.ch.as_deref()), ("KeyA", Some("a")));
+        let r = f
+            .check(&raw("chrome.exe", "KeyA", Some('A'), &["Shift"]), false)
+            .unwrap();
+        assert_eq!(r.ch.as_deref(), Some("A"));
         let r = f
             .check(&raw("Code.exe", "Return", Some('\n'), &[]), false)
             .unwrap();
@@ -377,16 +404,8 @@ mod tests {
     }
 
     #[test]
-    fn other_apps_keep_only_shortcuts_without_characters() {
+    fn shortcuts_have_no_character() {
         let f = filter();
-        assert!(
-            f.check(&raw("chrome.exe", "KeyA", Some('a'), &[]), false)
-                .is_none()
-        );
-        assert!(
-            f.check(&raw("chrome.exe", "KeyA", Some('A'), &["Shift"]), false)
-                .is_none()
-        );
         let r = f
             .check(&raw("chrome.exe", "KeyT", Some('\u{14}'), &["Ctrl"]), false)
             .unwrap();

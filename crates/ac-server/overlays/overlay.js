@@ -5,6 +5,7 @@
   const root = document.getElementById("root");
   let ticker = null;
   let keysIdle = null;
+  let keysText = "";
 
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -74,18 +75,21 @@
     chapters(d) {
       root.replaceChildren(el("div", "card chapters", d.title || ""));
     },
-    // Shortcuts as key chips; typing only as an indicator (never the text, which could be
-    // a password typed into a terminal). Cleared after 1.5 s without keys.
+    // Typed text as a rolling line (last 24 characters) and shortcuts as key chips.
+    // Password boxes and denied apps never reach the overlay. Cleared after 1.5 s idle.
     keys(d) {
       clearTimeout(keysIdle);
-      let card = root.querySelector(".keys");
-      if (!card) {
-        card = el("div", "card keys");
-        root.replaceChildren(card);
-      }
-      if (d.combo) card.replaceChildren(...d.combo.split("+").map((k) => el("kbd", null, k)));
-      else if (!card.querySelector(".typing")) card.replaceChildren(el("span", "typing", "typing"));
-      keysIdle = setTimeout(clear, 1500);
+      if (d.ch === "\n") keysText = "";
+      else if (d.ch) keysText = (keysText + (d.ch === "\t" ? " " : d.ch)).slice(-24);
+      else if (d.back) keysText = keysText.slice(0, -1);
+      const card = el("div", "card keys");
+      if (keysText) card.append(el("span", "text", keysText));
+      if (d.combo) card.append(...d.combo.split("+").map((k) => el("kbd", null, k)));
+      if (card.childElementCount) root.replaceChildren(card);
+      keysIdle = setTimeout(() => {
+        keysText = "";
+        clear();
+      }, 1500);
     },
   };
 

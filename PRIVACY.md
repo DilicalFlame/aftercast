@@ -31,10 +31,11 @@ It does not read your Google profile, email address, contacts or any other Googl
 - **Session data** (events, chat messages, rendered descriptions, logs, recordings
   metadata) is written to the folder you choose as the aftercast home, on your own disk.
 - **Key presses and shell commands** you type during a session are recorded into the
-  session folder (`keys.jsonl.zst`, `shell.jsonl`) and never leave your computer. Typed
-  text is kept only for the apps you allow, nothing is kept in privacy mode or in windows
-  whose title looks like a password or sign-in page, text that looks like an access token
-  or key is dropped or redacted before it is written, and window titles are never stored.
+  session folder (`keys.jsonl.zst`, `shell.jsonl`) and never leave your computer; typed
+  text is also shown live on the `keys` overlay if you add it to OBS. Nothing is kept in
+  privacy mode, in password managers, in windows whose title looks like a password or
+  sign-in page, or while a password box has focus; text that looks like an access token or
+  key is dropped or redacted before it is written, and window titles are never stored.
   Turn either off with `capture.keys` / `capture.shell`.
 - The overlay and local API server listens only on `127.0.0.1`; other computers cannot
   reach it.

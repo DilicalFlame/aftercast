@@ -1,7 +1,7 @@
-//! Phase 4 acceptance (specs/14-roadmap.md) against `--mock`: keys typed in an allowed app
-//! are stored, a `ghp_` token leaves no trace in `keys.jsonl.zst`, other apps keep only
-//! shortcuts, aftercast's own hotkeys are not recorded, privacy mode drops keys and shell
-//! commands, and shell secrets are redacted in `shell.jsonl`.
+//! Phase 4 acceptance (specs/14-roadmap.md) against `--mock`: typed keys are stored in every
+//! app, a `ghp_` token leaves no trace in `keys.jsonl.zst`, password managers and password
+//! boxes leave nothing, aftercast's own hotkeys are not recorded, privacy mode drops keys
+//! and shell commands, and shell secrets are redacted in `shell.jsonl`.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -96,7 +96,9 @@ fn keys_and_shell_capture_with_secrets_and_privacy() {
         "shell\n\
          type Code.exe let t = {token};\n\
          key chrome.exe Ctrl+T\n\
-         type chrome.exe hidden\n\
+         type chrome.exe rust docs\n\
+         type-password chrome.exe hunter2\n\
+         type Bitwarden.exe vault\n\
          key Code.exe Ctrl+Alt+M\n\
          key Code.exe Ctrl+S\n\
          privacy on\n"
@@ -144,10 +146,14 @@ fn keys_and_shell_capture_with_secrets_and_privacy() {
             r#""Code.exe" ["Ctrl"] "KeyS""#
         ]
     );
-    assert!(
-        keys.iter()
-            .all(|k| k["app"] == "Code.exe" || k["ch"].is_null())
-    );
+    let chrome: String = keys
+        .iter()
+        .filter(|k| k["app"] == "chrome.exe")
+        .filter_map(|k| k["ch"].as_str())
+        .collect();
+    assert_eq!(chrome, "rust docs");
+    assert!(keys.iter().all(|k| k["app"] != "Bitwarden.exe"));
+    assert!(!raw.contains("hunter") && !raw.contains("vault"));
     assert!(keys.iter().all(|k| k.get("title").is_none()));
 
     // Shell: redacted, nothing from privacy mode, in order.

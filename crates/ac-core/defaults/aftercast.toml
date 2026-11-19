@@ -104,14 +104,25 @@ muted = "#9A9A9A"
 
 [capture]
 keys = true
-# Keystrokes with text are only stored while one of these apps is focused (process name, case-insensitive).
-keys_allow_apps = [
+# Typed letters and shortcuts are recorded (and shown on the keys overlay) in every app, except:
+# privacy mode, apps in keys_deny_apps, windows whose title matches keys_deny_title_patterns,
+# and a focused password box. App names are process names, case-insensitive.
+# Trusted apps skip the password-box check (asking Electron apps like VS Code turns on their
+# screen reader mode). A password typed at a terminal prompt is not detected: press privacy first.
+keys_trusted_apps = [
   "Code.exe", "Code - Insiders.exe", "Cursor.exe", "Zed.exe", "WindowsTerminal.exe",
   "wezterm-gui.exe", "alacritty.exe", "nvim.exe", "nvim-qt.exe", "neovide.exe",
   "pwsh.exe", "powershell.exe", "conhost.exe",
 ]
-# In other apps only modifier shortcuts are stored (e.g. Ctrl+S), never characters.
-keys_deny_title_patterns = ["(?i)password", "(?i)bitwarden", "(?i)1password", "(?i)\\.env", "(?i)secret", "(?i)login", "(?i)sign in"]
+keys_deny_apps = [
+  "Bitwarden.exe", "1Password.exe", "KeePass.exe", "KeePassXC.exe", "Dashlane.exe", "NordPass.exe",
+  "Enpass.exe", "Proton Pass.exe", "CredentialUIBroker.exe", "consent.exe", "LogonUI.exe", "LockApp.exe",
+]
+keys_deny_title_patterns = [
+  "(?i)passw", "(?i)passcode", "(?i)bitwarden", "(?i)1password", "(?i)keepass", "(?i)\\.env",
+  "(?i)secret", "(?i)credential", "(?i)log ?in", "(?i)sign ?in", "(?i)sign ?up",
+  "(?i)two-factor|2fa|verification code|one-time code", "(?i)incognito|inprivate|private browsing",
+]
 shell = true
 shell_spool = "state/shell-spool.jsonl"
 secret_patterns = [

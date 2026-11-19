@@ -64,6 +64,8 @@ pub enum Action {
     Type {
         app: String,
         text: String,
+        /// `type-password`: typed into a password box.
+        password: bool,
     },
     /// `shell`: read the shell spool now.
     Shell,
@@ -142,7 +144,7 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
             "no" => Action::Title(false),
             _ => return Err("title yes|no".into()),
         },
-        "key" | "type" => {
+        "key" | "type" | "type-password" => {
             let (app, rest) = args
                 .split_once(' ')
                 .ok_or_else(|| format!("{name} <app> <keys>"))?;
@@ -150,7 +152,11 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
             if name == "key" {
                 Action::Key { app, combo: rest }
             } else {
-                Action::Type { app, text: rest }
+                Action::Type {
+                    app,
+                    text: rest,
+                    password: name == "type-password",
+                }
             }
         }
         "shell" => Action::Shell,
@@ -228,6 +234,7 @@ fn char_key(app: &str, c: char, t: ac_core::time::Timestamp) -> RawKey {
         },
         app: app.into(),
         title: String::new(),
+        password: false,
     }
 }
 
@@ -252,6 +259,7 @@ fn combo_key(app: &str, combo: &str, t: ac_core::time::Timestamp) -> RawKey {
         mods,
         app: app.into(),
         title: String::new(),
+        password: false,
     }
 }
 
@@ -374,9 +382,17 @@ async fn execute(
             Action::Key { app, combo } => {
                 let _ = msgs.send(Msg::Key(combo_key(&app, &combo, clock.now_ts())));
             }
-            Action::Type { app, text } => {
+            Action::Type {
+                app,
+                text,
+                password,
+            } => {
                 for c in text.chars() {
-                    let _ = msgs.send(Msg::Key(char_key(&app, c, clock.now_ts())));
+                    let key = RawKey {
+                        password,
+                        ..char_key(&app, c, clock.now_ts())
+                    };
+                    let _ = msgs.send(Msg::Key(key));
                     clock.advance(Duration::from_millis(100));
                 }
             }

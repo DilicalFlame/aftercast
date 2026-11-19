@@ -4,21 +4,19 @@
 
 use std::sync::Arc;
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
 use ac_core::time::{Clock, Timestamp};
 use rdev::{EventType, Key};
 
 use crate::keys::{MODS, RawKey};
 
-/// The foreground app is looked up at most this often.
-const FOREGROUND_CACHE: Duration = Duration::from_millis(200);
-
-/// Starts the hook thread and a worker that adds the foreground app. `on_key` runs on the
-/// worker for every key press. Returns an error only if the threads could not start; a
-/// hook that fails later is reported through `on_error`.
+/// Starts the hook thread and a worker that adds the foreground app and, for apps not in
+/// `trusted`, whether a password box has focus. `on_key` runs on the worker for every key
+/// press. Returns an error only if the threads could not start; a hook that fails later is
+/// reported through `on_error`.
 pub fn spawn(
     clock: Arc<Clock>,
+    trusted: Vec<String>,
     on_key: impl Fn(RawKey) + Send + 'static,
     on_error: impl Fn(String) + Send + 'static,
 ) -> Result<(), String> {
@@ -46,18 +44,19 @@ pub fn spawn(
     std::thread::Builder::new()
         .name("key-worker".into())
         .spawn(move || {
-            let mut cached: Option<(Instant, String, String)> = None;
+            let trusted: Vec<String> = trusted.iter().map(|a| a.to_lowercase()).collect();
+            let probe = PasswordProbe::new();
+            let mut was_password = false;
             for (t, key, name, mods) in rx {
-                let (app, title) = match &cached {
-                    Some((at, app, title)) if at.elapsed() < FOREGROUND_CACHE => {
-                        (app.clone(), title.clone())
-                    }
-                    _ => {
-                        let (app, title) = foreground();
-                        cached = Some((Instant::now(), app.clone(), title.clone()));
-                        (app, title)
-                    }
-                };
+                // Looked up per key (well under a millisecond), so the first keys after
+                // Alt+Tab belong to the right app.
+                let (app, title) = foreground();
+                // Unknown counts as a password box. The previous key's answer counts too: the
+                // worker may run after focus already moved on (Tab out of a password box).
+                let now_password = !trusted.contains(&app.to_lowercase())
+                    && probe.focused_is_password().unwrap_or(true);
+                let password = now_password || was_password;
+                was_password = now_password;
                 let ch = match key {
                     Key::Return | Key::KpReturn => Some('\n'),
                     Key::Tab => Some('\t'),
@@ -73,6 +72,7 @@ pub fn spawn(
                     mods,
                     app,
                     title,
+                    password,
                 });
             }
         })
@@ -93,6 +93,57 @@ fn mods(held: &[Key]) -> Vec<&'static str> {
         .filter(|(_, on)| *on)
         .map(|(m, _)| *m)
         .collect()
+}
+
+/// Asks UI Automation whether the focused element is a password box.
+struct PasswordProbe {
+    #[cfg(windows)]
+    uia: Option<windows::Win32::UI::Accessibility::IUIAutomation>,
+}
+
+#[cfg(windows)]
+impl PasswordProbe {
+    fn new() -> Self {
+        use windows::Win32::System::Com::{
+            CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+        };
+        use windows::Win32::UI::Accessibility::{CUIAutomation, IUIAutomation, IUIAutomation2};
+        use windows::core::Interface;
+        // SAFETY: COM is initialised once on this worker thread before any COM call.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let uia: Option<IUIAutomation> =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok();
+            // A hung app must not stall key delivery for long.
+            if let Some(uia2) = uia.as_ref().and_then(|u| u.cast::<IUIAutomation2>().ok()) {
+                let _ = uia2.SetConnectionTimeout(500);
+                let _ = uia2.SetTransactionTimeout(500);
+            }
+            Self { uia }
+        }
+    }
+
+    /// `None` when UI Automation cannot tell.
+    fn focused_is_password(&self) -> Option<bool> {
+        let uia = self.uia.as_ref()?;
+        // SAFETY: plain COM calls on interfaces owned by this thread.
+        unsafe {
+            let element = uia.GetFocusedElement().ok()?;
+            element.CurrentIsPassword().ok().map(|b| b.as_bool())
+        }
+    }
+}
+
+#[cfg(not(windows))]
+impl PasswordProbe {
+    fn new() -> Self {
+        Self {}
+    }
+
+    fn focused_is_password(&self) -> Option<bool> {
+        // ponytail: no password-box detection off Windows; deny lists still apply.
+        Some(false)
+    }
 }
 
 /// Process name and window title of the foreground window; empty when unknown.
@@ -145,4 +196,21 @@ pub fn foreground() -> (String, String) {
     // ponytail: only Windows is supported; elsewhere no app is known, so only shortcuts
     // are kept (rule 4).
     (String::new(), String::new())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// Needs a desktop session: `cargo test -p ac-capture -- --ignored`.
+    #[test]
+    #[ignore]
+    fn ui_automation_answers_for_the_focused_window() {
+        let probe = PasswordProbe::new();
+        assert!(probe.uia.is_some(), "UI Automation unavailable");
+        assert_eq!(probe.focused_is_password(), Some(false));
+        let (app, _) = foreground();
+        assert!(!app.is_empty());
+        println!("foreground app: {app}");
+    }
 }
