@@ -1,0 +1,20 @@
+Golden
+
+Some bold, italic and code, a link: https://example.com and https://bare.example.
+Second line of the paragraph with html and a ‹ b › c comparison.
+
+Steps
+
+1. First
+2. Second
+  • nested
+
+  fn main() {}
+
+Tool | Use
+ffmpeg | cuts
+
+thumb: https://img.example/t.png
+
+• A
+• B

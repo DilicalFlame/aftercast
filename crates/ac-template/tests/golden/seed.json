@@ -1,0 +1,12 @@
+{
+  "channel": { "series": "Insomnia Driven Development", "short": "IDD" },
+  "stream": { "episode_padded": "042" },
+  "quest": { "title": "Build a TUI todo app", "id": "rust/R-C-07", "source": "external" },
+  "chapters_block": "0:00:00 Start\n0:12:40 Project setup\n1:03:15 Parser with nom",
+  "questions_answered": [ { "author": "bob", "text": "why rust over go?", "ts": "1:40:15" } ],
+  "vars": {
+    "github": "https://github.com/me", "discord": "https://discord.gg/abc",
+    "roadmaps": "https://github.com/me/roadmaps", "tagline": "I will sleep when it compiles...",
+    "support": { "kofi": "https://ko-fi.com/me", "upi": "me@upi" }
+  }
+}

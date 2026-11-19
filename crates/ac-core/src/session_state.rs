@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::event::{By, Event, EventKind, PushTrigger, ServiceStatus, StreamStatus};
+use crate::event::{By, Event, EventKind, PushTrigger, QuestSource, ServiceStatus, StreamStatus};
 use crate::time::Timestamp;
 
 /// Events kept for the TUI event log.
@@ -14,6 +14,14 @@ pub struct Checkpoint {
     pub title: String,
     pub pressed_at: Timestamp,
     pub by: By,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Quest {
+    pub t: Timestamp,
+    pub id: Option<String>,
+    pub title: String,
+    pub source: QuestSource,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,8 +51,8 @@ pub struct SessionState {
     pub checkpoints: Vec<Checkpoint>,
     pub marks: Vec<(Timestamp, Option<String>)>,
     pub notes: Vec<(Timestamp, String)>,
-    /// Quest changes as (time, title); the last one is current.
-    pub quests: Vec<(Timestamp, String)>,
+    /// Quest changes in order; the last one is current.
+    pub quests: Vec<Quest>,
     pub questions: Vec<Question>,
     pub brb_starts: Vec<Timestamp>,
     pub brb: bool,
@@ -105,7 +113,14 @@ impl SessionState {
                 label, pressed_at, ..
             } => self.marks.push((*pressed_at, label.clone())),
             EventKind::Note { text, pressed_at } => self.notes.push((*pressed_at, text.clone())),
-            EventKind::QuestSet { title, .. } => self.quests.push((e.t, title.clone())),
+            EventKind::QuestSet {
+                id, title, source, ..
+            } => self.quests.push(Quest {
+                t: e.t,
+                id: id.clone(),
+                title: title.clone(),
+                source: *source,
+            }),
             EventKind::QuestionAdd {
                 qid, author, text, ..
             } => self.questions.push(Question {

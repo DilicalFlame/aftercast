@@ -1,0 +1,28 @@
+Insomnia Driven Development #042 - live coding, learning in public.
+Today's quest: Build a TUI todo app
+
+What I'm doing today
+
+Chapters
+
+0:00:00 Start
+0:12:40 Project setup
+1:03:15 Parser with nom
+
+Questions answered
+
+• 1:40:15 bob: why rust over go?
+
+Links
+
+• GitHub: https://github.com/me
+• Discord: https://discord.gg/abc
+• Roadmaps I'm following: https://github.com/me/roadmaps
+
+Support the stream
+
+• Ko-fi: https://ko-fi.com/me
+• UPI: me@upi
+
+I will sleep when it compiles...
+#coding #programming #livecoding

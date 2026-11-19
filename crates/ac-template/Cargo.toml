@@ -6,3 +6,16 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+ac-core.workspace = true
+chrono.workspace = true
+minijinja = { version = "3", features = ["serde"] }
+pulldown-cmark = { version = "0.13", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
