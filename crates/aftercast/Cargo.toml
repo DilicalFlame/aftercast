@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+tracing.workspace = true
 ac-core.workspace = true
 
 [dev-dependencies]

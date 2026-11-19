@@ -19,6 +19,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<u8> {
     let home = Home::resolve(cli.home)?;
+    ac_core::logging::init(&home.logs_dir(), cli.verbose);
     match cli.command {
         Some(Command::Init) => init(&home),
         _ => {
@@ -29,7 +30,9 @@ fn run(cli: Cli) -> Result<u8> {
 }
 
 fn init(home: &Home) -> Result<u8> {
-    for (path, action) in home.init()? {
+    let results = home.init()?;
+    tracing::info!(home = %home.root().display(), "init");
+    for (path, action) in results {
         let label = match action {
             InitAction::Created => "created",
             InitAction::Skipped => "exists, skipped",
