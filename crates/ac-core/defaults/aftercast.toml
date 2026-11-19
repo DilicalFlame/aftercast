@@ -105,7 +105,11 @@ muted = "#9A9A9A"
 [capture]
 keys = true
 # Keystrokes with text are only stored while one of these apps is focused (process name, case-insensitive).
-keys_allow_apps = ["Code.exe", "WindowsTerminal.exe", "nvim.exe", "alacritty.exe", "wezterm-gui.exe"]
+keys_allow_apps = [
+  "Code.exe", "Code - Insiders.exe", "Cursor.exe", "Zed.exe", "WindowsTerminal.exe",
+  "wezterm-gui.exe", "alacritty.exe", "nvim.exe", "nvim-qt.exe", "neovide.exe",
+  "pwsh.exe", "powershell.exe", "conhost.exe",
+]
 # In other apps only modifier shortcuts are stored (e.g. Ctrl+S), never characters.
 keys_deny_title_patterns = ["(?i)password", "(?i)bitwarden", "(?i)1password", "(?i)\\.env", "(?i)secret", "(?i)login", "(?i)sign in"]
 shell = true

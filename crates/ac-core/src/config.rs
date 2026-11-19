@@ -352,10 +352,18 @@ impl Default for Capture {
             keys: true,
             keys_allow_apps: [
                 "Code.exe",
+                "Code - Insiders.exe",
+                "Cursor.exe",
+                "Zed.exe",
                 "WindowsTerminal.exe",
-                "nvim.exe",
-                "alacritty.exe",
                 "wezterm-gui.exe",
+                "alacritty.exe",
+                "nvim.exe",
+                "nvim-qt.exe",
+                "neovide.exe",
+                "pwsh.exe",
+                "powershell.exe",
+                "conhost.exe",
             ]
             .map(String::from)
             .into(),
