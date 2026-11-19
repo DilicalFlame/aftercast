@@ -49,7 +49,6 @@ pub struct Handles {
     pub clock: Arc<Clock>,
     pub commands: mpsc::UnboundedSender<Command>,
     pub msgs: mpsc::UnboundedSender<Msg>,
-    #[expect(dead_code, reason = "read by the TUI")]
     pub view: watch::Receiver<View>,
     /// Subscribed before the first event, so no startup event is missed.
     pub events: broadcast::Receiver<Arc<Event>>,

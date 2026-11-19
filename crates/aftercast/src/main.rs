@@ -30,7 +30,8 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<u8> {
     let home = Home::resolve(cli.home.clone())?;
-    ac_core::logging::init(&home.logs_dir(), cli.verbose);
+    let tui = cli.command.is_none() && !cli.no_tui;
+    ac_core::logging::init(&home.logs_dir(), cli.verbose, !tui);
     let config_path = cli.config.clone().unwrap_or_else(|| home.config_file());
     match cli.command {
         Some(Command::Init) => init(&home),
@@ -74,11 +75,30 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
     .await?;
     if cli.no_tui {
         script::run(handles, cli.script.as_deref()).await?;
-    } else {
-        return Err(error::AppError::Usage(
-            "the TUI is not built yet; use --no-tui".into(),
-        ));
+        return Ok(exit::OK);
     }
+    let live::Handles {
+        clock,
+        commands,
+        mut view,
+        controller,
+        ..
+    } = handles;
+    let ui_commands = commands.clone();
+    let ui_view = view.clone();
+    let ui = tokio::task::spawn_blocking(move || ac_tui::run(clock, ui_view, ui_commands)).await;
+    // However the UI ended, end the session cleanly (ignored if it already ended).
+    let _ = commands.send(ac_core::command::Command::Quit);
+    drop(commands);
+    controller
+        .await
+        .map_err(|e| error::AppError::Usage(format!("session task failed: {e}")))?;
+    let last = view.borrow_and_update().clone();
+    println!("Session {} saved.", last.session);
+    if let Some(notice) = last.notice {
+        println!("{notice}");
+    }
+    ui.map_err(|e| error::AppError::Usage(format!("TUI task failed: {e}")))??;
     Ok(exit::OK)
 }
 
