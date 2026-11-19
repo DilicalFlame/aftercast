@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+ac-bot = { path = "crates/ac-bot" }
 ac-capture = { path = "crates/ac-capture" }
 ac-core = { path = "crates/ac-core" }
 ac-obs = { path = "crates/ac-obs" }
