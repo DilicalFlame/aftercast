@@ -30,6 +30,18 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "FIXTURE_DIR")]
     pub mock: Option<PathBuf>,
 
+    /// Run the live session without the TUI (commands from --script or stdin)
+    #[arg(long)]
+    pub no_tui: bool,
+
+    /// Command script for --no-tui, e.g. lines like `+5s checkpoint "Parser"`
+    #[arg(long, value_name = "FILE", requires = "no_tui")]
+    pub script: Option<PathBuf>,
+
+    /// Accept a broadcast that already ended (to finalize after the fact)
+    #[arg(long)]
+    pub allow_ended: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }

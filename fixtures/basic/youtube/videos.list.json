@@ -1,0 +1,26 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "abcdefghijk",
+      "snippet": {
+        "publishedAt": "@now",
+        "channelId": "UCmockchannel0000000000",
+        "title": "IDD #001 · mock stream",
+        "description": "",
+        "categoryId": "28",
+        "tags": ["rust", "livecoding"],
+        "defaultAudioLanguage": "en",
+        "liveBroadcastContent": "live",
+        "channelTitle": "Mock Channel",
+        "thumbnails": {}
+      },
+      "status": { "privacyStatus": "unlisted" },
+      "liveStreamingDetails": {
+        "actualStartTime": "@now",
+        "activeLiveChatId": "Cg0KC2FiY2RlZmdoaWpr"
+      }
+    }
+  ]
+}

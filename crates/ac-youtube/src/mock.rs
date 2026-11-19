@@ -24,7 +24,8 @@ impl Mock {
             fixture: fixture.to_path_buf(),
             record_dir: record_dir.to_path_buf(),
             now,
-            counter: AtomicU32::new(0),
+            // Continue numbering after earlier runs (a resumed session) instead of overwriting.
+            counter: AtomicU32::new(fs::read_dir(record_dir).map_or(0, |d| d.count() as u32)),
         }
     }
 
