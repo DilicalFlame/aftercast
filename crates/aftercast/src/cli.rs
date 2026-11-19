@@ -11,7 +11,7 @@ use clap::{ArgAction, Parser, Subcommand, ValueEnum};
     about = "TUI companion for live coding streams on YouTube"
 )]
 pub struct Cli {
-    /// Stream link or 11-char video id; omit to pick from your broadcasts
+    /// Stream link or 11-char video id; omit to resume the last session
     pub link: Option<String>,
 
     /// Home folder (overrides AFTERCAST_HOME)
