@@ -90,7 +90,8 @@ aftercast connects to OBS it refreshes these sources, so a page that failed to l
 
 Pages are transparent and reconnect by themselves when aftercast restarts. To restyle, put
 `overlay.css`, `overlay.js` or `<name>.html` in `<home>\overlays\`; theme colors and fonts
-come from `[overlay]`.
+come from `[overlay]`. Other files in that folder (images, fonts, videos) are served at
+`/overlay/assets/<file>`, for a custom page such as a branded `brb.html`.
 
 ### 5. Check
 

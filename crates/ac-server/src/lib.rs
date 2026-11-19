@@ -145,13 +145,45 @@ async fn page(State(s): State<Arc<Shared>>, UrlPath(name): UrlPath<String>) -> R
     ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
+/// `overlay.js`/`overlay.css` (home copy or built-in), else any file in `<home>/overlays`
+/// (images, fonts, video for custom pages).
 async fn asset(State(s): State<Arc<Shared>>, UrlPath(name): UrlPath<String>) -> Response {
-    let (builtin, mime) = match name.as_str() {
-        "overlay.js" => (SCRIPT, "text/javascript; charset=utf-8"),
-        "overlay.css" => (STYLE, "text/css; charset=utf-8"),
-        _ => return (StatusCode::NOT_FOUND, "no such asset").into_response(),
+    let builtin = match name.as_str() {
+        "overlay.js" => Some(SCRIPT),
+        "overlay.css" => Some(STYLE),
+        _ => None,
     };
-    ([(header::CONTENT_TYPE, mime)], file(&s.dir, &name, builtin)).into_response()
+    let ext = name
+        .rsplit_once('.')
+        .map_or("", |(_, e)| e)
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => "application/octet-stream",
+    };
+    if let Some(builtin) = builtin {
+        return ([(header::CONTENT_TYPE, mime)], file(&s.dir, &name, builtin)).into_response();
+    }
+    // One plain file name: no separators, no `..`, no hidden files.
+    if name.starts_with('.') || name.contains(['/', '\\', ':']) {
+        return (StatusCode::NOT_FOUND, "no such asset").into_response();
+    }
+    match fs::read(s.dir.join(&name)) {
+        Ok(bytes) => ([(header::CONTENT_TYPE, mime)], bytes).into_response(),
+        Err(_) => (StatusCode::NOT_FOUND, "no such asset").into_response(),
+    }
 }
 
 async fn ws(State(s): State<Arc<Shared>>, upgrade: WebSocketUpgrade) -> Response {
@@ -313,6 +345,17 @@ mod tests {
             "/* mine */",
             "home override wins"
         );
+        fs::write(dir.path().join("logo.png"), b"fakepng").unwrap();
+        let logo = get("/overlay/assets/logo.png").await.unwrap();
+        assert_eq!(logo.headers()["content-type"], "image/png");
+        assert_eq!(&logo.bytes().await.unwrap()[..], b"fakepng");
+        for bad in ["nope.png", "..%5Csecret", "..%2Fsecret", ".hidden"] {
+            let status = get(&format!("/overlay/assets/{bad}"))
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status, 404, "{bad}");
+        }
         let state: Value = get("/api/state").await.unwrap().json().await.unwrap();
         assert_eq!(state["brb"], false);
 
