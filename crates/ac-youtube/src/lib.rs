@@ -1,7 +1,8 @@
 //! YouTube Data API: OAuth, quota accounting, broadcast lookup and description push
-//! (specs/06-youtube.md). Live chat arrives in phase 3.
+//! (specs/06-youtube.md), live chat (`chat`) and sending chat messages.
 
 pub mod auth;
+pub mod chat;
 mod mock;
 pub mod quota;
 
@@ -145,6 +146,7 @@ pub struct Channel {
 enum Http {
     Get,
     Put,
+    Post,
 }
 
 #[derive(Debug, Clone)]
@@ -273,6 +275,24 @@ impl Client {
         description: &str,
         critical: bool,
     ) -> Result<()> {
+        self.update_snippet(id, "description", description, critical)
+            .await
+    }
+
+    /// Sets the video title (`!title`), preserving everything else in the snippet.
+    pub async fn update_title(&self, id: &str, title: &str) -> Result<()> {
+        self.update_snippet(id, "title", title, false).await
+    }
+
+    /// `videos.update(part=snippet)` with one field changed. The API clears omitted
+    /// mutable fields, so the current ones are read first and sent back.
+    async fn update_snippet(
+        &self,
+        id: &str,
+        field: &str,
+        value: &str,
+        critical: bool,
+    ) -> Result<()> {
         let current = self
             .call(
                 Request {
@@ -292,13 +312,14 @@ impl Client {
             "title",
             "categoryId",
             "tags",
+            "description",
             "defaultLanguage",
             "defaultAudioLanguage",
         ]
         .into_iter()
         .filter_map(|key| Some((key.to_owned(), snippet.get(key)?.clone())))
         .collect();
-        update.insert("description".into(), description.into());
+        update.insert(field.into(), value.into());
         self.call(
             Request {
                 method: Method::VideosUpdate,
@@ -313,6 +334,31 @@ impl Client {
         Ok(())
     }
 
+    /// `liveChatMessages.insert`: posts `text` (at most 200 characters, cut with "…").
+    pub async fn send_chat(&self, chat_id: &str, text: &str) -> Result<()> {
+        let text: String = if text.chars().count() > 200 {
+            text.chars().take(199).chain(['…']).collect()
+        } else {
+            text.to_owned()
+        };
+        self.call(
+            Request {
+                method: Method::ChatInsert,
+                http: Http::Post,
+                path: "liveChat/messages",
+                query: vec![("part", "snippet".into())],
+                body: Some(json!({ "snippet": {
+                    "liveChatId": chat_id,
+                    "type": "textMessageEvent",
+                    "textMessageDetails": { "messageText": text },
+                }})),
+            },
+            false,
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn call(&self, request: Request, critical: bool) -> Result<Value> {
         self.quota
             .check(request.method, critical, self.clock.now_ts())?;
@@ -322,12 +368,7 @@ impl Client {
         };
         // A request that never left (no token) costs nothing; everything else is recorded.
         if !matches!(result, Err(Error::Auth(_))) {
-            let spent = self
-                .quota
-                .record(request.method, result.is_ok(), self.clock.now_ts());
-            if let Some(hook) = &self.on_spent {
-                hook(spent);
-            }
+            self.record(request.method, result.is_ok());
         }
         match result {
             Err(Error::Api { reason, .. }) if reason == "quotaExceeded" => {
@@ -339,12 +380,23 @@ impl Client {
     }
 }
 
+impl Client {
+    /// Records a call that reached YouTube in the quota ledger.
+    fn record(&self, method: Method, ok: bool) {
+        let spent = self.quota.record(method, ok, self.clock.now_ts());
+        if let Some(hook) = &self.on_spent {
+            hook(spent);
+        }
+    }
+}
+
 async fn send(http: &reqwest::Client, auth: &Auth, request: &Request) -> Result<Value> {
     let token = auth.access_token(http).await?;
     let url = format!("{API}/{}", request.path);
     let builder = match request.http {
         Http::Get => http.get(url),
         Http::Put => http.put(url),
+        Http::Post => http.post(url),
     };
     let mut builder = builder.bearer_auth(token).query(&request.query);
     if let Some(body) = &request.body {

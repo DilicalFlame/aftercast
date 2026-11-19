@@ -5,9 +5,11 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use ac_core::time::Timestamp;
+use ac_core::chat::{ChatKind, ChatMessage};
+use ac_core::time::{Clock, Timestamp};
 use serde_json::{Value, json};
 
+use crate::chat::ChatUpdate;
 use crate::{Error, Request, Result, api_error};
 
 pub(crate) struct Mock {
@@ -66,6 +68,59 @@ impl Mock {
         match value["error"]["code"].as_u64() {
             Some(code) => Err(api_error(code as u16, &value)),
             None => Ok(value),
+        }
+    }
+}
+
+/// One line of `<fixture>/chat.jsonl`; `after_ms` counts from the chat start.
+#[derive(serde::Deserialize)]
+struct ScriptedChat {
+    after_ms: u64,
+    author: String,
+    text: String,
+    #[serde(default, rename = "mod")]
+    is_mod: bool,
+    #[serde(default)]
+    owner: bool,
+    #[serde(default)]
+    member: bool,
+}
+
+impl Mock {
+    /// Plays `<fixture>/chat.jsonl` in real time (missing file: no chat).
+    pub(crate) async fn play_chat(&self, clock: &Clock, send: impl Fn(ChatUpdate)) {
+        let path = self.fixture.join("chat.jsonl");
+        let Ok(text) = fs::read_to_string(&path) else {
+            return;
+        };
+        let start = tokio::time::Instant::now();
+        for (n, line) in text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim().is_empty())
+        {
+            let line: ScriptedChat = match serde_json::from_str(line) {
+                Ok(line) => line,
+                Err(e) => {
+                    tracing::warn!("{}:{}: {e}", path.display(), n + 1);
+                    continue;
+                }
+            };
+            tokio::time::sleep_until(start + std::time::Duration::from_millis(line.after_ms)).await;
+            let now = clock.now_ts();
+            send(ChatUpdate::Message(ChatMessage {
+                id: format!("mock-{n}"),
+                t_received: now,
+                t_published: Some(now),
+                author_channel_id: format!("UC-{}", line.author),
+                author_name: line.author,
+                is_owner: line.owner,
+                is_moderator: line.is_mod,
+                is_member: line.member,
+                kind: ChatKind::Text,
+                text: line.text,
+                amount: None,
+            }));
         }
     }
 }
