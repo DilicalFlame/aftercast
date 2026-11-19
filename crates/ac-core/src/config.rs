@@ -124,6 +124,8 @@ pub struct Youtube {
     pub autosync_min_interval_s: u64,
     pub daily_quota_reserve: u32,
     pub bot_profile: Option<String>,
+    /// Quota cost overrides by API method name, e.g. `"videos.update" = 50`.
+    pub costs: BTreeMap<String, u32>,
 }
 
 impl Default for Youtube {
@@ -138,6 +140,7 @@ impl Default for Youtube {
             autosync_min_interval_s: 90,
             daily_quota_reserve: 1500,
             bot_profile: None,
+            costs: BTreeMap::new(),
         }
     }
 }

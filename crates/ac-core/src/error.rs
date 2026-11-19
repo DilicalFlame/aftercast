@@ -12,6 +12,7 @@ pub mod exit {
     pub const CONFIG: u8 = 2;
     pub const AUTH: u8 = 3;
     pub const TOOL_MISSING: u8 = 4;
+    pub const QUOTA: u8 = 5;
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
