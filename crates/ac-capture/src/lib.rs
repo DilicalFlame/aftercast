@@ -1,4 +1,10 @@
-//! Input capture. Phase 2: global hotkeys (specs/02-cli-and-tui.md "Global hotkeys").
+//! Input capture: global hotkeys (specs/02-cli-and-tui.md "Global hotkeys"), the
+//! keyboard hook with its filter and secret guard, and the shell spool
+//! (specs/10-capture.md).
+
+pub mod hook;
+pub mod keys;
+pub mod shell;
 
 use std::str::FromStr;
 use std::sync::mpsc;
