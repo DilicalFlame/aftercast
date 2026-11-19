@@ -1,0 +1,1 @@
+//! Cross-session sqlite index.

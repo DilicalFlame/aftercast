@@ -1,0 +1,8 @@
+[package]
+name = "aftercast"
+description = "TUI companion for live coding streams on YouTube."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true

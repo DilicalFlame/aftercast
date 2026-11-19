@@ -1,0 +1,8 @@
+[package]
+name = "ac-render"
+description = "Suggestions to ffmpeg renders and ASS generation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true

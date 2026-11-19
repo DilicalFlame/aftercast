@@ -1,0 +1,8 @@
+[package]
+name = "ac-core"
+description = "Config, paths, session, events, state, time, quota ledger and errors."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true

@@ -1,0 +1,8 @@
+[package]
+name = "ac-bot"
+description = "Chat command parser, cooldowns, permissions and responses."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true

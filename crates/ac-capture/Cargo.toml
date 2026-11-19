@@ -1,0 +1,8 @@
+[package]
+name = "ac-capture"
+description = "Input hook, global hotkeys, foreground app detection and shell spool tail."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
