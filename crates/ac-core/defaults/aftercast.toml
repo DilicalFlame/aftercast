@@ -78,6 +78,10 @@ global_cooldown_s = 3
 user_cooldown_s = 20
 default_reply = "overlay"       # overlay | chat | both
 max_chat_replies_per_hour = 30  # hard cap to protect quota
+# Your other channels (ids start with UC; see author_channel_id in a session's chat.jsonl)
+# that may use owner commands such as !lat and !title. They watch the stream with its delay,
+# so their !chapter and !mark are latency-corrected like a mod's.
+owner_accounts = []
 
 [bot.commands]
 # Custom static commands: name = { text = "...", reply = "chat|overlay|both" }. Templates allowed.

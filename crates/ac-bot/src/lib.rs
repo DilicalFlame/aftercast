@@ -3,7 +3,7 @@
 //! Pure logic with the time passed in: the session controller runs the commands, since
 //! most of them need session state (quest, chapters, OBS).
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use ac_core::chat::ChatMessage;
 use ac_core::config::{self, ReplyMode};
@@ -92,6 +92,7 @@ pub struct Bot {
     global_cooldown_s: f64,
     user_cooldown_s: f64,
     max_chat_per_hour: usize,
+    owner_accounts: HashSet<String>,
     default_reply: ReplyMode,
     custom: BTreeMap<String, (String, Option<ReplyMode>)>,
     last_global: Option<Timestamp>,
@@ -108,6 +109,7 @@ impl Bot {
             global_cooldown_s: cfg.global_cooldown_s as f64,
             user_cooldown_s: cfg.user_cooldown_s as f64,
             max_chat_per_hour: cfg.max_chat_replies_per_hour as usize,
+            owner_accounts: cfg.owner_accounts.iter().cloned().collect(),
             default_reply: cfg.default_reply,
             custom: cfg
                 .commands
@@ -152,7 +154,11 @@ impl Bot {
                 (cmd, Level::Viewer)
             }
         };
-        let level = msg.level();
+        let level = if self.owner_accounts.contains(&msg.author_channel_id) {
+            Level::Owner
+        } else {
+            msg.level()
+        };
         if level < needed {
             return None;
         }
@@ -279,6 +285,20 @@ mod tests {
         assert!(
             b.parse(&msg("o", Level::Owner, "!lat 42"), t(0.0))
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn owner_accounts_get_owner_commands() {
+        let mut b = Bot::new(&config::Bot {
+            owner_accounts: vec!["UCphone".into()],
+            ..Default::default()
+        });
+        let p = b.parse(&msg("phone", Level::Viewer, "!lat 42"), t(0.0));
+        assert_eq!(p.map(|p| p.level), Some(Level::Owner));
+        assert_eq!(
+            b.parse(&msg("other", Level::Viewer, "!lat 42"), t(0.0)),
+            None
         );
     }
 

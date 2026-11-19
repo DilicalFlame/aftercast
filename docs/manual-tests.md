@@ -163,27 +163,30 @@ viewer, and ideally a third account you made a moderator.
 12. Viewer: `!chapter test`. Expect: ignored (mods only). Moderator: `!chapter Parser`.
     Expect: a chapter whose time is about `latency + 0.5 s` before the chat message arrived.
 13. Moderator: `!brb`, then `!back`. Expect: BRB scene and back, like `b`.
-14. You (owner) in chat: `!title Test title`. Expect: the TUI asks; `n` drops it, a second
+14. Put your phone account's channel id (from `chat.jsonl`) in `bot.owner_accounts`, restart,
+    and send `!lat 5` from the phone during `:latency`. Expect: accepted like your own
+    `!lat`; without the entry it is ignored. Its `!chapter` is latency-corrected.
+15. You (owner) in chat: `!title Test title`. Expect: the TUI asks; `n` drops it, a second
     try with `y` changes the YouTube title (51 units) and keeps description and tags.
 
 ### Latency
 
-15. `:latency`. Expect: the `latency` overlay shows `LAT` with a counter.
-16. Watch the stream on your phone; type `!lat <number you see>` in chat (as the owner)
+16. `:latency`. Expect: the `latency` overlay shows `LAT` with a counter.
+17. Watch the stream on your phone; type `!lat <number you see>` in chat (as the owner)
     three times, a few seconds apart. Expect: `latency x.x s (n samples)` after each; after
     the third the overlay hides and the status bar shows `lat x.x s`. With the connection
     you have, expect minutes, not seconds; `:lat <n>` in the palette works too if chat lags.
 
 ### Overlays and API
 
-17. `b`: the `brb` overlay shows "Be right back" with a timer; `b` again hides it.
-18. Set a quest (`:quest Parser` or the quest file). Expect: the `now` overlay shows it with
+18. `b`: the `brb` overlay shows "Be right back" with a timer; `b` again hides it.
+19. Set a quest (`:quest Parser` or the quest file). Expect: the `now` overlay shows it with
     the live timer. `:overlay now off` hides it; `:overlay now on` brings it back.
-19. Restart aftercast while OBS stays open. Expect: the overlays reconnect on their own and
+20. Restart aftercast while OBS stays open. Expect: the overlays reconnect on their own and
     show the current state again. Then close aftercast, restart OBS (the overlay pages fail
     to load), start aftercast and `:latency`. Expect: the counter shows in OBS without
     pressing Refresh.
-20. With `<token>` from `<home>\state\api-token`:
+21. With `<token>` from `<home>\state\api-token`:
     `curl -X POST http://127.0.0.1:7878/api/command -H "X-Aftercast-Token: <token>"
     -H "Content-Type: application/json" -d '{"cmd":"mark","by":"palette"}'` adds a mark;
     a wrong token gets 401. `curl http://127.0.0.1:7878/api/state` returns the session state.

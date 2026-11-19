@@ -261,6 +261,8 @@ pub struct Bot {
     pub user_cooldown_s: u64,
     pub default_reply: ReplyMode,
     pub max_chat_replies_per_hour: u32,
+    /// Channel ids (UC...) that get owner commands, like a second account on a phone.
+    pub owner_accounts: Vec<String>,
     pub commands: BTreeMap<String, BotCommand>,
     pub moderation: Moderation,
 }
@@ -274,6 +276,7 @@ impl Default for Bot {
             user_cooldown_s: 20,
             default_reply: ReplyMode::Overlay,
             max_chat_replies_per_hour: 30,
+            owner_accounts: Vec::new(),
             commands: BTreeMap::new(),
             moderation: Moderation::default(),
         }

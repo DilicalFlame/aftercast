@@ -123,8 +123,9 @@ impl Controller {
             By::Mod
         };
         // What a mod points at happened `latency` earlier on their screen; the owner
-        // acts on the present (specs/05-time-sync.md, "Viewer-perceived time").
-        let correction = if p.level == Level::Owner {
+        // acts on the present (specs/05-time-sync.md, "Viewer-perceived time"). The
+        // owner's other accounts (`bot.owner_accounts`) watch the delayed stream.
+        let correction = if msg.is_owner {
             0.0
         } else {
             self.latency() + CHAT_DELIVERY_S

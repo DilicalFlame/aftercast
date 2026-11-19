@@ -148,6 +148,10 @@ Commands start with `!`:
 | `!chapter <title>`, `!mark [label]` | mods | chapter / mark, moved back by the stream latency |
 | `!lat <n>`, `!title <text>` | you | latency sample / new title (asks in the TUI) |
 
+"You" is your streaming channel plus any channel listed in `bot.owner_accounts`, such as a
+second account on your phone. Mods are the moderators you add on YouTube (click a name in
+chat, "Add moderator"); aftercast reads that from each message.
+
 Chat replies cost 20 units each and are capped by `bot.max_chat_replies_per_hour`; past the
 cap they go to the toast overlay.
 
