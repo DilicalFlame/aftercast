@@ -37,11 +37,9 @@ impl State {
         }
     }
 
-    /// Writes the state atomically (temp file in the same folder, then rename).
+    /// Writes the state atomically.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let tmp = path.with_extension("toml.tmp");
-        fs::write(&tmp, self.to_toml()).map_err(Error::io(&tmp))?;
-        fs::rename(&tmp, path).map_err(Error::io(path))
+        crate::write_atomic(path, self.to_toml())
     }
 
     pub fn to_toml(&self) -> String {

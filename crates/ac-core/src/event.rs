@@ -1,8 +1,98 @@
 //! Events: immutable facts appended to `events.jsonl` (schemas/events.schema.json).
 
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
+use crate::error::{Error, Result};
 use crate::time::{Clock, Timestamp};
+
+/// Appends events to `events.jsonl`, one JSON object per line.
+///
+/// Writes are buffered; call [`EventLog::flush`] periodically (every 250 ms) and on shutdown.
+#[derive(Debug)]
+pub struct EventLog {
+    path: PathBuf,
+    file: BufWriter<File>,
+}
+
+impl EventLog {
+    /// Opens (or creates) the log for appending. A torn last line from a crash is
+    /// terminated first so new events start on a fresh line.
+    pub fn open(path: &Path) -> Result<Self> {
+        let io = Error::io(path);
+        let mut file = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(path)
+            .map_err(io)?;
+        let len = file.metadata().map_err(Error::io(path))?.len();
+        if len > 0 {
+            let mut last = [0u8];
+            file.seek(SeekFrom::End(-1))
+                .and_then(|_| file.read_exact(&mut last))
+                .map_err(Error::io(path))?;
+            if last[0] != b'\n' {
+                file.write_all(b"\n").map_err(Error::io(path))?;
+            }
+        }
+        Ok(Self {
+            path: path.to_path_buf(),
+            file: BufWriter::new(file),
+        })
+    }
+
+    pub fn append(&mut self, event: &Event) -> Result<()> {
+        let mut line = serde_json::to_vec(event).expect("events serialize");
+        line.push(b'\n');
+        self.file.write_all(&line).map_err(Error::io(&self.path))
+    }
+
+    /// Writes buffered events and syncs them to disk.
+    pub fn flush(&mut self) -> Result<()> {
+        self.file
+            .flush()
+            .and_then(|()| self.file.get_ref().sync_data())
+            .map_err(Error::io(&self.path))
+    }
+}
+
+impl Drop for EventLog {
+    fn drop(&mut self) {
+        if let Err(e) = self.flush() {
+            tracing::error!("flushing events on drop: {e}");
+        }
+    }
+}
+
+/// Reads all events from `events.jsonl` (missing file = none). Unparsable lines, such as
+/// a line torn by a crash, are skipped with a warning so a session can always resume.
+pub fn read_events(path: &Path) -> Result<Vec<Event>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::io(path)(e)),
+    };
+    let mut events = Vec::new();
+    for (n, line) in text
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+    {
+        match serde_json::from_str(line) {
+            Ok(event) => events.push(event),
+            Err(e) => tracing::warn!(
+                "{}:{}: skipped unreadable event: {e}",
+                path.display(),
+                n + 1
+            ),
+        }
+    }
+    Ok(events)
+}
 
 /// One line of `events.jsonl`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -329,6 +419,42 @@ mod tests {
     fn assert_valid(v: &jsonschema::Validator, json: &serde_json::Value) {
         let errors: Vec<String> = v.iter_errors(json).map(|e| e.to_string()).collect();
         assert!(errors.is_empty(), "{json}: {errors:?}");
+    }
+
+    #[test]
+    fn log_appends_and_survives_a_torn_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let clock = Clock::new();
+        let note = |text: &str| {
+            Event::new(
+                &clock,
+                "tui",
+                EventKind::Note {
+                    text: text.into(),
+                    pressed_at: clock.now_ts(),
+                },
+            )
+        };
+        let (a, b) = (note("a"), note("b"));
+        {
+            let mut log = EventLog::open(&path).unwrap();
+            log.append(&a).unwrap();
+        } // dropped: flushed
+        fs::write(
+            &path,
+            fs::read_to_string(&path).unwrap() + "{\"v\":1,\"id\":",
+        )
+        .unwrap();
+        let mut log = EventLog::open(&path).unwrap();
+        log.append(&b).unwrap();
+        log.flush().unwrap();
+        assert_eq!(read_events(&path).unwrap(), [a, b]);
+        assert!(
+            read_events(&dir.path().join("none.jsonl"))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
