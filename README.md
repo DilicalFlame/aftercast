@@ -285,14 +285,20 @@ the model. Only the NVIDIA driver is needed from outside.
 Whisper hears jargon better when it knows it. Before transcribing, aftercast gives it the
 series name, the title, the chapter titles, `post.vocabulary` (the words you always use, e.g.
 `["Rust", "cargo", "borrow checker"]`) and this stream's own terms, which the `vocab` stage
-picks out of what you typed, the commands you ran, your commits, the README and chat (common
-English, template text, the bot's own replies, one-off typos and anything that looks like a
-secret are left out). Use words only in `post.vocabulary`: in tests on a real stream,
+picks out of what you typed, the commands you ran, your commits, the README and chat. Only
+words Whisper does not already know make it (one token in its own vocabulary means it knows
+the word), so `ratatui`, `tokio` or `WezTerm` do and "world" or "moment" do not; template
+text, the bot's replies, `echo` text, `-Flags`, one-off typos and anything that looks like a
+secret are left out. Words that are English and jargon at once ("Rust", "clap", "nom") belong
+in `post.vocabulary`. Whisper sometimes makes text up, such as a sentence repeated in a
+fraction of a second or its hint list read into silence; those segments (near-zero
+confidence, faster than speech, or a repeat of the one before) are dropped and `post` says
+how many. Use words only in `post.vocabulary`: in tests on a real stream,
 descriptive sentences such as "in English and Hindi" made Whisper mishear more.
 
 With `post.correct = true` (and `aftercast setup` again), a small local model (Qwen3.5-4B
 through llama.cpp, about 3 GB, on the GPU) then checks words that sound like one of those
-terms but aren't ("rest" / "Rust", "get" / "git") and decides from the sentence which one you
+terms but aren't ("rest" / "Rust", "roster" / "Rust", "get" / "git") and decides from the sentence which one you
 said. It can only choose between the two: no other word changes, nothing is reworded, timings
 stay, and names read from chat are left alone. Every change is listed in
 `derived/corrections.json`; Whisper's own transcript stays in `derived/words.whisper.json`.

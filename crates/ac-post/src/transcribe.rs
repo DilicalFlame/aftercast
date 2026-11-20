@@ -51,10 +51,50 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
         },
     };
     let duration = ctx.master()?.duration_s;
+    let (raw, dropped) = clean(raw);
+    if dropped > 0 {
+        ctx.notes.push(format!(
+            "transcribe: left out {dropped} segments Whisper made up (repeats, words read from its hints)"
+        ));
+    }
     let words = without(raw, &ctx.privacy(duration));
     // Whisper's own words, for the correct stage (which rewrites words.json from it).
     write_json(&ctx.derived(crate::correct::RAW), &words)?;
     write_outputs(ctx, &words)
+}
+
+/// Mean word confidence below which a segment is taken as made up (Whisper reading its hint
+/// list into silence scores about 0).
+const MADE_UP_P: f64 = 0.15;
+/// Faster than anyone speaks: a repeat Whisper squeezed into a fraction of a second.
+const MAX_WORDS_PER_S: f64 = 7.0;
+
+/// Drops segments Whisper made up: the same text as the segment before, at least 4 words
+/// faster than speech, or near-zero confidence. Returns the rest and how many were dropped.
+fn clean(mut words: Words) -> (Words, usize) {
+    let before = words.segments.len();
+    let norm = |s: &str| {
+        s.to_lowercase()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut last = String::new();
+    words.segments.retain(|s| {
+        let text = norm(&s.text);
+        let n = s.words.len();
+        let repeat = !text.is_empty() && text == last;
+        let too_fast = n >= 4 && n as f64 / (s.end - s.start).max(0.01) > MAX_WORDS_PER_S;
+        let ps: Vec<f64> = s.words.iter().filter_map(|w| w.p).collect();
+        let unsure = !ps.is_empty() && ps.iter().sum::<f64>() / (ps.len() as f64) < MADE_UP_P;
+        last = text;
+        !(repeat || too_fast || unsure)
+    });
+    let dropped = before - words.segments.len();
+    (words, dropped)
 }
 
 /// Writes `words.json`, `transcript.srt` and `transcript.txt`.
@@ -331,6 +371,47 @@ fn srt_time(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn made_up_segments_are_dropped() {
+        let seg = |start: f64, end: f64, text: &str, p: f64| Segment {
+            start,
+            end,
+            text: text.into(),
+            words: text
+                .split(' ')
+                .map(|w| Word {
+                    w: w.into(),
+                    start,
+                    end,
+                    p: Some(p),
+                })
+                .collect(),
+        };
+        let words = Words {
+            language: "en".into(),
+            model: "t".into(),
+            segments: vec![
+                seg(431.0, 440.0, "So now I should end the stream now", 0.9),
+                seg(463.3, 463.7, "So now, I should end the stream now.", 0.8),
+                seg(470.0, 470.3, "I will test it and push the readme file", 0.9),
+                seg(480.0, 483.0, "What was the point?", 0.9),
+                seg(488.7, 499.8, "WezTerm world mock git Rehearsal", 0.02),
+                seg(500.0, 502.0, "okay bye", 0.9),
+            ],
+        };
+        let (kept, dropped) = clean(words);
+        let texts: Vec<&str> = kept.segments.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            [
+                "So now I should end the stream now",
+                "What was the point?",
+                "okay bye"
+            ]
+        );
+        assert_eq!(dropped, 3);
+    }
 
     #[test]
     fn prompt_has_series_title_terms_then_topics_and_is_capped() {

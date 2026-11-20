@@ -2,7 +2,7 @@
 //! and written around it (`derived/vocab.json`). The transcriber gets them as context and the
 //! `correct` stage may only correct towards them.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 
 use ac_capture::keys::KeyRecord;
@@ -60,9 +60,9 @@ struct Entry {
     /// Spellings seen, with counts; the most common one is used.
     forms: HashMap<String, u32>,
     score: f64,
-    /// Times seen in typing or chat.
+    /// Times seen in typing, chat or shell commands.
     weak: u32,
-    /// Seen in the title, chapters, notes, README, commits or shell.
+    /// Seen in the title, chapters, notes, README or commits.
     strong: bool,
     /// Part of an identifier (`serde_json`, `HashMap`, `Cargo.toml`).
     code: bool,
@@ -74,15 +74,29 @@ pub(crate) struct Counter {
     entries: HashMap<String, Entry>,
     stop: BTreeSet<&'static str>,
     secrets: Vec<regex::Regex>,
+    /// Words the transcriber already knows (one token in its vocabulary): no hint needed.
+    known: HashSet<String>,
 }
 
 impl Counter {
-    pub(crate) fn new(secrets: Vec<regex::Regex>) -> Self {
+    pub(crate) fn new(secrets: Vec<regex::Regex>, known: HashSet<String>) -> Self {
         Self {
             entries: HashMap::new(),
             stop: STOPWORDS.split_whitespace().collect(),
             secrets,
+            known,
         }
+    }
+
+    fn is_known(&self, word: &str) -> bool {
+        let lower = word.to_lowercase();
+        let mut capital = lower.clone();
+        if let Some(first) = capital.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+        [word, &lower, &capital]
+            .iter()
+            .any(|w| self.known.contains(*w))
     }
 
     /// Counts the words of `text` from `source` with `weight`.
@@ -142,7 +156,7 @@ impl Counter {
                 e.score += weight;
                 e.code |= joined || camel;
                 e.sources.insert(source);
-                if matches!(source, "typed" | "chat") {
+                if matches!(source, "typed" | "chat" | "shell") {
                     e.weak += 1;
                 } else {
                     e.strong = true;
@@ -153,19 +167,30 @@ impl Counter {
 
     /// The best terms, strongest first.
     pub(crate) fn terms(self, max: usize) -> Vec<Term> {
+        let known = |w: &str| self.is_known(w);
         let mut terms: Vec<Term> = self
             .entries
-            .into_values()
-            .filter(|e| e.strong || e.weak >= MIN_WEAK)
-            .map(|e| {
-                let mut forms: Vec<(String, u32)> = e.forms.into_iter().collect();
+            .iter()
+            .filter(|(_, e)| e.strong || e.weak >= MIN_WEAK)
+            .filter_map(|(_, e)| {
+                let mut forms: Vec<(String, u32)> =
+                    e.forms.iter().map(|(f, n)| (f.clone(), *n)).collect();
                 forms.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                let term = forms[0].0.clone();
+                // A word the transcriber knows needs no hint (put homonyms like "Rust" in
+                // post.vocabulary); a one-off with digits is a file name, not a word.
+                if known(&term) || (!e.strong && term.chars().any(|c| c.is_ascii_digit())) {
+                    return None;
+                }
+                Some((term, e))
+            })
+            .map(|(term, e)| {
                 let bonus =
                     if e.code { 1.5 } else { 1.0 } * (1.0 + 0.5 * (e.sources.len() - 1) as f64);
                 Term {
-                    term: forms[0].0.clone(),
+                    term,
                     score: (e.score * bonus * 10.0).round() / 10.0,
-                    sources: e.sources.into_iter().map(String::from).collect(),
+                    sources: e.sources.iter().map(|s| (*s).to_owned()).collect(),
                 }
             })
             .collect();
@@ -173,6 +198,67 @@ impl Counter {
         terms.truncate(max);
         terms
     }
+}
+
+/// A shell command without what nobody says aloud: `echo` text, `-Flags`, `Verb-Noun`
+/// cmdlet names.
+fn shell_words(cmd: &str) -> String {
+    let first = cmd
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_lowercase();
+    if matches!(
+        first.as_str(),
+        "echo" | "write-host" | "write-output" | "printf"
+    ) {
+        return String::new();
+    }
+    cmd.split_whitespace()
+        .filter(|w| !w.starts_with('-'))
+        .filter(|w| {
+            let parts: Vec<&str> = w.split('-').collect();
+            !(parts.len() == 2
+                && parts
+                    .iter()
+                    .all(|p| p.chars().next().is_some_and(|c| c.is_ascii_uppercase())))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The words of the faster-whisper model's tokenizer that are one token with a leading space
+/// (Whisper knows them). Empty if no model is installed.
+pub(crate) fn whisper_words(models: &std::path::Path) -> HashSet<String> {
+    let tokenizer = fs::read_dir(models)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|d| d.file_name().to_string_lossy().contains("whisper"))
+        .flat_map(|d| {
+            fs::read_dir(d.path().join("snapshots"))
+                .into_iter()
+                .flatten()
+                .flatten()
+        })
+        .map(|s| s.path().join("tokenizer.json"))
+        .find(|p| p.exists());
+    let Some(path) = tokenizer else {
+        return HashSet::new();
+    };
+    let Ok(json) = crate::ctx::read_json::<serde_json::Value>(&path) else {
+        return HashSet::new();
+    };
+    json["model"]["vocab"]
+        .as_object()
+        .map(|v| {
+            v.keys()
+                .filter_map(|k| k.strip_prefix('\u{120}'))
+                .filter(|w| w.chars().all(char::is_alphabetic))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Looks generated (a token, a hash, an id), not like a word anyone says.
@@ -245,7 +331,7 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
         .iter()
         .map(|p| p.0.clone())
         .collect();
-    let mut c = Counter::new(secrets);
+    let mut c = Counter::new(secrets, whisper_words(&ctx.home.models_dir()));
     if let Some(title) = &ctx.session.meta.title_at_start {
         c.add(title, "title", 3.0);
     }
@@ -273,7 +359,7 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
         c.add(&commit.repo, "commits", 3.0);
     }
     for line in sources::shell(ctx) {
-        c.add(&line.cmd, "shell", 2.0);
+        c.add(&shell_words(&line.cmd), "shell", 2.0);
     }
     // The channel's own messages are mostly the bot's replies (links, support), not talk.
     for m in sources::chat(ctx).into_iter().filter(|m| !m.is_owner) {
@@ -337,9 +423,10 @@ mod tests {
     #[test]
     fn terms_skip_common_words_typos_and_secrets() {
         let secret = regex::Regex::new("ghp_[A-Za-z0-9]{30,}").unwrap();
-        let mut c = Counter::new(vec![secret]);
+        let mut c = Counter::new(vec![secret], HashSet::new());
         c.add("Parser with nom", "chapters", 3.0);
         c.add("cargo add nom serde_json", "shell", 2.0);
+        c.add("cargo build", "shell", 2.0);
         c.add("feat: HashMap of tokens", "commits", 3.0);
         // Chat words count only when said twice.
         c.add("the borrow checker", "chat", 1.0);
@@ -384,6 +471,28 @@ What I'm doing today: a parser with nom and serde_json";
             without_words_of(readme, seed),
             "a parser with nom and serde_json"
         );
+    }
+
+    #[test]
+    fn known_words_shell_flags_and_file_names_are_not_terms() {
+        let known: HashSet<String> = ["world", "moment", "Item", "force"]
+            .map(String::from)
+            .into();
+        let mut c = Counter::new(vec![], known);
+        c.add("hello World moment", "chapters", 3.0);
+        for cmd in [
+            "echo hello serde",
+            "Remove-Item -Recurse -Force file1.txt",
+            "rm file1.txt",
+            "cargo add ratatui",
+            "cargo add ratatui",
+        ] {
+            c.add(&shell_words(cmd), "shell", 2.0);
+        }
+        let terms: Vec<String> = c.terms(20).into_iter().map(|t| t.term).collect();
+        // "hello" is a common word; World and moment are known to Whisper; the rest are flags,
+        // cmdlets, echo text or a one-off file name.
+        assert_eq!(terms, ["cargo", "ratatui"], "{terms:?}");
     }
 
     #[test]

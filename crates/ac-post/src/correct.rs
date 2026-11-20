@@ -117,14 +117,19 @@ fn skeleton(w: &str) -> String {
     out
 }
 
-/// Sounds or is spelled almost like `term`, but is not the same word.
+/// Sounds or is spelled almost like `term`, but is not the same word: same skeleton
+/// ("rest"/"Rust"), the term's skeleton plus one trailing consonant ("roster" for "a Rust"),
+/// or a small spelling difference.
 fn sounds_like(word: &str, term: &str) -> bool {
     let (w, t) = (word.to_lowercase(), term.to_lowercase());
     w.chars().count() >= 3
         && t.chars().count() >= 3
         && !t.contains(' ')
         && w != t
-        && (skeleton(&w) == skeleton(&t) || distance(&w, &t) <= (t.chars().count() / 4).max(1))
+        && (skeleton(&w) == skeleton(&t)
+            || (skeleton(&w).starts_with(&skeleton(&t))
+                && skeleton(&w).chars().count() == skeleton(&t).chars().count() + 1)
+            || distance(&w, &t) <= (t.chars().count() / 4).max(1))
 }
 
 /// Words that sound like a term and that Whisper was less sure of than `below`. Words that
@@ -322,6 +327,7 @@ mod tests {
             "committing get the [rest] of trust, Rust ठीक garage edit bob"
         );
         assert_eq!(skeleton("rest"), skeleton("rust"));
+        assert!(sounds_like("roster", "Rust") && !sounds_like("restaurant", "Rust"));
         assert!(!sounds_like("committing", "git") && !sounds_like("edit", "repo"));
     }
 

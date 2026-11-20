@@ -36,6 +36,8 @@ def faster_whisper(args):
         word_timestamps=True,
         initial_prompt=args.prompt or None,
         hotwords=args.hotwords or None,
+        # Skips silences where Whisper would otherwise invent text (e.g. read its hints).
+        hallucination_silence_threshold=2.0,
     )
     out = []
     for seg in segments:
