@@ -54,7 +54,7 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
     let (raw, dropped) = clean(raw);
     if dropped > 0 {
         ctx.notes.push(format!(
-            "transcribe: left out {dropped} segments Whisper made up (repeats, words read from its hints)"
+            "transcribe: left out {dropped} things Whisper made up (repeated segments or phrases, words read from its hints)"
         ));
     }
     let words = without(raw, &ctx.privacy(duration));
@@ -68,6 +68,10 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
 const MADE_UP_P: f64 = 0.15;
 /// Faster than anyone speaks: a repeat Whisper squeezed into a fraction of a second.
 const MAX_WORDS_PER_S: f64 = 7.0;
+/// A repeated phrase inside a segment averaging less than this per word is made up.
+const MIN_WORD_S: f64 = 0.1;
+/// Longest repeated phrase looked for.
+const MAX_REPEAT_WORDS: usize = 8;
 
 /// Drops segments Whisper made up: the same text as the segment before, at least 4 words
 /// faster than speech, or near-zero confidence. Returns the rest and how many were dropped.
@@ -93,8 +97,55 @@ fn clean(mut words: Words) -> (Words, usize) {
         last = text;
         !(repeat || too_fast || unsure)
     });
-    let dropped = before - words.segments.len();
+    let mut dropped = before - words.segments.len();
+    for s in &mut words.segments {
+        let n = squeezed_repeats(&mut s.words);
+        if n > 0 {
+            dropped += n;
+            s.text = s
+                .words
+                .iter()
+                .map(|w| w.w.trim())
+                .collect::<Vec<_>>()
+                .join(" ");
+        }
+    }
     (words, dropped)
+}
+
+/// A phrase repeated inside a segment faster than anyone speaks ("I will test it now I will
+/// test it" with the second copy squeezed into 0.3 s): removed. Real repeats ("let me, let
+/// me") take normal time and stay. Returns how many phrases were removed.
+fn squeezed_repeats(words: &mut Vec<Word>) -> usize {
+    let key = |w: &Word| {
+        w.w.trim()
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase()
+    };
+    let mut removed = 0;
+    let mut i = 2;
+    'scan: while i < words.len() {
+        for n in (2..=MAX_REPEAT_WORDS.min(words.len() - i)).rev() {
+            let copy = &words[i..i + n];
+            let span = copy[n - 1].end - copy[0].start;
+            if span / n as f64 >= MIN_WORD_S {
+                continue;
+            }
+            // The same words right before, or with one word in between.
+            for gap in 0..=1 {
+                let Some(from) = i.checked_sub(n + gap) else {
+                    continue;
+                };
+                if (0..n).all(|k| key(&words[from + k]) == key(&copy[k])) {
+                    words.drain(i..i + n);
+                    removed += 1;
+                    continue 'scan;
+                }
+            }
+        }
+        i += 1;
+    }
+    removed
 }
 
 /// Writes `words.json`, `transcript.srt` and `transcript.txt`.
@@ -411,6 +462,47 @@ mod tests {
             ]
         );
         assert_eq!(dropped, 3);
+    }
+
+    #[test]
+    fn squeezed_repeats_inside_a_segment_are_dropped() {
+        // From the owner's stream: (word, start, end).
+        let w = |list: &[(&str, f64, f64)]| -> Vec<Word> {
+            list.iter()
+                .map(|&(w, start, end)| Word {
+                    w: w.into(),
+                    start,
+                    end,
+                    p: Some(0.9),
+                })
+                .collect()
+        };
+        let mut made_up = w(&[
+            ("I", 463.32, 464.14),
+            ("will", 464.14, 464.3),
+            ("test", 464.3, 464.62),
+            ("it", 464.62, 464.88),
+            ("now", 464.88, 465.36),
+            ("I", 465.36, 465.58),
+            ("will", 465.58, 465.68),
+            ("test", 465.68, 465.68),
+            ("it", 465.68, 465.68),
+            ("I", 465.68, 465.68),
+            ("should", 465.68, 465.74),
+        ]);
+        assert_eq!(squeezed_repeats(&mut made_up), 1);
+        let text: Vec<&str> = made_up.iter().map(|x| x.w.as_str()).collect();
+        assert_eq!(text, ["I", "will", "test", "it", "now", "I", "should"]);
+        // Said twice at speaking speed: kept.
+        let mut real = w(&[
+            ("let", 1.0, 1.2),
+            ("me", 1.2, 1.4),
+            ("let", 1.5, 1.7),
+            ("me", 1.7, 1.9),
+            ("check", 1.9, 2.3),
+        ]);
+        assert_eq!(squeezed_repeats(&mut real), 0);
+        assert_eq!(real.len(), 5);
     }
 
     #[test]
