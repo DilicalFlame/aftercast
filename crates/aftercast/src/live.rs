@@ -1070,6 +1070,7 @@ impl Controller {
     fn snapshot(&self) -> View {
         View {
             session: self.session.name(),
+            readme: self.session.readme(),
             meta: self.session.meta.clone(),
             state: self.state.clone(),
             chapters: self.chapters.clone(),

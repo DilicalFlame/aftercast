@@ -35,6 +35,10 @@ anything that differed from "Expect".
    not Enter. Repeat for 3 checkpoints at least 10 s apart.
 9. Open the session's `README.md` (`sessions\YYYY\<date>_epNNN`) in VS Code, change a line,
    save. Expect exactly one `desc rendered` in the event log. Repeat with nvim.
+   Then press `r`. Expect: the TUI gives way to Neovim with the README, with none of your
+   Neovim config (default colours, no plugins). Change a line, `:wq`. Expect: the TUI is
+   back and redrawn, the message says to press `s`, one `desc rendered` in the event log and
+   no push. `:q!` without saving returns the same way.
 10. Press `s`. Expect: preview with `0:00 Start` plus your chapters. Enter. Expect:
     `description pushed`. Refresh Studio: the description changed; **title, category and
     tags are unchanged**.

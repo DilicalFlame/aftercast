@@ -28,12 +28,16 @@ use tokio::sync::{mpsc, watch};
 
 const ACCENT: Color = Color::Rgb(0xFF, 0x55, 0x55);
 const MUTED: Color = Color::Rgb(0x9A, 0x9A, 0x9A);
+/// Opens the README on `r`, run with `--clean` (no user config).
+const EDITOR: &str = "nvim";
 
 /// Snapshot of a live session published by the controller after every change.
 #[derive(Debug, Clone)]
 pub struct View {
     /// Session folder name, e.g. `2026-11-19_ep042`.
     pub session: String,
+    /// The session's `README.md` (`r` opens it in Neovim).
+    pub readme: std::path::PathBuf,
     pub meta: SessionMeta,
     pub state: SessionState,
     pub chapters: Vec<Chapter>,
@@ -178,6 +182,8 @@ struct App {
     external: Option<std::sync::mpsc::Receiver<External>>,
     /// Hotkey checkpoints waiting for their title prompt.
     pending: VecDeque<Timestamp>,
+    /// `r` was pressed: open this README in Neovim before the next frame.
+    edit_readme: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -202,6 +208,7 @@ impl App {
             exit: false,
             external: None,
             pending: VecDeque::new(),
+            edit_readme: None,
         }
     }
 
@@ -225,6 +232,9 @@ impl App {
             {
                 self.mode = Mode::ConfirmTitle(title.clone());
             }
+            if let Some(path) = self.edit_readme.take() {
+                self.edit(terminal, &path);
+            }
             terminal.draw(|frame| self.draw(frame, &view))?;
             if event::poll(Duration::from_millis(250))?
                 && let event::Event::Key(key) = event::read()?
@@ -234,6 +244,24 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Hands the terminal to Neovim (`--clean`: none of the user's config) on the README and
+    /// takes it back when Neovim exits. Saving re-renders the description (the README is
+    /// watched); nothing is pushed until `s`.
+    fn edit(&mut self, terminal: &mut DefaultTerminal, path: &std::path::Path) {
+        ratatui::restore();
+        let status = std::process::Command::new(EDITOR)
+            .arg("--clean")
+            .arg(path)
+            .status();
+        *terminal = ratatui::init();
+        let _ = terminal.clear();
+        self.message = Some(match status {
+            Ok(s) if s.success() => "README closed; s previews and pushes the description".into(),
+            Ok(s) => format!("{EDITOR} exited with {s}"),
+            Err(e) => format!("could not start {EDITOR}: {e} (is Neovim installed and on PATH?)"),
+        });
     }
 
     /// Queues hotkey checkpoints, opens their title prompt when the UI is free, and saves
@@ -380,6 +408,7 @@ impl App {
             KeyCode::Char('n') => self.mode = input(Prompt::Note),
             KeyCode::Char(':') => self.mode = input(Prompt::Palette),
             KeyCode::Char('s') => self.mode = Mode::Preview { scroll: 0 },
+            KeyCode::Char('r') => self.edit_readme = Some(view.readme.clone()),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
             KeyCode::Char('b') => self.send(Command::Brb {
@@ -740,7 +769,7 @@ impl App {
             Mode::Input { .. } => " [Enter] save  [Esc] cancel".into(),
             Mode::Preview { .. } => " [Enter] push  [j/k] scroll  [Esc] close".into(),
             _ if self.focus == Pane::Questions => " [Enter] show/answer [x] dismiss [j/k] move [Tab] focus [c]heckpoint [m]ark [b]rb [p]rivacy [:] command [?] help".into(),
-            _ => " [c]heckpoint [m]ark [b]rb [p]rivacy [n]ote [s]ync [e]dit [d]elete [Tab] focus [:] command [?] help [q]uit".into(),
+            _ => " [c]heckpoint [m]ark [b]rb [p]rivacy [n]ote [r]eadme [s]ync [e]dit [d]elete [Tab] focus [:] command [?] help [q]uit".into(),
         }
     }
 
@@ -1149,6 +1178,7 @@ fn help_lines() -> Vec<Line<'static>> {
         "b        BRB on/off (OBS BRB scene, back to the previous scene)",
         "p        privacy on/off (OBS privacy scene)",
         "s        preview description; Enter pushes it",
+        "r        edit the README in Neovim (clean, no config); :wq comes back",
         "e / d    edit / delete the selected chapter (Chapters pane)",
         "Enter    show question on stream; again: answered (Questions pane)",
         "x        dismiss question (Questions pane)",
@@ -1333,6 +1363,7 @@ mod tests {
         }
         View {
             session: "2026-11-19_ep042".into(),
+            readme: "sessions/2026/2026-11-19_ep042/README.md".into(),
             meta: SessionMeta {
                 schema_version: 1,
                 id: "x".into(),
@@ -1468,6 +1499,11 @@ mod tests {
         assert!(screen(&mut app, &view).contains("Description preview"));
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Sync);
+
+        // `r` queues the README for Neovim (opened by the run loop); nothing is pushed.
+        press(&mut app, KeyCode::Char('r'));
+        assert_eq!(app.edit_readme.as_deref(), Some(view.readme.as_path()));
+        assert!(cmd_rx.try_recv().is_err());
     }
 
     #[test]

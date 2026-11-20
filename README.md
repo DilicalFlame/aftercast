@@ -155,6 +155,7 @@ again resumes the session where it left off.
 | `n` | Private note (never published) |
 | `b` | BRB on/off (switches to the BRB scene and back) |
 | `p` | Privacy on/off (privacy scene) |
+| `r` | Edit the session README in Neovim (`nvim --clean`, none of your config) inside the terminal; `:wq` returns to aftercast. Saving re-renders the description, nothing is pushed |
 | `s` | Preview the description; `Enter` pushes it to YouTube |
 | `e` / `d` | Edit / delete the selected chapter |
 | `Enter` / `x` | Questions pane: show on stream (again: answered) / dismiss |
