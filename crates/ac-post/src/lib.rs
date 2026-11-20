@@ -203,7 +203,7 @@ impl Stage {
                     p.frame_interval_s, p.scene_threshold, p.phash_max_distance, p.frame_width
                 ),
             ),
-            Self::Ocr => (vec![], String::new()),
+            Self::Ocr => (vec![], format!("{:?}", p.ocr_engine)),
             Self::Activity => (
                 vec![
                     events,

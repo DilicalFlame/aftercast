@@ -256,7 +256,7 @@ AI-ready dataset under the session's `derived/` folder:
 | `silence` | `derived/silence.json` |
 | `git` | `git.jsonl`: commits in `capture.git_roots` made during the stream |
 | `frames` | `derived/frames/*.jpg` every `frame_interval_s` and at scene changes, near-duplicates dropped |
-| `ocr` | with `post.ocr` and tesseract: screen text per frame |
+| `ocr` | with `post.ocr`: screen text per frame (GLM-OCR on the GPU, or Tesseract) |
 | `activity` | `derived/activity.csv`: speech, keys, shell, commits, chat, questions per 10 s |
 | `segments` | `derived/segments.json`: speech, focus (typing), dead, brb, redacted |
 | `secrets` | `derived/secrets.json`; ranges around leaked tokens are redacted |
@@ -304,6 +304,18 @@ stay, and names read from chat are left alone. Every change is listed in
 `derived/corrections.json`; Whisper's own transcript stays in `derived/words.whisper.json`.
 It takes seconds for a short stream. After changing the vocabulary,
 `aftercast post --from vocab` redoes vocabulary, transcript and corrections.
+
+The default model is Whisper **large-v3-turbo**: on a real Hinglish stream it got 5 of 6
+known-tricky phrases right in every run, against 1 of 6 for large-v3, and transcribed about
+three times faster (8.4 min of speech in 20 to 40 s). Parakeet, Canary and Qwen3-ASR were
+tried too and did worse here.
+
+Screen text (`post.ocr = true`) is read by **GLM-OCR**, a 0.9B vision model that
+`aftercast setup` installs with llama.cpp's `llama-server` (about 2 GB, Windows with an NVIDIA
+GPU). It reads terminals, code, URLs and file lists almost perfectly where Tesseract garbles
+them, at about 0.8 s per frame with `post.ocr_parallel = 4` frames in flight on one model.
+`post.ocr_engine = "tesseract"` switches back; without GLM-OCR installed, Tesseract is used and
+`post` says so.
 
 Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. whisperx
 (`post.transcriber = "whisperx"`, also installed by `aftercast setup`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,

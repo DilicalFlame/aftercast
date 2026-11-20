@@ -490,6 +490,10 @@ pub struct Post {
     pub silence_min_s: f64,
     pub focus_min_keys_per_10s: u32,
     pub ocr: bool,
+    /// Which OCR reads the frames (`post.ocr`).
+    pub ocr_engine: OcrEngine,
+    /// Frames GLM-OCR reads at once (one model on the GPU, several in flight).
+    pub ocr_parallel: u32,
     /// Words the transcriber should expect (names, tools, jargon), e.g. "Rust", "cargo".
     pub vocabulary: Vec<String>,
     /// Let a local model replace misheard words with the stream's terms (stage `correct`).
@@ -506,7 +510,7 @@ impl Default for Post {
             auto_after_finalize: false,
             use_vod: false,
             transcriber: Transcriber::FasterWhisper,
-            whisper_model: "large-v3".into(),
+            whisper_model: "large-v3-turbo".into(),
             whisper_compute_type: "float16".into(),
             language: "auto".into(),
             frame_interval_s: 30,
@@ -517,6 +521,8 @@ impl Default for Post {
             silence_min_s: 4.0,
             focus_min_keys_per_10s: 3,
             ocr: false,
+            ocr_engine: OcrEngine::GlmOcr,
+            ocr_parallel: 4,
             vocabulary: Vec::new(),
             correct: false,
             correct_model: "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf".into(),
@@ -564,6 +570,14 @@ impl Default for Render {
 pub enum Encoder {
     H264Nvenc,
     Libx264,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum OcrEngine {
+    /// GLM-OCR (0.9B vision model) through llama.cpp on the GPU, installed by `aftercast setup`.
+    GlmOcr,
+    Tesseract,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

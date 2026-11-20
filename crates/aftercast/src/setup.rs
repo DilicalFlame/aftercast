@@ -79,6 +79,20 @@ pub fn run(home: &Home, config_path: &Path) -> Result<u8> {
             .args(["--download", "--tessdata"])
             .arg(home.tessdata_dir()),
     )?;
+    if config.post.ocr && config.post.ocr_engine == ac_core::config::OcrEngine::GlmOcr {
+        step(
+            &log,
+            "GLM-OCR and llama.cpp (screen text)",
+            Command::new(&python)
+                .arg(helpers.join("ocr.py"))
+                .args(["--setup-glm", "--llama"])
+                .arg(home.llama_dir())
+                .arg("--models")
+                .arg(home.models_dir()),
+        )?;
+    } else {
+        println!("skip  GLM-OCR (post.ocr = false or post.ocr_engine = \"tesseract\")");
+    }
     let model = &config.post.whisper_model;
     step(
         &log,

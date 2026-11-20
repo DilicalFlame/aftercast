@@ -68,7 +68,9 @@ pub fn run(home: &Home, config_path: Option<PathBuf>) -> u8 {
         config.post.use_vod,
     ));
     checks.push(
-        if paths.tesseract == Path::new("tesseract")
+        if config.post.ocr_engine == ac_core::config::OcrEngine::GlmOcr && config.post.ocr {
+            ocr_glm(home, &config)
+        } else if paths.tesseract == Path::new("tesseract")
             && home.tessdata_dir().join("eng.traineddata").exists()
         {
             tool(
@@ -175,6 +177,36 @@ fn tool(name: &str, program: &Path, args: &[&str], required: bool) -> Check {
         Ok(line) => Check::new(name, Status::Ok, line),
         Err(e) if required => Check::new(name, Status::Fail(exit::TOOL_MISSING), e),
         Err(e) => Check::new(name, Status::Warn, format!("{e} (optional)")),
+    }
+}
+
+/// GLM-OCR and llama-server are installed (`post.ocr_engine = "glm-ocr"`).
+fn ocr_glm(home: &Home, config: &Config) -> Check {
+    let script = match ac_post::write_helpers(home) {
+        Ok(dir) => dir.join("ocr.py"),
+        Err(e) => return Check::new("ocr", Status::Fail(exit::GENERIC), e),
+    };
+    let (llama, models) = (
+        home.llama_dir().to_string_lossy().into_owned(),
+        home.models_dir().to_string_lossy().into_owned(),
+    );
+    match first_line(
+        home.python(&config.paths.python),
+        &[
+            &script.to_string_lossy(),
+            "--check-glm",
+            "--llama",
+            &llama,
+            "--models",
+            &models,
+        ],
+    ) {
+        Ok(line) => Check::new("ocr", Status::Ok, line),
+        Err(e) => Check::new(
+            "ocr",
+            Status::Warn,
+            format!("{e} (run aftercast setup; Tesseract is used meanwhile)"),
+        ),
     }
 }
 

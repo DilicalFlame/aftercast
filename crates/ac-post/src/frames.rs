@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ac_core::config::OcrEngine;
 use image_hasher::{HashAlg, HasherConfig, ImageHash};
 use serde::{Deserialize, Serialize};
 
@@ -153,10 +154,18 @@ pub fn ocr(ctx: &mut Ctx) -> Result<()> {
         .iter()
         .map(|f| ctx.derived("frames").join(&f.file))
         .collect();
-    let mut texts = if ctx.config.paths.tesseract == Path::new("tesseract")
+    let glm = ctx.config.post.ocr_engine == OcrEngine::GlmOcr;
+    let glm_ready = ctx.home.llama_server().exists();
+    if glm && !glm_ready {
+        ctx.notes
+            .push("ocr: GLM-OCR is not installed (run aftercast setup); used Tesseract".into());
+    }
+    let mut texts = if glm && glm_ready {
+        ocr_python(ctx, &images, true)?
+    } else if ctx.config.paths.tesseract == Path::new("tesseract")
         && ctx.home.tessdata_dir().join("eng.traineddata").exists()
     {
-        ocr_python(ctx, &images)?
+        ocr_python(ctx, &images, false)?
     } else {
         ocr_cli(ctx, &images)?
     };
@@ -173,7 +182,7 @@ pub fn ocr(ctx: &mut Ctx) -> Result<()> {
 }
 
 /// Tesserocr in the `aftercast setup` venv, one process for all frames.
-fn ocr_python(ctx: &mut Ctx, images: &[PathBuf]) -> Result<HashMap<String, String>> {
+fn ocr_python(ctx: &mut Ctx, images: &[PathBuf], glm: bool) -> Result<HashMap<String, String>> {
     let script = tool::write_helpers(&ctx.home)?.join("ocr.py");
     let list = ctx.derived("ocr/frames.txt");
     let out = ctx.derived("ocr/ocr.raw.json");
@@ -183,16 +192,34 @@ fn ocr_python(ctx: &mut Ctx, images: &[PathBuf]) -> Result<HashMap<String, Strin
         .collect();
     fs::write(&list, lines.join("\n")).map_err(|e| format!("{}: {e}", list.display()))?;
     let python = ctx.home.python(&ctx.config.paths.python);
-    let args: Vec<OsString> = vec![
+    let mut args: Vec<OsString> = vec![
         script.into(),
-        "--tessdata".into(),
-        ctx.home.tessdata_dir().into(),
         "--list".into(),
         list.clone().into(),
         "--out".into(),
         out.clone().into(),
     ];
-    ctx.note_tool("tesseract", "tesserocr (aftercast setup)".into());
+    if glm {
+        args.extend([
+            "--engine".into(),
+            "glm".into(),
+            "--llama".into(),
+            ctx.home.llama_dir().into(),
+            "--models".into(),
+            ctx.home.models_dir().into(),
+            "--parallel".into(),
+            ctx.config.post.ocr_parallel.max(1).to_string().into(),
+        ]);
+        ctx.note_tool("ocr", "GLM-OCR on llama.cpp (aftercast setup)".into());
+    } else {
+        args.extend([
+            "--engine".into(),
+            "tesseract".into(),
+            "--tessdata".into(),
+            ctx.home.tessdata_dir().into(),
+        ]);
+        ctx.note_tool("ocr", "tesserocr (aftercast setup)".into());
+    }
     tool::run_lines(ctx, &python.to_string_lossy(), args, |line| {
         if let Some(f) = line
             .strip_prefix("progress ")

@@ -103,6 +103,20 @@ impl Home {
         self.join("tools/models")
     }
 
+    /// llama.cpp's `llama-server` and its DLLs, installed by `aftercast setup` for GLM-OCR.
+    pub fn llama_dir(&self) -> PathBuf {
+        self.join("tools/llama")
+    }
+
+    /// `llama-server` in [`Home::llama_dir`].
+    pub fn llama_server(&self) -> PathBuf {
+        self.llama_dir().join(if cfg!(windows) {
+            "llama-server.exe"
+        } else {
+            "llama-server"
+        })
+    }
+
     /// Where `aftercast setup` puts Tesseract's language data.
     pub fn tessdata_dir(&self) -> PathBuf {
         self.join("tools/tessdata")

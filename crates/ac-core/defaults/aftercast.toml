@@ -150,7 +150,7 @@ brb = "Ctrl+Alt+B"
 auto_after_finalize = false
 use_vod = false                 # also download the YouTube VOD (for calibration / fallback)
 transcriber = "faster-whisper"  # faster-whisper | whisperx | whisper-cpp
-whisper_model = "large-v3"      # RTX 4060 8GB: large-v3 float16 fits; use int8_float16 if VRAM is tight
+whisper_model = "large-v3-turbo" # best and fastest in tests on Hinglish speech (5 of 6 vs 1 of 6 for large-v3)
 whisper_compute_type = "float16"
 language = "auto"               # "en", "hi", or "auto" (Hinglish: test both)
 frame_interval_s = 30
@@ -161,6 +161,10 @@ silence_db = -35
 silence_min_s = 4.0
 focus_min_keys_per_10s = 3      # silent but typing ≥ this → "focus", not "dead"
 ocr = false
+# glm-ocr: a small vision model on the GPU (installed by aftercast setup), far more accurate on
+# code, terminals and browsers than tesseract, about 0.8 s per frame with 4 in flight.
+ocr_engine = "glm-ocr"          # glm-ocr | tesseract
+ocr_parallel = 4
 # Words the transcriber should expect: Whisper reads the series, title, these and the
 # chapter titles before it listens, so it writes "Rust", not "rest". Words only: in tests,
 # sentences ("about the Rust language", "English and Hindi") made it worse.
