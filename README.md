@@ -173,11 +173,14 @@ opened in full under its author. `j/k` move the cursor through lines that stay p
 only at the edges, like an editor; new chat arriving meanwhile does not move it, and `G` follows
 the newest again. The selected Inbox item opens the same way.
 
-The Inbox (pane 2) holds viewer questions (`!q`) and Super Chats. Super Chats and Super
-Stickers are pinned above the questions with their amount, and stay there, across restarts,
-until you show them on stream (`Enter`, again when done) or dismiss them (`x`), so a
-supporter is never lost in a busy chat. Panes with little in them shrink to fit, so the busy ones get the
-room.
+The Inbox (pane 2) is a to-do list, not a second chat: only what needs you lands there, and
+everything leaves once handled. Super Chats, Super Stickers and memberships (joins,
+milestones, gifts) are pinned on top with their amount or a "member" chip, and stay, across
+restarts, until you thank them (`Enter`, nothing goes on stream) or dismiss them (`x`).
+Questions (`!q`) follow: `Enter` shows one on stream, `Enter` again marks it answered.
+Messages members write in chat stay in chat.
+
+Panes with little in them shrink to fit, so the busy ones get the room.
 
 Global hotkeys work while another app (your editor) has focus: `Ctrl+Alt+M` mark,
 `Ctrl+Alt+C` checkpoint, `Ctrl+Alt+B` BRB, `Ctrl+Alt+P` privacy. Configure them in
@@ -453,7 +456,8 @@ aftercast --home $env:TEMP\ac --mock fixtures\basic abcdefghijk --no-tui --scrip
 ```
 
 Script lines look like `+5s checkpoint "Parser"`, `brb`, `obs record started D:/a.mkv`,
-`chat bob !q why rust?`, `chat ana mod !chapter Parser`, `question show`. A `chat.jsonl` in
+`chat bob !q why rust?`, `chat ana mod !chapter Parser`, `chat eve super:₹100.00 thanks!`,
+`chat gus joined Welcome!`, `question show 2` (the 2nd Inbox item). A `chat.jsonl` in
 the fixture folder (`{"after_ms": 1200, "author": "bob", "text": "!q hi"}` per line) plays
 chat in real time for trying the TUI.
 Things only a person can verify (real account, real OBS, hotkeys) are listed in

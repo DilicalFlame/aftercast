@@ -205,10 +205,10 @@ pub enum EventKind {
         author: String,
         author_id: String,
         text: String,
-        /// Set for a Super Chat or Super Sticker, as YouTube shows it ("₹100.00"): it
-        /// waits in the inbox like a question until shown or dismissed.
+        /// Set for a Super Chat, Super Sticker or membership: it waits in the inbox,
+        /// above the questions, until thanked or dismissed.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        amount: Option<String>,
+        support: Option<crate::chat::Support>,
     },
     #[serde(rename = "question.show")]
     QuestionShow { qid: String },

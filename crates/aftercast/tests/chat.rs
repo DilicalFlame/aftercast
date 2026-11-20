@@ -105,6 +105,8 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
          +5s chat dan !links\n\
          +5s chat eve !links\n\
          +1s chat fay super:₹100.00 keep it up!\n\
+         +1s chat gus joined Welcome to the channel!\n\
+         +1s question show 1\n\
          +1s latency\n\
          +240s chat me owner !lat 2350\n\
          +20s latency\n\
@@ -127,13 +129,23 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .collect();
     let of = |ty: &str| -> Vec<&Value> { events.iter().filter(|e| e["type"] == ty).collect() };
 
-    // One question per viewer, near-duplicates dropped; the Super Chat joins the inbox
-    // with its amount.
+    // One question per viewer, near-duplicates dropped; the Super Chat and the membership
+    // join the inbox, pinned first.
     let added = of("question.add");
-    assert_eq!(added.len(), 2, "{added:?}");
-    assert_eq!(added[1]["data"]["amount"], "₹100.00");
+    assert_eq!(added.len(), 3, "{added:?}");
+    assert_eq!(added[1]["data"]["support"]["label"], "₹100.00");
+    assert_eq!(added[1]["data"]["support"]["kind"], "superchat");
     assert_eq!(added[1]["data"]["text"], "keep it up!");
-    assert!(added[0]["data"].get("amount").is_none());
+    assert_eq!(added[2]["data"]["support"]["kind"], "membership");
+    assert!(added[0]["data"].get("support").is_none());
+    // Enter on a supporter thanks them: answered at once, no question card.
+    let fay = added[1]["data"]["qid"].as_str().unwrap();
+    let answered: Vec<&str> = of("question.answered")
+        .iter()
+        .map(|e| e["data"]["qid"].as_str().unwrap())
+        .collect();
+    assert!(answered.contains(&fay), "{answered:?}");
+    assert!(of("question.show").iter().all(|e| e["data"]["qid"] != fay));
     let toasts: Vec<&str> = of("bot.cmd")
         .iter()
         .map(|e| e["data"]["cmd"].as_str().unwrap())
@@ -141,7 +153,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
     assert_eq!(toasts.iter().filter(|c| **c == "q").count(), 3);
     // Shown, then answered by the second `question show`.
     assert_eq!(of("question.show").len(), 1);
-    assert_eq!(of("question.answered").len(), 1);
+    assert_eq!(of("question.answered").len(), 2);
 
     // The mod's chapter points `latency` back from when YouTube says the message was sent
     // (default latency 5 s; script chat is sent and received at the same moment).
@@ -186,7 +198,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(chat.len(), 8);
+    assert_eq!(chat.len(), 9);
     let ts = |v: &Value| serde_json::from_value::<ac_core::time::Timestamp>(v.clone()).unwrap();
     let received = chat
         .iter()

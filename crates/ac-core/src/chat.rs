@@ -27,6 +27,30 @@ pub struct ChatMessage {
     pub amount: Option<String>,
 }
 
+/// A supporter's message waiting in the inbox: a Super Chat, Super Sticker or membership.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Support {
+    pub kind: ChatKind,
+    /// What the chip shows: the amount ("₹100.00") or "member".
+    pub label: String,
+}
+
+impl ChatMessage {
+    /// The inbox entry this message makes, if it is a Super Chat, Super Sticker or
+    /// membership (join, milestone or gift).
+    pub fn support(&self) -> Option<Support> {
+        let label = match (self.kind, &self.amount) {
+            (ChatKind::Superchat | ChatKind::Supersticker, Some(amount)) => amount.clone(),
+            (ChatKind::Membership, _) => "member".into(),
+            _ => return None,
+        };
+        Some(Support {
+            kind: self.kind,
+            label,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChatKind {

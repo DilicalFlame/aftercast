@@ -650,8 +650,18 @@
                 "type": "string",
                 "maxLength": 300
               },
-              "amount": {
-                "type": "string"
+              "support": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "enum": ["superchat", "supersticker", "membership"]
+                  },
+                  "label": {
+                    "type": "string"
+                  }
+                },
+                "required": ["kind", "label"],
+                "additionalProperties": false
               }
             },
             "required": [

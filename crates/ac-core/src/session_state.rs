@@ -43,8 +43,8 @@ pub struct Question {
     pub author: String,
     pub author_id: String,
     pub text: String,
-    /// Super Chat amount; `None` for a `!q` question.
-    pub amount: Option<String>,
+    /// Super Chat, Super Sticker or membership; `None` for a `!q` question.
+    pub support: Option<crate::chat::Support>,
     pub state: QuestionState,
     pub shown_at: Option<Timestamp>,
 }
@@ -144,13 +144,13 @@ impl SessionState {
                 author,
                 author_id,
                 text,
-                amount,
+                support,
             } => self.questions.push(Question {
                 qid: qid.clone(),
                 author: author.clone(),
                 author_id: author_id.clone(),
                 text: text.clone(),
-                amount: amount.clone(),
+                support: support.clone(),
                 state: QuestionState::Open,
                 shown_at: None,
             }),

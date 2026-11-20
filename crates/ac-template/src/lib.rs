@@ -217,7 +217,7 @@ pub fn context(input: &ContextInput<'_>) -> (Value, Vec<Chapter>) {
         "chapters": chapters,
         "chapters_block": chapters::block(&chapters),
         "questions_answered": state.questions.iter()
-            .filter(|q| q.state == QuestionState::Answered && q.amount.is_none())
+            .filter(|q| q.state == QuestionState::Answered && q.support.is_none())
             .map(|q| json!({
                 "author": q.author, "text": q.text, "ts": q.shown_at.map(ts).unwrap_or_default(),
             }))

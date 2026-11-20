@@ -10,7 +10,7 @@ use std::io;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ac_core::chat::ChatMessage;
+use ac_core::chat::{ChatKind, ChatMessage};
 use ac_core::command::{Command, QuestionAction};
 use ac_core::event::{By, Event, EventKind, OutputState, ServiceStatus, StreamStatus};
 use ac_core::session::SessionMeta;
@@ -1002,10 +1002,15 @@ impl App {
                 };
                 let color = self.users.get(&q.author_id);
                 let mut spans = vec![mark];
-                if let Some(amount) = &q.amount {
+                if let Some(support) = &q.support {
+                    let bg = if support.kind == ChatKind::Membership {
+                        OK
+                    } else {
+                        WARN
+                    };
                     spans.push(Span::styled(
-                        format!(" {amount} "),
-                        Style::new().fg(Color::Black).bg(WARN).bold(),
+                        format!(" {} ", support.label),
+                        Style::new().fg(Color::Black).bg(bg).bold(),
                     ));
                     spans.push(Span::raw(" "));
                 }
@@ -1034,25 +1039,22 @@ impl App {
                 }
             })
             .collect();
-        let supers = queue.iter().filter(|q| q.amount.is_some()).count();
+        let supporters = queue.iter().filter(|q| q.support.is_some()).count();
         let mut extra = vec![Span::styled(
-            format!("{} questions ", queue.len() - supers),
+            format!("{} questions ", queue.len() - supporters),
             Style::new().fg(MUTED),
         )];
-        if supers > 0 {
+        if supporters > 0 {
             extra.push(Span::styled(
-                format!(
-                    "· {supers} Super Chat{} ",
-                    if supers == 1 { "" } else { "s" }
-                ),
+                format!("· {supporters} to thank "),
                 Style::new().fg(WARN).bold(),
             ));
         }
         let block = pane_block(Pane::Questions, "Inbox", extra, focused);
         if items.is_empty() {
             let hint = empty_state(&[
-                "Nothing waiting. Questions (!q <question>) and Super Chats land here",
-                "and stay until you show them on stream (Enter) or dismiss them (x).",
+                "Nothing waiting. Questions (!q), Super Chats and memberships land here",
+                "and leave once handled: Enter shows or thanks, x dismisses.",
             ]);
             frame.render_widget(hint.block(block), area);
             return;
@@ -1414,8 +1416,7 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
     Ok(Palette::Command(cmd))
 }
 
-/// Questions waiting or on screen, in the order they were asked.
-/// The inbox: Super Chats, then questions, waiting or on screen.
+/// The inbox: supporters (Super Chats, stickers, memberships), then questions.
 fn queue(state: &SessionState) -> Vec<&ac_core::session_state::Question> {
     use ac_core::session_state::QuestionState;
     let mut list: Vec<_> = state
@@ -1423,13 +1424,12 @@ fn queue(state: &SessionState) -> Vec<&ac_core::session_state::Question> {
         .iter()
         .filter(|q| matches!(q.state, QuestionState::Open | QuestionState::Shown))
         .collect();
-    // Super Chats are pinned above the questions, each group in arrival order.
-    list.sort_by_key(|q| q.amount.is_none());
+    // Supporters are pinned above the questions, each group in arrival order.
+    list.sort_by_key(|q| q.support.is_none());
     list
 }
 
 fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'static> {
-    use ac_core::chat::ChatKind;
     // A colored bar marks lines that just arrived.
     let mut spans = vec![Span::styled(
         if fresh { "▎" } else { " " },
@@ -1865,9 +1865,12 @@ fn summary(e: &Event) -> (String, bool) {
         }
         EventKind::QuestionAdd {
             author,
-            amount: Some(amount),
+            support: Some(s),
             ..
-        } => (format!("Super Chat {amount} from {author}"), false),
+        } => match s.kind {
+            ChatKind::Membership => (format!("membership: {author}"), false),
+            _ => (format!("Super Chat {} from {author}", s.label), false),
+        },
         EventKind::QuestionAdd { author, .. } => (format!("question from {author}"), false),
         EventKind::QuestionShow { .. } => ("question on stream".into(), false),
         EventKind::QuestionAnswered { .. } => ("question answered".into(), false),
@@ -1924,7 +1927,7 @@ fn event_icon(e: &Event) -> (&'static str, Color) {
         | EventKind::PrivacyStart { .. }
         | EventKind::PrivacyEnd {} => ("◐", WARN),
         EventKind::QuestionAdd {
-            amount: Some(_), ..
+            support: Some(_), ..
         } => ("◈", WARN),
         EventKind::QuestionAdd { .. }
         | EventKind::QuestionShow { .. }
@@ -1971,8 +1974,11 @@ fn help_lines() -> Vec<Line<'static>> {
                 ("j/k", "move or scroll; g/G first/newest"),
                 ("w", "wrap every line / one line each (cursor line opens)"),
                 ("e / d", "edit / delete the selected chapter"),
-                ("Enter", "Inbox: show on stream; again: done"),
-                ("x", "Inbox: dismiss (Super Chats stay pinned until then)"),
+                (
+                    "Enter",
+                    "Inbox: question on stream, again done; supporter thanked",
+                ),
+                ("x", "Inbox: dismiss"),
             ],
         ),
         (
@@ -2419,7 +2425,10 @@ mod tests {
                 author: author.into(),
                 author_id: format!("UC{author}"),
                 text: "why rust?".into(),
-                amount: amount.map(Into::into),
+                support: amount.map(|label: &str| ac_core::chat::Support {
+                    kind: ChatKind::Superchat,
+                    label: label.into(),
+                }),
             };
             view.state.apply(&Event::new(&clock, "bot", kind));
         }
@@ -2428,7 +2437,7 @@ mod tests {
         let mut app = App::new(clock, rx, cmd_tx);
         app.mode = Mode::Normal;
         let text = screen(&mut app, &view);
-        assert!(text.contains("1 Super Chat"), "{text}");
+        assert!(text.contains("1 to thank"), "{text}");
         assert!(
             text.contains(" ₹100.00  eve: why rust?"),
             "pinned first: {text}"

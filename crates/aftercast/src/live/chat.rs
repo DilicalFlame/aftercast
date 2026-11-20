@@ -6,7 +6,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use ac_bot::{Builtin, Cmd, Parsed};
-use ac_core::chat::{ChatKind, ChatMessage};
+use ac_core::chat::{ChatKind, ChatMessage, Support};
 use ac_core::command::QuestionAction;
 use ac_core::config::ReplyMode;
 use ac_core::event::{
@@ -112,8 +112,8 @@ impl Controller {
         chat.push_back(msg.clone());
         // History YouTube sends on connect is shown, never executed.
         let fresh = msg.t_published.unwrap_or(msg.t_received) >= self.started;
-        if fresh && let Some(amount) = &msg.amount {
-            return self.super_add(amount, &msg);
+        if fresh && let Some(support) = msg.support() {
+            return self.support_add(support, &msg);
         }
         if msg.kind != ChatKind::Text || !fresh {
             return;
@@ -328,18 +328,23 @@ impl Controller {
                 author: msg.author_name.clone(),
                 author_id: msg.author_channel_id.clone(),
                 text,
-                amount: None,
+                support: None,
             },
         );
         self.toast(&format!("question received from {}", msg.author_name));
     }
 
-    /// A Super Chat or Super Sticker joins the inbox, pinned above the questions, so it
-    /// can be read and thanked long after chat has scrolled past it.
-    fn super_add(&mut self, amount: &str, msg: &ChatMessage) {
+    /// A Super Chat, Super Sticker or membership joins the inbox, pinned above the
+    /// questions, so it can be read and thanked long after chat has scrolled past it.
+    fn support_add(&mut self, support: Support, msg: &ChatMessage) {
         let text = match msg.text.trim() {
             "" if msg.kind == ChatKind::Supersticker => "(sticker)".to_owned(),
+            "" => "(no message)".to_owned(),
             t => t.chars().take(QUESTION_MAX).collect(),
+        };
+        let what = match support.kind {
+            ChatKind::Membership => "membership".to_owned(),
+            _ => format!("{} Super Chat", support.label),
         };
         self.emit(
             "chat",
@@ -348,11 +353,11 @@ impl Controller {
                 author: msg.author_name.clone(),
                 author_id: msg.author_channel_id.clone(),
                 text,
-                amount: Some(amount.to_owned()),
+                support: Some(support),
             },
         );
         self.notice = Some(format!(
-            "{amount} Super Chat from {}: pinned in the inbox",
+            "{what} from {}: pinned in the inbox",
             msg.author_name
         ));
     }
@@ -363,6 +368,11 @@ impl Controller {
             return;
         };
         let kind = match (action, q.state) {
+            // Supporters are thanked in person (their alert overlay plays on arrival):
+            // Enter marks them done without a question card.
+            (QuestionAction::Show, QuestionState::Open) if q.support.is_some() => {
+                EventKind::QuestionAnswered { qid }
+            }
             (QuestionAction::Show, QuestionState::Open) => EventKind::QuestionShow { qid },
             (QuestionAction::Show | QuestionAction::Answer, QuestionState::Shown) => {
                 EventKind::QuestionAnswered { qid }
@@ -560,8 +570,7 @@ impl Controller {
             .filter(|q| q.state == QuestionState::Shown)
             .max_by_key(|q| q.shown_at)
             .map_or_else(hide, |q| {
-                let data = json!({ "author": q.author, "text": q.text, "amount": q.amount });
-                (Action::Show, data)
+                (Action::Show, json!({ "author": q.author, "text": q.text }))
             });
         let brb = if self.state.brb {
             let since = self.state.brb_starts.last().map(|t| t.unix_ms());

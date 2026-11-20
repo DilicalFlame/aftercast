@@ -46,10 +46,11 @@ pub enum Action {
         author: String,
         level: Level,
         text: String,
+        kind: ChatKind,
         /// `super:<amount>`: a Super Chat.
         amount: Option<String>,
     },
-    /// `question show|answer|dismiss [n]`: the n-th question in the queue (default 1).
+    /// `question show|answer|dismiss [n]`: the n-th Inbox item (default 1).
     Question(QuestionAction, usize),
     Say(String),
     Overlay(String, bool),
@@ -199,14 +200,16 @@ fn obs_update(args: &str) -> Result<ac_obs::Update, String> {
     })
 }
 
-/// `<author> [owner|mod|member] <text>`.
+/// `<author> [super:<amount>|joined] [owner|mod|member] <text>`.
 fn chat_line(args: &str) -> Result<Action, String> {
-    let (author, rest) = args
-        .split_once(' ')
-        .ok_or_else(|| "chat <author> [super:<amount>] [owner|mod|member] <text>".to_owned())?;
-    let (amount, rest) = match rest.split_once(' ') {
-        Some((word, rest)) if word.starts_with("super:") => (Some(word[6..].to_owned()), rest),
-        _ => (None, rest),
+    let usage = "chat <author> [super:<amount>|joined] [owner|mod|member] <text>";
+    let (author, rest) = args.split_once(' ').ok_or_else(|| usage.to_owned())?;
+    let (kind, amount, rest) = match rest.split_once(' ') {
+        Some((word, rest)) if word.starts_with("super:") => {
+            (ChatKind::Superchat, Some(word[6..].to_owned()), rest)
+        }
+        Some(("joined", rest)) => (ChatKind::Membership, None, rest),
+        _ => (ChatKind::Text, None, rest),
     };
     let (level, text) = match rest.split_once(' ') {
         Some(("owner", text)) => (Level::Owner, text),
@@ -218,6 +221,7 @@ fn chat_line(args: &str) -> Result<Action, String> {
         author: author.into(),
         level,
         text: unquote(text.trim()),
+        kind,
         amount,
     })
 }
@@ -418,6 +422,7 @@ async fn execute(
                 author,
                 level,
                 text,
+                kind,
                 amount,
             } => {
                 let now = clock.now_ts();
@@ -430,11 +435,7 @@ async fn execute(
                     is_owner: level == Level::Owner,
                     is_moderator: level == Level::Mod,
                     is_member: level == Level::Member,
-                    kind: if amount.is_some() {
-                        ChatKind::Superchat
-                    } else {
-                        ChatKind::Text
-                    },
+                    kind,
                     text,
                     amount,
                 };
@@ -446,14 +447,17 @@ async fn execute(
                 if msgs.send(Msg::Barrier(ack)).is_ok() {
                     let _ = done.await;
                 }
-                let qid = view
-                    .borrow()
+                // In Inbox order: supporters pinned above the questions.
+                let view = view.borrow();
+                let mut inbox: Vec<_> = view
                     .state
                     .questions
                     .iter()
                     .filter(|q| matches!(q.state, QuestionState::Open | QuestionState::Shown))
-                    .nth(nth.saturating_sub(1))
-                    .map(|q| q.qid.clone());
+                    .collect();
+                inbox.sort_by_key(|q| q.support.is_none());
+                let qid = inbox.get(nth.saturating_sub(1)).map(|q| q.qid.clone());
+                drop(view);
                 match qid {
                     Some(qid) => cmd = Some(Command::Question { qid, action }),
                     None => eprintln!("script line {n}: no question {nth} in the queue"),
@@ -532,6 +536,7 @@ mod tests {
                 author: "ana".into(),
                 level: Level::Mod,
                 text: "!chapter \"Parser\"".into(),
+                kind: ChatKind::Text,
                 amount: None,
             }
         );
@@ -541,6 +546,7 @@ mod tests {
                 author: "bob".into(),
                 level: Level::Viewer,
                 text: "!q why rust?".into(),
+                kind: ChatKind::Text,
                 amount: None,
             }
         );
@@ -550,7 +556,18 @@ mod tests {
                 author: "eve".into(),
                 level: Level::Member,
                 text: "keep it up!".into(),
+                kind: ChatKind::Superchat,
                 amount: Some("₹100.00".into()),
+            }
+        );
+        assert_eq!(
+            line("chat gus joined Welcome to the channel!").action,
+            Action::Chat {
+                author: "gus".into(),
+                level: Level::Viewer,
+                text: "Welcome to the channel!".into(),
+                kind: ChatKind::Membership,
+                amount: None,
             }
         );
         assert_eq!(
