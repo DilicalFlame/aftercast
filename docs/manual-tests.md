@@ -176,6 +176,8 @@ viewer, and ideally a third account you made a moderator.
     three times, a few seconds apart. Expect: `latency x.x s (n samples)` after each; after
     the third the overlay hides and the status bar shows `lat x.x s`. With the connection
     you have, expect minutes, not seconds; `:lat <n>` in the palette works too if chat lags.
+    The chapter list shows "Latency check" from step 16 and then your previous chapter title
+    again from the third sample.
 
 ### Overlays and API
 

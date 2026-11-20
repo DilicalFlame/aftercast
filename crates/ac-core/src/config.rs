@@ -212,6 +212,8 @@ pub struct Stream {
     pub chapter_on_quest_change: bool,
     pub chapter_on_brb: bool,
     pub chapter_on_question: bool,
+    /// Wrap a `:latency` measurement in a "Latency check" chapter, so viewers can skip it.
+    pub chapter_on_latency: bool,
 }
 
 impl Default for Stream {
@@ -222,6 +224,7 @@ impl Default for Stream {
             chapter_on_quest_change: true,
             chapter_on_brb: false,
             chapter_on_question: false,
+            chapter_on_latency: true,
         }
     }
 }

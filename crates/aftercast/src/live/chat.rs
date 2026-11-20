@@ -46,7 +46,12 @@ const CHAPTERS_REPLY: usize = 200;
 pub(super) struct LatencyRun {
     start: Timestamp,
     samples: Vec<f64>,
+    /// Chapter to return to when the check ends; `None` when no chapter was added.
+    resume: Option<String>,
 }
+
+/// Chapter title while a latency measurement runs (`stream.chapter_on_latency`).
+const LATENCY_CHAPTER: &str = "Latency check";
 
 impl Controller {
     pub(super) fn on_chat(&mut self, update: ChatUpdate) {
@@ -347,13 +352,20 @@ impl Controller {
 
     /// `:latency`: shows the counter overlay, or stops a running measurement.
     pub(super) fn latency_toggle(&mut self) {
-        if self.latency_run.take().is_some() {
+        if let Some(run) = self.latency_run.take() {
+            self.latency_end(run);
             self.notice = Some("latency measurement stopped".into());
             return;
         }
+        let resume = self.config.stream.chapter_on_latency.then(|| {
+            let current = self.current_chapter();
+            self.latency_chapter(LATENCY_CHAPTER.into());
+            current
+        });
         self.latency_run = Some(LatencyRun {
             start: self.clock.now_ts(),
             samples: Vec::new(),
+            resume,
         });
         self.notice = Some(
             "latency: watch the stream, type the number you see as !lat <n> in chat (or :lat <n>)"
@@ -379,8 +391,10 @@ impl Controller {
         let samples = run.samples.len();
         let latency_s = run.samples.iter().sum::<f64>() / samples as f64;
         let latency_s = (latency_s * 10.0).round() / 10.0;
-        if samples >= LATENCY_SAMPLES {
-            self.latency_run = None;
+        if samples >= LATENCY_SAMPLES
+            && let Some(run) = self.latency_run.take()
+        {
+            self.latency_end(run);
         }
         self.emit(
             "core",
@@ -394,6 +408,38 @@ impl Controller {
         self.notice = Some(format!(
             "latency {latency_s:.1} s ({samples} of {LATENCY_SAMPLES} samples)"
         ));
+    }
+
+    /// Ends the "Latency check" chapter by returning to the one before it.
+    fn latency_end(&mut self, run: LatencyRun) {
+        if let Some(title) = run.resume {
+            self.latency_chapter(title);
+        }
+    }
+
+    /// Title of the chapter the stream is in now (last checkpoint, quest, ... so far).
+    fn current_chapter(&self) -> String {
+        let now = self.clock.now_ts();
+        ac_template::chapters::candidates(&self.state, &self.config.stream)
+            .into_iter()
+            .filter(|c| c.0 <= now)
+            .max_by_key(|c| c.0)
+            .map_or_else(|| self.config.stream.first_chapter_title.clone(), |c| c.1)
+    }
+
+    /// A chapter starting now, set by the streamer.
+    fn latency_chapter(&mut self, title: String) {
+        let pressed_at = self.clock.now_ts();
+        self.emit_render(
+            "tui",
+            EventKind::Checkpoint {
+                cid: ulid::Ulid::generate().to_string(),
+                title,
+                pressed_at,
+                by: By::Tui,
+                latency_corrected_s: None,
+            },
+        );
     }
 
     /// Seconds viewers are behind: measured, else `stream.default_latency_s`.

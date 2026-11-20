@@ -171,6 +171,9 @@ Viewers see the stream late (seconds, or minutes on a slow uplink), so a mod's `
 refers to the past. `:latency` puts a counter on the `latency` overlay; watch the stream on
 your phone and type `!lat <number you see>` in chat (or `:lat <n>` in the palette), up to
 three times. The result is stored in the session and shown as `lat` in the status bar.
+The measurement gets its own "Latency check" chapter, and when it ends (third sample or
+`:latency` again) a chapter returns to the title you were on, so viewers can skip it
+(`stream.chapter_on_latency = false` turns this off).
 
 ### The session README
 

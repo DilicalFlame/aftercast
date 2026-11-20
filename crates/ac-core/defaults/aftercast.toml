@@ -57,6 +57,7 @@ first_chapter_title = "Start"
 chapter_on_quest_change = true
 chapter_on_brb = false          # add "Break" chapters
 chapter_on_question = false     # add "Q: ..." chapter when a question is shown
+chapter_on_latency = true       # :latency adds a "Latency check" chapter, then returns to the previous one
 
 [readme]
 seed_template = "session-readme.md"   # copied into each new session as README.md

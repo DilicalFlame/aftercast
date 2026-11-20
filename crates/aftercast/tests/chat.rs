@@ -106,6 +106,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
          +5s chat eve !links\n\
          +1s latency\n\
          +240s chat me owner !lat 2350\n\
+         +20s latency\n\
          +1s question show\n\
          quit\n");
     drop(stdin);
@@ -143,6 +144,15 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
     assert_eq!(cp["data"]["title"], "Parser with nom");
     assert_eq!(cp["data"]["by"], "mod");
     assert_eq!(cp["data"]["latency_corrected_s"], 5.0);
+    // `latency` wraps the measurement in its own chapter and returns to the previous one.
+    let titles: Vec<&str> = of("checkpoint")
+        .iter()
+        .map(|e| e["data"]["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        ["Parser with nom", "Latency check", "Parser with nom"]
+    );
 
     // Cap of one chat reply per hour: the second `!links` goes to the overlay.
     let modes: Vec<&str> = of("bot.reply")
