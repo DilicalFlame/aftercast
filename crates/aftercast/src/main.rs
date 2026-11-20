@@ -148,6 +148,9 @@ async fn live_session(
     } = handles;
     let (external_tx, external) = std::sync::mpsc::channel();
     let config = ac_core::Config::load(config_path)?;
+    if rehearsal {
+        open_rehearsal_page(config.overlay.port);
+    }
     if let Err(e) = hotkeys(
         &config.hotkeys,
         clock.clone(),
@@ -386,6 +389,22 @@ fn library(home: &Home, config_path: &std::path::Path, action: cli::LibraryActio
         }
     }
     Ok(exit::OK)
+}
+
+/// Opens the rehearsal page in the default browser.
+fn open_rehearsal_page(port: u16) {
+    let url = format!("http://127.0.0.1:{port}/rehearsal");
+    #[cfg(windows)]
+    let opened = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let opened = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let opened = std::process::Command::new("xdg-open").arg(&url).spawn();
+    if let Err(e) = opened {
+        tracing::warn!("opening {url}: {e}");
+    }
 }
 
 /// A session folder from a path, a folder name like `2026-11-19_ep042`, or the last session.

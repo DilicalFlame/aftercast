@@ -115,3 +115,136 @@ fn rehearsal_is_isolated_from_real_sessions_and_quota() {
         "{chat}"
     );
 }
+
+/// Minimal HTTP/1.1 request to the local server; returns status and body.
+fn http(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
+    use std::io::Read;
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        s,
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    let status = out[9..12].parse().unwrap();
+    let body = out.split_once("\r\n\r\n").map_or("", |(_, b)| b).to_owned();
+    (status, body)
+}
+
+#[test]
+fn rehearsal_page_serves_the_feed_and_takes_chat() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("Streams");
+    let bin = env!("CARGO_BIN_EXE_aftercast");
+    assert!(
+        Command::new(bin)
+            .arg("--home")
+            .arg(&home)
+            .arg("init")
+            .status()
+            .unwrap()
+            .success()
+    );
+    let port = free_port();
+    let config = home.join("aftercast.toml");
+    let toml = fs::read_to_string(&config)
+        .unwrap()
+        .replace("port = 7878", &format!("port = {port}"))
+        .replace(
+            "url = \"ws://127.0.0.1:4455\"",
+            &format!("url = \"ws://127.0.0.1:{}\"", free_port()),
+        )
+        .replace("password = \"keyring:obs\"", "password = \"\"");
+    fs::write(&config, toml).unwrap();
+    // No demo chat: only what the page sends.
+    fs::create_dir_all(home.join("rehearsal")).unwrap();
+    fs::write(home.join("rehearsal/chat.jsonl"), "").unwrap();
+
+    let mut child = Command::new(bin)
+        .arg("--home")
+        .arg(&home)
+        .args(["--no-tui", "rehearse"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let ready = (0..100).any(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    assert!(ready, "server did not start");
+
+    let (status, page) = http(port, "GET", "/rehearsal", "");
+    assert_eq!(status, 200);
+    assert!(
+        page.contains("REHEARSAL") && page.contains("--accent"),
+        "{page}"
+    );
+
+    let send = |role: &str, author: &str, text: &str| {
+        let body = serde_json::json!({ "author": author, "role": role, "text": text }).to_string();
+        http(port, "POST", "/rehearsal/chat", &body)
+    };
+    // `!links` first: the bot's 3 s global cooldown would drop it after another command.
+    assert_eq!(send("viewer", "dan", "!links").0, 204);
+    assert_eq!(send("moderator", "mo", "!chapter From the page").0, 204);
+    assert_eq!(send("guest", "x", "hi").0, 400);
+    let sc = serde_json::json!({ "author": "eve", "role": "member", "text": "thanks", "amount": "₹50.00" });
+    assert_eq!(
+        http(port, "POST", "/rehearsal/chat", &sc.to_string()).0,
+        204
+    );
+
+    // The bot's chat reply to !links comes back through the chat, from the channel.
+    let feed = (0..50)
+        .find_map(|_| {
+            std::thread::sleep(Duration::from_millis(100));
+            let (_, body) = http(port, "GET", "/rehearsal/feed", "");
+            let feed: serde_json::Value = serde_json::from_str(&body).unwrap();
+            let chat = feed["chat"].as_array().unwrap();
+            chat.iter()
+                .any(|m| m["owner"] == true && m["text"].as_str().unwrap().contains("GitHub"))
+                .then_some(feed)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "bot reply not echoed into chat: {}",
+                http(port, "GET", "/rehearsal/feed", "").1
+            )
+        });
+    assert_eq!(feed["title"], "Rehearsal (not live)");
+    assert!(!feed["description"].as_str().unwrap().is_empty(), "{feed}");
+    let chat = feed["chat"].as_array().unwrap();
+    let mo = chat.iter().find(|m| m["author"] == "mo").unwrap();
+    assert_eq!(mo["moderator"], true);
+    let eve = chat.iter().find(|m| m["author"] == "eve").unwrap();
+    assert_eq!(
+        (eve["superchat"].clone(), eve["amount"].clone()),
+        (true.into(), "₹50.00".into())
+    );
+
+    stdin.write_all(b"quit\n").unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let year = fs::read_dir(home.join("rehearsal/sessions"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let session = fs::read_dir(year).unwrap().next().unwrap().unwrap().path();
+    let events = fs::read_to_string(session.join("events.jsonl")).unwrap();
+    assert!(
+        events.contains("\"title\":\"From the page\""),
+        "mod chapter from the page"
+    );
+}

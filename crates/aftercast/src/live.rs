@@ -132,6 +132,11 @@ fn prepare_rehearsal(dir: &Path, config: &mut Config) -> Result<()> {
     Ok(())
 }
 
+/// `.render/description.pushed.txt`: the description as last pushed.
+fn session_render_pushed(session: &Session) -> PathBuf {
+    session.render_dir().join("description.pushed.txt")
+}
+
 /// Watches `<home>/overlays` so edited overlay files reload in OBS.
 fn watch_overlays(
     dir: &Path,
@@ -239,6 +244,19 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let renderer = Renderer::new(&home.path(&config.paths.templates));
     let (events_tx, events_rx) = broadcast::channel(4096);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    // Rehearsal page: the chat box feeds the simulated chat; the session feeds the page.
+    let injector = if opts.rehearsal {
+        yt.chat_injector()
+    } else {
+        None
+    };
+    let (feed_tx, page) = match injector {
+        Some(inject) => {
+            let (tx, rx) = watch::channel(ac_server::Feed::default());
+            (Some(tx), Some(ac_server::Rehearsal::new(rx, inject)))
+        }
+        None => (None, None),
+    };
     let yt = Arc::new(yt);
     let started = clock.now_ts();
 
@@ -292,7 +310,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
 
     let overlays = ac_server::Overlays::default();
     let (state_tx, state_rx) = watch::channel(session_state.clone());
-    let server = serve(home, &config, &overlays, state_rx, &cmd_tx, &clock).await;
+    let server = serve(home, &config, &overlays, state_rx, &cmd_tx, &clock, page).await;
 
     let bot = config.bot.enabled.then(|| ac_bot::Bot::new(&config.bot));
     let capture = capture::Capture::new(home, &config, &session);
@@ -305,6 +323,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             }
         });
     }
+    let pushed_text = fs::read_to_string(session_render_pushed(&session)).ok();
     let mut controller = Controller {
         home: home.clone(),
         config_path: config_path.to_path_buf(),
@@ -336,6 +355,9 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         started,
         latency_run: None,
         chat_fast,
+        rehearsal_feed: feed_tx,
+        title: broadcast.title.clone(),
+        pushed_text,
         pending_title: None,
         overlays_off: BTreeSet::new(),
         overlay_sent: BTreeMap::new(),
@@ -445,6 +467,7 @@ async fn serve(
     state: watch::Receiver<SessionState>,
     commands: &mpsc::UnboundedSender<Command>,
     clock: &Arc<Clock>,
+    rehearsal: Option<ac_server::Rehearsal>,
 ) -> std::result::Result<SocketAddr, String> {
     let token_file = home.join("state/api-token");
     let token =
@@ -457,6 +480,7 @@ async fn serve(
         token,
         dir: home.join("overlays"),
         theme: ac_server::theme(&config.overlay),
+        rehearsal,
     };
     let port = config.overlay.port;
     let (addr, server) = ac_server::bind(port, shared)
@@ -601,6 +625,12 @@ struct Controller {
     latency_run: Option<chat::LatencyRun>,
     /// Tells the chat reader a latency measurement runs (reopen chat without waiting).
     chat_fast: watch::Sender<bool>,
+    /// `aftercast rehearse`: what the rehearsal page shows.
+    rehearsal_feed: Option<watch::Sender<ac_server::Feed>>,
+    /// The broadcast title (as set at start or by `!title`).
+    title: String,
+    /// The description as last pushed to YouTube.
+    pushed_text: Option<String>,
     /// A `!title` waiting for confirmation in the TUI.
     pending_title: Option<String>,
     /// Overlays turned off with `:overlay <name> off`.
@@ -901,6 +931,7 @@ impl Controller {
                 if let Err(e) = fs::write(&pushed_path, &desc.text) {
                     tracing::error!("{}: {e}", pushed_path.display());
                 }
+                self.pushed_text = Some(desc.text.clone());
                 self.notice = Some(format!("description pushed ({} chars)", desc.chars()));
                 self.emit(
                     "youtube",
@@ -1199,6 +1230,17 @@ impl Controller {
     }
 
     fn publish(&mut self) {
+        if let Some(feed) = &self.rehearsal_feed {
+            let rendered = self.description.as_ref().map(|d| d.text.clone());
+            feed.send_replace(ac_server::Feed {
+                title: self.title.clone(),
+                live_since: self.session.meta.anchors.yt_actual_start,
+                description: self.pushed_text.clone().unwrap_or_default(),
+                draft: rendered.filter(|r| Some(r) != self.pushed_text.as_ref()),
+                scene: self.state.scene.clone(),
+                chat: self.chat.clone(),
+            });
+        }
         let measuring = self.latency_run.is_some();
         self.chat_fast.send_if_modified(|fast| {
             let changed = *fast != measuring;

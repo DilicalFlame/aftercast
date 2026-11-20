@@ -189,6 +189,17 @@ impl Client {
         Self::new(Backend::Mock(mock), quota, clock)
     }
 
+    /// With the mock backend: a sender that adds messages to the chat stream (a rehearsal's
+    /// chat box). The channel's own posts are then echoed into the stream, as on YouTube.
+    pub fn chat_injector(
+        &self,
+    ) -> Option<tokio::sync::mpsc::UnboundedSender<ac_core::chat::ChatMessage>> {
+        match &self.backend {
+            Backend::Mock(mock) => Some(mock.injector()),
+            Backend::Rest { .. } => None,
+        }
+    }
+
     fn new(backend: Backend, quota: QuotaGuard, clock: Arc<Clock>) -> Self {
         Self {
             backend,

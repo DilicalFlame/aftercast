@@ -188,7 +188,15 @@ viewer, and ideally a third account you made a moderator.
    stream.
 3. Edit `<home>\overlays\overlay.css` (or a custom `brb.html`) and save. Expect: OBS shows the
    change within a second, and the TUI says "overlays reloaded in OBS".
-4. Quit. Expect: no new folder under `sessions\`, `aftercast post` still means your last real
+4. The rehearsal page opens in the browser. Allow camera access. Expect: the OBS output in
+   the player (OBS shows Virtual Camera as started), the title, a live timer and the pushed
+   description.
+5. In the page chat, send `!links` as a viewer. Expect: the bot's reply appears in the chat
+   from the channel, and in OBS if the reply mode is overlay. Send `!chapter Test` as a
+   moderator: the TUI shows the chapter and the page says the README changed; `:push` updates
+   the page's description. Send a Super Chat as a member and `!q` as a viewer: check the
+   overlays in the player.
+6. Quit. Expect: no new folder under `sessions\`, `aftercast post` still means your last real
    stream, and `aftercast auth status` shows no quota spent by the rehearsal.
 
 ### Overlays and API

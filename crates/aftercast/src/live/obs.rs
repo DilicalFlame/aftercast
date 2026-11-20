@@ -76,6 +76,12 @@ impl Controller {
         let now = self.clock.now_ts();
         // Overlay pages OBS loaded while aftercast was down show an error and never retry.
         self.refresh_overlays();
+        // The rehearsal page shows OBS through its Virtual Camera.
+        if self.rehearsal_feed.is_some()
+            && let ObsLink::Real(tx) = &self.obs
+        {
+            let _ = tx.send(Request::StartVirtualCam);
+        }
 
         if let Some(scene) = snap.scene {
             self.scene_changed(scene, true);

@@ -3,11 +3,13 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ac_core::chat::{ChatKind, ChatMessage};
 use ac_core::time::{Clock, Timestamp};
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
 
 use crate::chat::ChatUpdate;
 use crate::{Error, Request, Result, api_error};
@@ -18,11 +20,20 @@ pub(crate) struct Mock {
     /// Substituted for `"@now"` in fixtures, so broadcasts can start "now".
     now: Timestamp,
     counter: AtomicU32,
+    /// Chat typed into a rehearsal page (and echoed bot posts), merged into the stream.
+    chat_tx: mpsc::UnboundedSender<ChatMessage>,
+    chat_rx: Mutex<Option<mpsc::UnboundedReceiver<ChatMessage>>>,
+    /// Echo `liveChatMessages.insert` into the chat stream, as YouTube does (rehearsal).
+    echo: AtomicBool,
 }
 
 impl Mock {
     pub(crate) fn new(fixture: &Path, record_dir: &Path, now: Timestamp) -> Self {
+        let (chat_tx, chat_rx) = mpsc::unbounded_channel();
         Self {
+            chat_tx,
+            chat_rx: Mutex::new(Some(chat_rx)),
+            echo: AtomicBool::new(false),
             fixture: fixture.to_path_buf(),
             record_dir: record_dir.to_path_buf(),
             now,
@@ -34,8 +45,38 @@ impl Mock {
     /// Records the request, then answers from `<fixture>/youtube/<method>.json`. A fixture
     /// holding `{"error": {...}}` is returned as an API error; a write without a fixture
     /// echoes its body.
+    /// A sender for chat messages to add to the stream; from now on the channel's own
+    /// posts are echoed into it too.
+    pub(crate) fn injector(&self) -> mpsc::UnboundedSender<ChatMessage> {
+        self.echo.store(true, Ordering::Relaxed);
+        self.chat_tx.clone()
+    }
+
     pub(crate) fn send(&self, request: &Request) -> Result<Value> {
         let name = request.method.name();
+        if name == "liveChatMessages.insert"
+            && self.echo.load(Ordering::Relaxed)
+            && let Some(text) = request.body.as_ref().and_then(|b| {
+                b["snippet"]["textMessageDetails"]["messageText"]
+                    .as_str()
+                    .map(String::from)
+            })
+        {
+            let n = self.counter.load(Ordering::Relaxed);
+            let _ = self.chat_tx.send(ChatMessage {
+                id: format!("echo-{n}"),
+                t_received: self.now_or_start(),
+                t_published: None,
+                author_channel_id: "UC-channel".into(),
+                author_name: "Rehearsal".into(),
+                is_owner: true,
+                is_moderator: false,
+                is_member: false,
+                kind: ChatKind::Text,
+                text,
+                amount: None,
+            });
+        }
         let n = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
         let query: serde_json::Map<String, Value> = request
             .query
@@ -90,26 +131,65 @@ struct ScriptedChat {
 }
 
 impl Mock {
-    /// Plays `<fixture>/chat.jsonl` in real time (missing file: no chat).
+    /// Wall time for echoed messages (the mock has no clock of its own; the chat reader
+    /// stamps `t_received` again on arrival).
+    fn now_or_start(&self) -> Timestamp {
+        Timestamp::now().max(self.now)
+    }
+
+    /// Plays `<fixture>/chat.jsonl` in real time (missing file: no scripted chat), merged
+    /// with injected messages, which keep arriving after the script ends.
     pub(crate) async fn play_chat(&self, clock: &Clock, send: impl Fn(ChatUpdate)) {
         let path = self.fixture.join("chat.jsonl");
-        let Ok(text) = fs::read_to_string(&path) else {
-            return;
-        };
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        let mut injected = self.chat_rx.lock().expect("not poisoned").take();
         let start = tokio::time::Instant::now();
-        for (n, line) in text
-            .lines()
-            .enumerate()
-            .filter(|(_, l)| !l.trim().is_empty())
-        {
-            let line: ScriptedChat = match serde_json::from_str(line) {
-                Ok(line) => line,
-                Err(e) => {
-                    tracing::warn!("{}:{}: {e}", path.display(), n + 1);
+        // Collected first: a lazy iterator with closures held across `.await` trips a
+        // compiler limitation when the future is spawned.
+        let mut script: Vec<(usize, ScriptedChat)> = Vec::new();
+        for (n, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            match serde_json::from_str::<ScriptedChat>(line) {
+                Ok(line) => script.push((n, line)),
+                Err(e) => tracing::warn!("{}:{}: {e}", path.display(), n + 1),
+            }
+        }
+        let mut lines = script.into_iter().peekable();
+        loop {
+            let due = lines
+                .peek()
+                .map(|(_, l)| start + std::time::Duration::from_millis(l.after_ms));
+            if due.is_none() && injected.is_none() {
+                return;
+            }
+            let scripted = async {
+                match due {
+                    Some(at) => tokio::time::sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
+            let typed = async {
+                match injected.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            };
+            let line = tokio::select! {
+                () = scripted => lines.next().expect("peeked"),
+                msg = typed => {
+                    match msg {
+                        Some(mut msg) => {
+                            msg.t_received = clock.now_ts();
+                            send(ChatUpdate::Message(msg));
+                        }
+                        None => injected = None,
+                    }
                     continue;
                 }
             };
-            tokio::time::sleep_until(start + std::time::Duration::from_millis(line.after_ms)).await;
+            let (n, line) = line;
             let now = clock.now_ts();
             send(ChatUpdate::Message(ChatMessage {
                 id: format!("mock-{n}"),

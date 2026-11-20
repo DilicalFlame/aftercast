@@ -2,6 +2,10 @@
 //! `127.0.0.1` only. Overlay pages for OBS browser sources, a WebSocket that pushes
 //! [`OverlayMsg`]s, `GET /api/state` and token-protected `POST /api/command`.
 
+mod rehearsal;
+
+pub use rehearsal::{Feed, Rehearsal};
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -87,6 +91,8 @@ pub struct Shared {
     pub dir: PathBuf,
     /// `:root { --bg: ... }` from `[overlay]`.
     pub theme: String,
+    /// `aftercast rehearse`: serves the rehearsal page at `/rehearsal`.
+    pub rehearsal: Option<Rehearsal>,
 }
 
 /// Binds `127.0.0.1:port` (0 picks a free port) and returns the address and the server
@@ -103,6 +109,9 @@ pub async fn bind(
         .route("/ws", get(ws))
         .route("/api/state", get(state))
         .route("/api/command", post(command))
+        .route("/rehearsal", get(rehearsal::page))
+        .route("/rehearsal/feed", get(rehearsal::feed))
+        .route("/rehearsal/chat", post(rehearsal::chat))
         .with_state(Arc::new(shared));
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
@@ -280,6 +289,7 @@ mod tests {
             token: "secret".into(),
             dir: dir.to_path_buf(),
             theme: theme(&config::Overlay::default()),
+            rehearsal: None,
         };
         let (addr, server) = bind(0, shared).await.unwrap();
         tokio::spawn(server);

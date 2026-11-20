@@ -468,6 +468,7 @@ impl Controller {
         match self.yt.update_title(&id, &title).await {
             Ok(()) => {
                 self.notice = Some(format!("title set to {title:?}"));
+                self.title = title.clone();
                 self.emit("youtube", EventKind::TitlePushed { title });
             }
             Err(e) => self.notice = Some(format!("title not set: {e}")),

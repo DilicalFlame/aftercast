@@ -57,6 +57,8 @@ pub enum Request {
     /// Reloads every Browser source whose URL starts with one of these prefixes. OBS does
     /// not retry a page that failed to load (aftercast was not running yet).
     RefreshBrowsers(Vec<String>),
+    /// Starts OBS Virtual Camera unless it runs (a rehearsal page shows it as the video).
+    StartVirtualCam,
 }
 
 /// Where OBS listens.
@@ -168,6 +170,14 @@ async fn serve(
                 Some(Request::SetScene(name)) => {
                     if let Err(e) = client.scenes().set_current_program_scene(name.as_str()).await {
                         send(Update::Failed(format!("switching to scene {name:?}: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::StartVirtualCam) => {
+                    let cam = client.virtual_cam();
+                    if !cam.status().await.unwrap_or(false)
+                        && let Err(e) = cam.start().await
+                    {
+                        send(Update::Failed(format!("starting the virtual camera: {}", error_chain(&e))));
                     }
                 }
                 Some(Request::RefreshBrowsers(prefixes)) => {

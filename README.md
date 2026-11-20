@@ -108,7 +108,17 @@ quota. A demo chat plays from `<home>\rehearsal\chat.jsonl` (hello, `!q` questio
 a Super Chat, a mod `!chapter`, ...); edit it to replay what you want to see, one JSON line
 each: `{"after_ms": 3000, "author": "ana", "text": "hi", "mod": false, "member": false,
 "amount": "₹100.00"}`. Save any file in `<home>\overlays\` and OBS reloads the overlays a
-moment later, so you can restyle them while watching. Each rehearsal starts a fresh throwaway
+moment later, so you can restyle them while watching.
+
+The rehearsal also opens **the rehearsal page** in your browser
+(`http://127.0.0.1:7878/rehearsal`), a stand-in for the stream page: your OBS output (through
+OBS Virtual Camera, which aftercast starts; allow camera access once), the title and live timer,
+the description as last pushed (with a note when the README changed since), and the live chat.
+Type into the chat as a viewer, member, moderator or yourself (the owner), with any name, or
+send a Super Chat; command chips fill in `!q`, `!chapter`, `!lat` and the rest. Bot replies
+appear in the chat like on YouTube. The video has no sound; listen in OBS.
+
+Each rehearsal starts a fresh throwaway
 session in `<home>\rehearsal\sessions\` and never uses an episode number, the "last session"
 or today's quota.
 
