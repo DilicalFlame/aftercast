@@ -162,7 +162,8 @@ again resumes the session where it left off.
 | `e` / `d` | Edit / delete the selected chapter |
 | `Enter` | Inbox: show the item on stream; again: answered / done |
 | `x` / `t` | Inbox: dismiss a question / thank a supporter (without showing them) |
-| `[` / `]` | Inbox: filter All, Questions, Super Chats, Members |
+| `u` | Inbox: undo the last answer, thanks or dismissal (in Done: the selected one) |
+| `[` / `]` | Inbox: filter All, Questions, Super Chats, Members, Done |
 | `1` `2` `3` `4` | Focus Chat, Inbox, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
 | `:` | Command palette (`:sync`, `:finalize`, `:scene <name>`, `:say <text>`, `:latency`, `:help`, ...); `Tab` completes the command name |
@@ -182,9 +183,14 @@ milestones, gifts) are pinned on top with their amount or a "member" chip, and s
 restarts, until handled; questions (`!q`) follow. Any item can go on stream: `Enter` shows it
 on the question overlay and `Enter` again marks it done. A question can be dismissed with `x`;
 a supporter is never dismissed, `t` thanks them without showing. The key hints follow the
-selected item. `[` and `]` switch the filter tabs in the
-pane title (All, Questions, Super Chats, Members, each with its count); unfocused, the title
-just says how many supporters wait. Messages members write in chat stay in chat.
+selected item and name only what the next key press does ("Enter show on stream", then,
+with "● ON STREAM", "Enter mark answered"). `[` and `]` switch the filter tabs in the pane
+title (All, Questions, Super Chats, Members, Done, each with its count; empty ones give way
+when the pane is narrow); unfocused, the title just says how many supporters wait.
+
+Handled items are never lost. Done lists what you answered (✔), thanked (♥) or dismissed (✕),
+newest first with the time; `Enter` there shows one on stream again and `u` puts it back to
+waiting. Anywhere in the Inbox, `u` undoes the last one you handled. Messages members write in chat stay in chat.
 
 Panes with little in them shrink to fit, so the busy ones get the room.
 

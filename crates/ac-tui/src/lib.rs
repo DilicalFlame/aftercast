@@ -201,14 +201,17 @@ enum Filter {
     Questions,
     Supers,
     Members,
+    /// Answered, thanked or dismissed this session, newest first.
+    Done,
 }
 
 impl Filter {
-    const ORDER: [Filter; 4] = [
+    const ORDER: [Filter; 5] = [
         Filter::All,
         Filter::Questions,
         Filter::Supers,
         Filter::Members,
+        Filter::Done,
     ];
 
     fn label(self) -> &'static str {
@@ -217,11 +220,16 @@ impl Filter {
             Filter::Questions => "Questions",
             Filter::Supers => "Super Chats",
             Filter::Members => "Members",
+            Filter::Done => "Done",
         }
     }
 
     fn keeps(self, q: &ac_core::session_state::Question) -> bool {
+        use ac_core::session_state::QuestionState;
+        let waiting = matches!(q.state, QuestionState::Open | QuestionState::Shown);
         match (self, q.support.as_ref().map(|s| s.kind)) {
+            (Filter::Done, _) => !waiting,
+            _ if !waiting => false,
             (Filter::All, _) | (Filter::Questions, None) => true,
             (Filter::Supers, Some(kind)) => kind != ChatKind::Membership,
             (Filter::Members, Some(kind)) => kind == ChatKind::Membership,
@@ -360,10 +368,47 @@ impl App {
 
     /// The Inbox as shown: [`queue`] through the current filter tab.
     fn inbox<'v>(&self, state: &'v SessionState) -> Vec<&'v ac_core::session_state::Question> {
+        if self.filter == Filter::Done {
+            let mut done: Vec<_> = state
+                .questions
+                .iter()
+                .filter(|q| self.filter.keeps(q))
+                .collect();
+            done.sort_by_key(|q| std::cmp::Reverse(q.done_at));
+            return done;
+        }
         queue(state)
             .into_iter()
             .filter(|q| self.filter.keeps(q))
             .collect()
+    }
+
+    /// `u`: the selected item back to waiting in Done, else the last one handled.
+    fn undo(&mut self, view: &View) {
+        let target = match self.filter {
+            Filter::Done => self.selected_item(view),
+            _ => view
+                .state
+                .questions
+                .iter()
+                .filter(|q| q.done_at.is_some())
+                .max_by_key(|q| q.done_at),
+        };
+        let Some(q) = target else {
+            self.message = Some("nothing to undo".into());
+            return;
+        };
+        let what = match q.support.as_ref().map(|s| s.kind) {
+            None => "question",
+            Some(ChatKind::Membership) => "membership",
+            Some(_) => "Super Chat",
+        };
+        self.message = Some(format!("{}'s {what} is back in the Inbox", q.author));
+        let qid = q.qid.clone();
+        self.send(Command::Question {
+            qid,
+            action: QuestionAction::Reopen,
+        });
     }
 
     /// A breathing 0..1..0 over `period`; still (1) with animations off.
@@ -667,6 +712,12 @@ impl App {
                     }
                     None => {}
                 }
+            }
+            KeyCode::Char('u') if self.focus == Pane::Questions => self.undo(view),
+            KeyCode::Char('x' | 't')
+                if self.focus == Pane::Questions && self.filter == Filter::Done =>
+            {
+                self.message = Some("already handled; u puts it back in the Inbox".into())
             }
             KeyCode::Char('t') if self.focus == Pane::Questions => {
                 match self.selected_item(view).map(|q| q.support.is_some()) {
@@ -1116,18 +1167,25 @@ impl App {
         let items: Vec<Line> = queue
             .iter()
             .map(|q| {
-                let shown = q.state == ac_core::session_state::QuestionState::Shown;
-                let mark = if shown {
-                    Span::styled("● ", Style::new().fg(live).bold())
-                } else {
-                    Span::raw("  ")
+                use ac_core::session_state::QuestionState;
+                let mark = match (q.state, q.support.is_some()) {
+                    (QuestionState::Shown, _) => Span::styled("● ", Style::new().fg(live).bold()),
+                    (QuestionState::Answered, false) => Span::styled("✔ ", Style::new().fg(OK)),
+                    (QuestionState::Answered, true) => Span::styled("♥ ", Style::new().fg(WARN)),
+                    (QuestionState::Dismissed, _) => Span::styled("✕ ", Style::new().fg(FAINT)),
+                    _ => Span::raw("  "),
                 };
+                let when = q.done_at.map(|t| {
+                    let at = t.datetime().with_timezone(&Local).format("%H:%M ");
+                    Span::styled(at.to_string(), Style::new().fg(FAINT))
+                });
                 let color = if view.config.tui.name_colors {
                     self.users.get(&q.author_id)
                 } else {
                     TEXT
                 };
                 let mut spans = vec![mark];
+                spans.extend(when);
                 if let Some(support) = &q.support {
                     let bg = if support.kind == ChatKind::Membership {
                         OK
@@ -1149,6 +1207,13 @@ impl App {
             })
             .collect();
         let focused = self.focus == Pane::Questions;
+        // Keep a valid selection before anything reads it (the border hints do).
+        let last = items.len().checked_sub(1);
+        match self.questions.selected() {
+            None if last.is_some() => self.questions.select(Some(0)),
+            Some(i) if last.is_none_or(|l| i > l) => self.questions.select(last),
+            _ => {}
+        }
         // The selected question opens in full while the pane has focus; the rest stay
         // on one line (the highlight symbol takes a cell).
         let width = inner(area).0.saturating_sub(1);
@@ -1173,11 +1238,23 @@ impl App {
         } else {
             std::slice::from_ref(&self.filter)
         };
+        let count = |f: Filter| view.state.questions.iter().filter(|q| f.keeps(q)).count();
+        // When every tab does not fit, the empty ones (but the active one) give way.
+        let full: usize = tabs
+            .iter()
+            .map(|f| f.label().len() + count(*f).to_string().len() + 4)
+            .sum();
+        let room = (area.width as usize).saturating_sub(14);
+        let tabs: Vec<Filter> = tabs
+            .iter()
+            .copied()
+            .filter(|&f| full <= room || f == self.filter || count(f) > 0)
+            .collect();
         for (i, &f) in tabs.iter().enumerate() {
             if i > 0 {
                 extra.push(Span::styled("· ", Style::new().fg(FAINT)));
             }
-            let n = all.iter().filter(|q| f.keeps(q)).count();
+            let n = count(f);
             let style = if f == self.filter {
                 Style::new().fg(TEXT).bold().underlined()
             } else if n == 0 {
@@ -1205,22 +1282,19 @@ impl App {
                 "Nothing under {}; ] shows the next filter.",
                 self.filter.label()
             );
-            let hint = if all.is_empty() {
+            let hint = if self.filter == Filter::Done {
+                empty_state(&["Nothing handled yet. What you answer, thank or dismiss lands here."])
+            } else if all.is_empty() {
                 empty_state(&[
                     "Nothing waiting. Questions (!q), Super Chats and memberships land here",
-                    "and leave once handled: Enter shows on stream, t done, x dismiss.",
+                    "and leave once handled: Enter shows on stream, x dismisses a question,",
+                    "t thanks a supporter, u undoes the last one.",
                 ])
             } else {
                 empty_state(&[&other])
             };
             frame.render_widget(hint.block(block), area);
             return;
-        }
-        let last = items.len().checked_sub(1);
-        match self.questions.selected() {
-            None if last.is_some() => self.questions.select(Some(0)),
-            Some(i) if last.is_none_or(|l| i > l) => self.questions.select(last),
-            _ => {}
         }
         let list = List::new(items)
             .block(block)
@@ -1278,35 +1352,53 @@ impl App {
         let pairs: Vec<(&str, String)> = match pane {
             // Questions are answered or dismissed; supporters are thanked. The hint follows
             // what is on stream right now.
-            Pane::Questions => match self.selected_item(view) {
-                None => vec![("[ ]", "filter".into())],
-                Some(q) => {
-                    let supporter = q.support.is_some();
-                    let done = if supporter { "done" } else { "answered" };
-                    let enter = if q.state == QuestionState::Shown {
-                        live = true;
-                        format!("{done}, clears it")
-                    } else {
-                        // The overlay shows one card: the one shown last.
-                        let on_screen = view
-                            .state
-                            .questions
-                            .iter()
-                            .filter(|o| o.state == QuestionState::Shown)
-                            .max_by_key(|o| o.shown_at);
-                        match on_screen {
-                            Some(o) => format!("on stream (replaces {})", o.author),
-                            None => format!("on stream, again {done}"),
+            Pane::Questions => {
+                let can_undo = view.state.questions.iter().any(|q| q.done_at.is_some());
+                let mut pairs: Vec<(&str, String)> = match self.selected_item(view) {
+                    None => Vec::new(),
+                    // Done: what u and Enter would do now.
+                    Some(_) if self.filter == Filter::Done => vec![
+                        ("Enter", "show again".into()),
+                        ("u", "back to waiting".into()),
+                    ],
+                    Some(q) => {
+                        let supporter = q.support.is_some();
+                        let enter = if q.state == QuestionState::Shown {
+                            live = true;
+                            if supporter {
+                                "mark thanked"
+                            } else {
+                                "mark answered"
+                            }
+                            .to_owned()
+                        } else {
+                            // The overlay shows one card: the one shown last.
+                            let on_screen = view
+                                .state
+                                .questions
+                                .iter()
+                                .filter(|o| o.state == QuestionState::Shown)
+                                .max_by_key(|o| o.shown_at);
+                            match on_screen {
+                                Some(o) => format!("show instead of {}", o.author),
+                                None => "show on stream".into(),
+                            }
+                        };
+                        let other = if supporter {
+                            ("t", "thank".into())
+                        } else {
+                            ("x", "dismiss".into())
+                        };
+                        let mut pairs = vec![("Enter", enter), other];
+                        if can_undo {
+                            pairs.push(("u", "undo".into()));
                         }
-                    };
-                    let other = if supporter {
-                        ("t", "thank".into())
-                    } else {
-                        ("x", "dismiss".into())
-                    };
-                    vec![("Enter", enter), other, ("[ ]", "filter".into())]
-                }
-            },
+                        pairs
+                    }
+                };
+                pairs.push(("[ ]", "filter".into()));
+                pairs
+            }
             Pane::Chapters => vec![
                 ("e", "edit".into()),
                 ("d", "delete".into()),
@@ -2108,6 +2200,7 @@ fn summary(e: &Event) -> (String, bool) {
         EventKind::QuestionShow { .. } => ("question on stream".into(), false),
         EventKind::QuestionAnswered { .. } => ("question answered".into(), false),
         EventKind::QuestionDismiss { .. } => ("question dismissed".into(), true),
+        EventKind::QuestionReopen { .. } => ("back in the Inbox".into(), false),
         EventKind::LatencyMeasured { latency_s, samples } => (
             format!("latency {latency_s:.1} s ({samples} samples)"),
             false,
@@ -2166,6 +2259,7 @@ fn event_icon(e: &Event) -> (&'static str, Color) {
         | EventKind::QuestionShow { .. }
         | EventKind::QuestionAnswered { .. }
         | EventKind::QuestionDismiss { .. } => ("?", INFO),
+        EventKind::QuestionReopen { .. } => ("↺", INFO),
         EventKind::LatencyMeasured { .. } => ("◷", INFO),
         EventKind::CaptureSecretDropped { .. } => ("⚿", WARN),
         EventKind::BotCmd { .. } | EventKind::BotReply { .. } => ("›", MUTED),
@@ -2210,7 +2304,11 @@ fn help_lines() -> Vec<Line<'static>> {
                 ("Enter", "Inbox: show on stream; again: answered / done"),
                 ("t", "Inbox: thank a supporter without showing"),
                 ("x", "Inbox: dismiss a question"),
-                ("[ ]", "Inbox: filter All, Questions, Super Chats, Members"),
+                ("u", "Inbox: undo the last answer, thanks or dismissal"),
+                (
+                    "[ ]",
+                    "Inbox: filter All, Questions, Super Chats, Members, Done",
+                ),
             ],
         ),
         (
@@ -2689,7 +2787,7 @@ mod tests {
         app.last_frame -= Duration::from_secs(1); // let the pane finish growing
         let text = screen(&mut app, &view);
         assert!(
-            text.contains("All 3 · Questions 2 · Super Chats 1 · Members 0"),
+            text.contains("All 3 · Questions 2 · Super Chats 1 ─"),
             "tabs when focused: {text}"
         );
         // `]` filters to questions: the Super Chat is hidden, q1 is first.
@@ -2724,12 +2822,15 @@ mod tests {
         press(&mut app, KeyCode::Char('j'));
         let text = screen(&mut app, &shown);
         assert!(
-            text.contains("● ON STREAM · Enter answered, clears it"),
+            text.contains("● ON STREAM · Enter mark answered · x dismiss"),
             "{text}"
         );
         press(&mut app, KeyCode::Char('k'));
         let text = screen(&mut app, &shown);
-        assert!(text.contains("Enter on stream (replaces cy)"), "{text}");
+        assert!(
+            text.contains("Enter show instead of cy · x dismiss"),
+            "{text}"
+        );
         press(&mut app, KeyCode::Char('j'));
         // `]` again: Super Chats only. A supporter is not dismissed; `t` thanks them.
         press(&mut app, KeyCode::Char(']'));
@@ -2921,6 +3022,91 @@ mod tests {
         step(&mut feed, &more, 100);
         assert_eq!(feed.cursor, None);
         assert_eq!(shown(&mut feed, &more).0[3], "message 11");
+    }
+
+    #[test]
+    fn done_tab_lists_handled_items_and_u_brings_the_last_one_back() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        let add = |view: &mut View, qid: &str, author: &str, support: Option<&str>| {
+            let kind = EventKind::QuestionAdd {
+                qid: qid.into(),
+                author: author.into(),
+                author_id: format!("UC{author}"),
+                text: "hi".into(),
+                support: support.map(|label| ac_core::chat::Support {
+                    kind: ChatKind::Superchat,
+                    label: label.into(),
+                }),
+            };
+            view.state.apply(&Event::new(&clock, "bot", kind));
+        };
+        add(&mut view, "q1", "bob", None);
+        add(&mut view, "s1", "eve", Some("₹100.00"));
+        add(&mut view, "q2", "cy", None);
+        add(&mut view, "q3", "dan", None);
+        for (secs, kind) in [
+            (1, EventKind::QuestionAnswered { qid: "q1".into() }),
+            (2, EventKind::QuestionAnswered { qid: "s1".into() }),
+            (3, EventKind::QuestionDismiss { qid: "q2".into() }),
+        ] {
+            clock.advance(Duration::from_secs(secs));
+            view.state.apply(&Event::new(&clock, "tui", kind));
+        }
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        press(&mut app, KeyCode::Char('2'));
+        app.last_frame -= Duration::from_secs(1);
+        let text = screen(&mut app, &view);
+        // Too narrow for all five tabs: the empty ones give way.
+        assert!(
+            text.contains("Inbox All 1 · Questions 1 · Done 3"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Enter show on stream · x dismiss · u undo"),
+            "{text}"
+        );
+
+        // u from All brings back the last one handled: cy's dismissed question.
+        press(&mut app, KeyCode::Char('u'));
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Question {
+                qid: "q2".into(),
+                action: QuestionAction::Reopen
+            }
+        );
+        assert_eq!(
+            app.message.as_deref(),
+            Some("cy's question is back in the Inbox")
+        );
+
+        // Done lists newest first with what happened; Enter shows one again.
+        press(&mut app, KeyCode::Char('['));
+        let text = screen(&mut app, &view);
+        let rows: Vec<&str> = text.lines().filter(|l| l.contains(": hi")).collect();
+        assert!(rows[0].contains("✕") && rows[0].contains("cy"), "{rows:?}");
+        assert!(rows[1].contains("♥") && rows[1].contains("eve"), "{rows:?}");
+        assert!(rows[2].contains("✔") && rows[2].contains("bob"), "{rows:?}");
+        assert!(
+            text.contains("Enter show again · u back to waiting"),
+            "{text}"
+        );
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Question {
+                qid: "s1".into(),
+                action: QuestionAction::Show
+            }
+        );
+        press(&mut app, KeyCode::Char('x'));
+        assert!(cmd_rx.try_recv().is_err(), "x does nothing in Done");
     }
 
     #[test]
