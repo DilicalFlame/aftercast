@@ -166,10 +166,13 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         .live_chat_id
         .clone()
         .or(broadcast.chat_id.clone());
+    // True while a latency measurement runs, so chat reopens without waiting.
+    let (chat_fast, chat_fast_rx) = watch::channel(false);
     if let Some(chat_id) = chat_id.filter(|_| broadcast.actual_end.is_none()) {
         let (yt, tx) = (yt.clone(), msg_tx.clone());
+        let idle_max = std::time::Duration::from_secs(config.youtube.chat_idle_max_s);
         tokio::spawn(async move {
-            yt.run_chat(&chat_id, |u| {
+            yt.run_chat(&chat_id, idle_max, chat_fast_rx, |u| {
                 let _ = tx.send(Msg::Chat(u));
             })
             .await;
@@ -229,6 +232,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         chat_log,
         started,
         latency_run: None,
+        chat_fast,
         pending_title: None,
         overlays_off: BTreeSet::new(),
         overlay_sent: BTreeMap::new(),
@@ -492,6 +496,8 @@ struct Controller {
     /// Chat commands typed before this (history sent on connect) are not executed.
     started: Timestamp,
     latency_run: Option<chat::LatencyRun>,
+    /// Tells the chat reader a latency measurement runs (reopen chat without waiting).
+    chat_fast: watch::Sender<bool>,
     /// A `!title` waiting for confirmation in the TUI.
     pending_title: Option<String>,
     /// Overlays turned off with `:overlay <name> off`.
@@ -1077,6 +1083,12 @@ impl Controller {
     }
 
     fn publish(&mut self) {
+        let measuring = self.latency_run.is_some();
+        self.chat_fast.send_if_modified(|fast| {
+            let changed = *fast != measuring;
+            *fast = measuring;
+            changed
+        });
         self.sync_overlays();
         self.state_tx.send_replace(self.state.clone());
         if let Some(view) = &self.view {

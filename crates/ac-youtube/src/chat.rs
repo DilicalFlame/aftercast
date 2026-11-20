@@ -6,10 +6,11 @@
 //! skipped by prost. Oneof members are plain optional fields (same wire format).
 
 use std::collections::{HashSet, VecDeque};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ac_core::chat::{ChatKind, ChatMessage};
 use ac_core::time::Timestamp;
+use tokio::sync::watch;
 use tonic::Code;
 use tonic::transport::{Channel, ClientTlsConfig};
 
@@ -21,6 +22,13 @@ const STREAM_LIST: &str = "/youtube.api.v3.V3DataLiveChatMessageService/StreamLi
 /// Message ids remembered to drop the history YouTube resends on every (re)connect.
 const SEEN: usize = 10_000;
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Wait steps after a stream closed with no new messages: 10 s, 20 s, ... up to the cap.
+const IDLE_STEP: Duration = Duration::from_secs(10);
+
+/// The wait before reopening after a quiet close, given the previous one.
+fn next_idle(prev: Duration, max: Duration) -> Duration {
+    (prev + IDLE_STEP).min(max)
+}
 
 #[derive(Clone, PartialEq, prost::Message)]
 pub(crate) struct ListRequest {
@@ -186,8 +194,17 @@ impl Seen {
 impl Client {
     /// Streams chat for `chat_id` until the broadcast goes offline or chat is refused,
     /// reconnecting with the last page token (backoff 1 s to 30 s). Each (re)connect
-    /// costs one `streamList` call of quota. In `--mock` mode, plays `<fixture>/chat.jsonl`.
-    pub async fn run_chat(&self, chat_id: &str, send: impl Fn(ChatUpdate)) {
+    /// costs one `streamList` call of quota, and YouTube closes the stream about every
+    /// 10 s, so after a close that brought no new messages it waits 10 s, 20 s, ... up to
+    /// `idle_max` before reopening; immediately while `fast` is true (a latency
+    /// measurement). In `--mock` mode, plays `<fixture>/chat.jsonl`.
+    pub async fn run_chat(
+        &self,
+        chat_id: &str,
+        idle_max: Duration,
+        mut fast: watch::Receiver<bool>,
+        send: impl Fn(ChatUpdate),
+    ) {
         if let Backend::Mock(mock) = &self.backend {
             send(ChatUpdate::Connected);
             return mock.play_chat(&self.clock, send).await;
@@ -195,15 +212,40 @@ impl Client {
         let mut seen = Seen::default();
         let mut page_token = None;
         let mut backoff = Duration::from_secs(1);
+        let mut idle = Duration::ZERO;
         loop {
+            let opened = Instant::now();
             let result = self
                 .stream_chat(chat_id, &mut page_token, &mut seen, &send)
                 .await;
             let (error, retry) = match result {
                 Ok(Stream::Offline) => return send(ChatUpdate::Offline),
-                // The server closed a healthy stream; reconnect right away.
-                Ok(Stream::Closed) => {
+                // The server closed a healthy stream: reopen now while chat is busy,
+                // later while it is quiet.
+                Ok(Stream::Closed { messages }) => {
                     backoff = Duration::from_secs(1);
+                    idle = if messages > 0 || *fast.borrow() {
+                        Duration::ZERO
+                    } else {
+                        next_idle(idle, idle_max)
+                    };
+                    tracing::info!(
+                        open_s = opened.elapsed().as_secs_f64(),
+                        messages,
+                        wait_s = idle.as_secs(),
+                        "chat stream closed by YouTube"
+                    );
+                    if !idle.is_zero() {
+                        let measuring = async {
+                            if fast.wait_for(|f| *f).await.is_err() {
+                                std::future::pending::<()>().await;
+                            }
+                        };
+                        tokio::select! {
+                            () = tokio::time::sleep(idle) => {}
+                            () = measuring => {}
+                        }
+                    }
                     continue;
                 }
                 Err(Failure::Fatal(error)) => return send(ChatUpdate::Stopped(error)),
@@ -260,9 +302,10 @@ impl Client {
         self.record(Method::ChatStreamList, response.is_ok());
         let mut stream = response.map_err(status_failure)?.into_inner();
         send(ChatUpdate::Connected);
+        let mut messages = 0;
         loop {
             let Some(page) = stream.message().await.map_err(status_failure)? else {
-                return Ok(Stream::Closed);
+                return Ok(Stream::Closed { messages });
             };
             if page.next_page_token.is_some() {
                 *page_token = page.next_page_token;
@@ -271,6 +314,7 @@ impl Client {
                 if let Some(msg) = normalise(item, now())
                     && seen.insert(&msg.id)
                 {
+                    messages += 1;
                     send(ChatUpdate::Message(msg));
                 }
             }
@@ -283,7 +327,10 @@ impl Client {
 
 enum Stream {
     Offline,
-    Closed,
+    /// Closed by the server after delivering `messages` new messages.
+    Closed {
+        messages: usize,
+    },
 }
 
 enum Failure {
@@ -346,6 +393,22 @@ mod tests {
         assert_eq!(
             msg.t_published,
             Some("2026-11-19T10:00:00Z".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn quiet_waits_grow_by_ten_seconds_up_to_the_cap() {
+        let max = Duration::from_secs(30);
+        let waits: Vec<u64> =
+            std::iter::successors(Some(Duration::ZERO), |w| Some(next_idle(*w, max)))
+                .skip(1)
+                .take(4)
+                .map(|w| w.as_secs())
+                .collect();
+        assert_eq!(waits, [10, 20, 30, 30]);
+        assert_eq!(
+            next_idle(Duration::ZERO, Duration::from_secs(5)).as_secs(),
+            5
         );
     }
 

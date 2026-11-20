@@ -137,11 +137,12 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
     assert_eq!(of("question.show").len(), 1);
     assert_eq!(of("question.answered").len(), 1);
 
-    // The mod's chapter points `latency + 0.5 s` back (default latency 5 s).
+    // The mod's chapter points `latency` back from when YouTube says the message was sent
+    // (default latency 5 s; script chat is sent and received at the same moment).
     let cp = of("checkpoint")[0];
     assert_eq!(cp["data"]["title"], "Parser with nom");
     assert_eq!(cp["data"]["by"], "mod");
-    assert_eq!(cp["data"]["latency_corrected_s"], 5.5);
+    assert_eq!(cp["data"]["latency_corrected_s"], 5.0);
 
     // Cap of one chat reply per hour: the second `!links` goes to the overlay.
     let modes: Vec<&str> = of("bot.reply")
@@ -151,14 +152,13 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .collect();
     assert_eq!(modes, ["chat", "overlay"]);
 
-    // LAT 2350 is on screen 235 s after the start; seen in chat 240 s later, minus 0.5 s
-    // of chat delivery.
+    // LAT 2350 is on screen 235 s after the start; the `!lat` is sent 240 s in.
     let lat = of("latency.measured");
-    assert_eq!(lat[0]["data"]["latency_s"], 4.5);
+    assert_eq!(lat[0]["data"]["latency_s"], 5.0);
     assert!(
         fs::read_to_string(dir.join("session.toml"))
             .unwrap()
-            .contains("latency_s = 4.5")
+            .contains("latency_s = 5.0")
     );
 
     let quest = of("quest.set");
@@ -178,7 +178,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .find(|m| m["text"] == "!chapter Parser with nom")
         .unwrap();
     let back = ts(&received["t_received"]).secs_since(ts(&cp["data"]["pressed_at"]));
-    assert!((back - 5.5).abs() < 0.001, "{back}");
+    assert!((back - 5.0).abs() < 0.001, "{back}");
 
     let schema = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/events.schema.json");
     let schema = serde_json::from_str(&fs::read_to_string(schema).unwrap()).unwrap();

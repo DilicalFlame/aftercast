@@ -26,6 +26,16 @@ const CHAT_PANE: usize = 500;
 /// Chat reaches aftercast about this long after it was typed (specs/05-time-sync.md).
 const CHAT_DELIVERY_S: f64 = 0.5;
 const QUESTION_MAX: usize = 300;
+
+/// When a viewer sent `msg`: YouTube's publish time, which quiet-chat reconnect waits do not
+/// delay; else arrival minus the usual delivery time. Never later than arrival (clock skew).
+fn sent_at(msg: &ChatMessage) -> Timestamp {
+    match msg.t_published {
+        Some(p) if p <= msg.t_received => p,
+        Some(_) => msg.t_received,
+        None => msg.t_received.add_secs(-CHAT_DELIVERY_S),
+    }
+}
 /// A latency measurement ends after this many samples.
 const LATENCY_SAMPLES: usize = 3;
 /// `!chapters` replies are cut to this many characters.
@@ -125,12 +135,8 @@ impl Controller {
         // What a mod points at happened `latency` earlier on their screen; the owner
         // acts on the present (specs/05-time-sync.md, "Viewer-perceived time"). The
         // owner's other accounts (`bot.owner_accounts`) watch the delayed stream.
-        let correction = if msg.is_owner {
-            0.0
-        } else {
-            self.latency() + CHAT_DELIVERY_S
-        };
-        let moment = msg.t_received.add_secs(-correction);
+        let correction = if msg.is_owner { 0.0 } else { self.latency() };
+        let moment = sent_at(msg).add_secs(-correction);
         let builtin = match p.cmd {
             Cmd::Custom { text, reply } => {
                 let text = self.render_reply(&p.name, &text);
@@ -199,8 +205,7 @@ impl Controller {
             ),
             Builtin::Lat => match p.args.parse() {
                 Ok(counter) => {
-                    let at = msg.t_received.add_secs(-CHAT_DELIVERY_S);
-                    self.latency_sample(counter, at);
+                    self.latency_sample(counter, sent_at(msg));
                 }
                 Err(_) => self.notice = Some(format!("!lat needs a number, got {:?}", p.args)),
             },

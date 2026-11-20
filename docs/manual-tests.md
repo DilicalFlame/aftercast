@@ -161,7 +161,7 @@ viewer, and ideally a third account you made a moderator.
     `max_chat_replies_per_hour = 1`, a second `!links` from another viewer goes to the
     toast overlay instead.
 12. Viewer: `!chapter test`. Expect: ignored (mods only). Moderator: `!chapter Parser`.
-    Expect: a chapter whose time is about `latency + 0.5 s` before the chat message arrived.
+    Expect: a chapter whose time is about `latency` before the moment the message was sent.
 13. Moderator: `!brb`, then `!back`. Expect: BRB scene and back, like `b`.
 14. Put your phone account's channel id (from `chat.jsonl`) in `bot.owner_accounts`, restart,
     and send `!lat 5` from the phone during `:latency`. Expect: accepted like your own

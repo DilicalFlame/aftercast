@@ -140,6 +140,12 @@ Global hotkeys work while another app (your editor) has focus: `Ctrl+Alt+M` mark
 ### Chat and bot
 
 Chat arrives over YouTube's streaming API: 5 quota units per connection, not per message.
+YouTube ends the connection about every 10 s, so while chat is quiet aftercast waits 10, 20,
+then up to `youtube.chat_idle_max_s` (30) seconds before reconnecting, and reconnects at once
+while chat is busy or `:latency` runs. That keeps a 5-hour stream around 2,000 to 3,000 units
+instead of about 8,500; the first message after a quiet stretch can show up to 30 s later.
+Mod commands use the time YouTube says the message was sent, so a late arrival does not move
+their chapters or marks.
 Commands start with `!`:
 
 | Command | Who | Does |

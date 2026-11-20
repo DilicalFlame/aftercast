@@ -123,6 +123,9 @@ pub struct Youtube {
     pub autosync_debounce_s: u64,
     pub autosync_min_interval_s: u64,
     pub daily_quota_reserve: u32,
+    /// Longest wait before reopening chat after YouTube closed it with no new messages
+    /// (each reopen costs 5 units; YouTube closes the stream about every 10 s).
+    pub chat_idle_max_s: u64,
     pub bot_profile: Option<String>,
     /// Quota cost overrides by API method name, e.g. `"videos.update" = 50`.
     pub costs: BTreeMap<String, u32>,
@@ -139,6 +142,7 @@ impl Default for Youtube {
             autosync_debounce_s: 5,
             autosync_min_interval_s: 90,
             daily_quota_reserve: 1500,
+            chat_idle_max_s: 30,
             bot_profile: None,
             costs: BTreeMap::new(),
         }

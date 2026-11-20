@@ -33,6 +33,10 @@ live_autosync = false           # true = push automatically after README saves (
 autosync_debounce_s = 5
 autosync_min_interval_s = 90
 daily_quota_reserve = 1500      # never spend below this many remaining units
+# YouTube ends the chat stream about every 10 s and each reopen costs 5 units. While chat is
+# quiet, aftercast waits 10, 20, then up to this many seconds before reopening (immediately
+# while chat is busy or a :latency measurement runs).
+chat_idle_max_s = 30
 # bot_profile = "bot"           # optional separate bot account (must be a moderator of the channel)
 
 [obs]
