@@ -2,7 +2,7 @@
 //!
 //! The header holds the episode and, top right, the decision (Start or Resume, Quit). Below
 //! it, cards you act on (rounded borders: Checks, Mixer, Sources) and, in the tabs layout,
-//! information that is only read (no border: Status, Session, Mic). Tab moves between cards, j/k inside one,
+//! information that is only read (no border: Status, Devices, Session). Tab moves between cards, j/k inside one,
 //! Ctrl+j/k (or Ctrl+arrows) between scenes.
 //!
 //! A new session is a draft here: nothing lasting or public happens until it is started,
@@ -317,13 +317,10 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
                     let status = ctx.status(right.width);
                     let devices = ctx.devices(right.width);
                     let session = ctx.session(right.width);
-                    let mics = ctx.mic_levels(right.width);
-                    let [s1, _, s2, _, s3, _, s4] = Layout::vertical([
+                    let [s1, _, s2, _, s3] = Layout::vertical([
                         Constraint::Length(status.len() as u16 + 1),
                         Constraint::Length(1),
                         Constraint::Length(devices.len() as u16 + 1),
-                        Constraint::Length(1),
-                        Constraint::Length(session.len() as u16 + 1),
                         Constraint::Length(1),
                         Constraint::Fill(1),
                     ])
@@ -331,7 +328,6 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
                     ctx.info(frame, s1, "Status", status);
                     ctx.info(frame, s2, "Devices", devices);
                     ctx.info(frame, s3, "Session", session);
-                    ctx.info(frame, s4, "Mic", mics);
                 }
                 tab => {
                     let card = if tab == 1 { Card::Mixer } else { Card::Sources };
@@ -832,18 +828,6 @@ impl Ctx<'_> {
                 }
                 (a.name.clone(), Line::from(spans))
             })
-            .collect()
-    }
-
-    /// The mics' meters, only read (the Checks tab).
-    fn mic_levels(&self, width: u16) -> Vec<Line<'static>> {
-        let mics: Vec<&Audio> = self.view.obs.audio.iter().filter(|a| a.is_mic()).collect();
-        if mics.is_empty() {
-            return vec![Line::styled(" no mic in OBS", Style::new().fg(FAINT))];
-        }
-        self.meters(&mics, width)
-            .into_iter()
-            .map(|(_, l)| l)
             .collect()
     }
 

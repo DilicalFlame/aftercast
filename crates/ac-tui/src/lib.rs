@@ -4086,7 +4086,7 @@ mute Mic/Aux
         let mut app = App::new(clock.clone(), rx, cmd_tx);
         let text = text_at(&mut app, &view, 110, 30);
         assert!(text.contains("✔ OBS connected"), "{text}");
-        assert!(text.contains("SESSION") && text.contains("MIC"), "{text}");
+        assert!(text.contains("SESSION") && !text.contains("MIC"), "{text}");
         // The mic's and camera's hardware.
         assert!(
             text.contains("Microphone (Shure MV7)") && text.contains("Logitech BRIO"),
