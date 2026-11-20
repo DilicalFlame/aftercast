@@ -1,5 +1,6 @@
-//! `aftercast setup`: installs the faster-whisper transcriber and Tesseract OCR (tesserocr
-//! wheel plus `eng` data) under `<home>/tools` with uv.
+//! `aftercast setup`: installs the faster-whisper transcriber, Tesseract OCR (tesserocr
+//! wheel plus `eng` data) and, with `post.correct`, llama.cpp and the correction model
+//! under `<home>/tools` with uv.
 //! uv brings its own Python 3.12 (`tools/python`), so the system Python does not matter.
 //! Tool output goes to `<home>/logs/setup.log`.
 
@@ -87,6 +88,36 @@ pub fn run(home: &Home, config_path: &Path) -> Result<u8> {
             .args(["--download", "--model", model, "--models"])
             .arg(home.models_dir()),
     )?;
+
+    if config.post.correct {
+        // llama.cpp with CUDA, prebuilt (no compiler needed), plus the CUDA runtime it loads.
+        step(
+            &log,
+            "llama.cpp (correction model runtime)",
+            Command::new("uv")
+                .args(["pip", "install", "--upgrade", "--python"])
+                .arg(&python)
+                .args([
+                    "--only-binary",
+                    "llama-cpp-python",
+                    "--extra-index-url",
+                    "https://abetlen.github.io/llama-cpp-python/whl/cu124",
+                    "llama-cpp-python",
+                    "nvidia-cuda-runtime-cu12==12.*",
+                ]),
+        )?;
+        let model = &config.post.correct_model;
+        step(
+            &log,
+            &format!("correction model {model}"),
+            Command::new(&python)
+                .arg(helpers.join("correct.py"))
+                .args(["--download", "--model", model, "--models"])
+                .arg(home.models_dir()),
+        )?;
+    } else {
+        println!("skip  correction model (post.correct = false)");
+    }
 
     let cuda = Command::new(&python)
         .args([

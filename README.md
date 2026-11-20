@@ -248,7 +248,9 @@ AI-ready dataset under the session's `derived/` folder:
 | `ingest` | `media/master.mp4` (recording files joined, or linked if there is one MP4), `media/master.json` |
 | `vod`, `calibrate` | with `post.use_vod`: the YouTube VOD and its exact offset to the recording |
 | `audio` | `media/audio16k.wav` |
+| `vocab` | `derived/vocab.json`: this stream's terms, from what you typed, ran, committed and wrote |
 | `transcribe` | `derived/words.json`, `transcript.srt`, `transcript.txt` (nothing said in privacy mode) |
+| `correct` | with `post.correct`: misheard terms fixed by a local model, listed in `derived/corrections.json` |
 | `silence` | `derived/silence.json` |
 | `git` | `git.jsonl`: commits in `capture.git_roots` made during the stream |
 | `frames` | `derived/frames/*.jpg` every `frame_interval_s` and at scene changes, near-duplicates dropped |
@@ -278,11 +280,22 @@ when `post.ocr = true`) under `<home>/tools` (a few GB; log in `logs/setup.log`)
 `aftercast post` uses them while `paths.python` and `paths.tesseract` keep their defaults. Rerun it after changing
 the model. Only the NVIDIA driver is needed from outside.
 
-Whisper hears jargon better when it knows it: before transcribing, aftercast gives it the
-series name, the stream title, the chapter titles and `post.vocabulary` (e.g. `["Rust",
-"cargo", "borrow checker"]`), so "Rust" no longer comes out as "rest". Use words only: in tests
-on a real stream, descriptive sentences such as "in English and Hindi" made it mishear more.
-After changing the vocabulary, `aftercast post --from transcribe` redoes the transcript.
+Whisper hears jargon better when it knows it. Before transcribing, aftercast gives it the
+series name, the title, the chapter titles, `post.vocabulary` (the words you always use, e.g.
+`["Rust", "cargo", "borrow checker"]`) and this stream's own terms, which the `vocab` stage
+picks out of what you typed, the commands you ran, your commits, the README and chat (common
+English, template text, the bot's own replies, one-off typos and anything that looks like a
+secret are left out). Use words only in `post.vocabulary`: in tests on a real stream,
+descriptive sentences such as "in English and Hindi" made Whisper mishear more.
+
+With `post.correct = true` (and `aftercast setup` again), a small local model (Qwen3.5-4B
+through llama.cpp, about 3 GB, on the GPU) then checks words that sound like one of those
+terms but aren't ("rest" / "Rust", "get" / "git") and decides from the sentence which one you
+said. It can only choose between the two: no other word changes, nothing is reworded, timings
+stay, and names read from chat are left alone. Every change is listed in
+`derived/corrections.json`; Whisper's own transcript stays in `derived/words.whisper.json`.
+It takes seconds for a short stream. After changing the vocabulary,
+`aftercast post --from vocab` redoes vocabulary, transcript and corrections.
 
 Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. whisperx
 (`post.transcriber = "whisperx"`, also installed by `aftercast setup`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,

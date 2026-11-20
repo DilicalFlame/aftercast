@@ -165,6 +165,14 @@ ocr = false
 # chapter titles before it listens, so it writes "Rust", not "rest". Words only: in tests,
 # sentences ("about the Rust language", "English and Hindi") made it worse.
 vocabulary = []                 # e.g. ["Rust", "cargo", "crates", "borrow checker", "tokio"]
+# Each stream also gets its own terms (typed code, shell, commits, README, chapters, chat):
+# see derived/vocab.json. With correct = true, a small local model (installed by aftercast
+# setup, about 3 GB) looks at words that sound like one of those terms ("rest" / "Rust") and
+# decides from the sentence which was said; nothing else is changed. Every change is listed
+# in derived/corrections.json.
+correct = false
+correct_model = "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf"
+correct_below = 0.95            # skip look-alikes Whisper was at least this sure of (0 to 1)
 
 [render]
 encoder = "h264_nvenc"          # h264_nvenc | libx264

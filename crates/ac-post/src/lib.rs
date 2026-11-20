@@ -3,6 +3,7 @@
 //! are unchanged; `derived/.stages.json` records each run.
 
 mod activity;
+mod correct;
 mod ctx;
 mod frames;
 mod index;
@@ -13,6 +14,7 @@ mod segments;
 mod sources;
 pub mod tool;
 mod transcribe;
+mod vocab;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -36,9 +38,11 @@ pub enum Stage {
     Vod,
     Calibrate,
     Audio,
-    Transcribe,
-    Silence,
     Git,
+    Vocab,
+    Transcribe,
+    Correct,
+    Silence,
     Frames,
     Ocr,
     Activity,
@@ -48,14 +52,16 @@ pub enum Stage {
     Library,
 }
 
-pub const STAGES: [Stage; 14] = [
+pub const STAGES: [Stage; 16] = [
     Stage::Ingest,
     Stage::Vod,
     Stage::Calibrate,
     Stage::Audio,
-    Stage::Transcribe,
-    Stage::Silence,
     Stage::Git,
+    Stage::Vocab,
+    Stage::Transcribe,
+    Stage::Correct,
+    Stage::Silence,
     Stage::Frames,
     Stage::Ocr,
     Stage::Activity,
@@ -72,7 +78,9 @@ impl Stage {
             Self::Vod => "vod",
             Self::Calibrate => "calibrate",
             Self::Audio => "audio",
+            Self::Vocab => "vocab",
             Self::Transcribe => "transcribe",
+            Self::Correct => "correct",
             Self::Silence => "silence",
             Self::Git => "git",
             Self::Frames => "frames",
@@ -100,16 +108,19 @@ impl Stage {
         use Stage::*;
         match self {
             Ingest | Vod | Git => &[],
+            // The transcriber reads vocab.json through its config string (content, not runs).
+            Vocab => &[Git],
+            Correct => &[Transcribe, Vocab],
             Calibrate => &[Ingest, Vod],
             Audio | Frames => &[Ingest],
             Transcribe | Silence => &[Audio],
             Ocr => &[Frames],
-            Activity => &[Ingest, Calibrate, Transcribe, Git, Frames],
-            Segments => &[Activity, Transcribe],
-            Secrets => &[Segments, Frames, Ocr, Transcribe],
+            Activity => &[Ingest, Calibrate, Transcribe, Correct, Git, Frames],
+            Segments => &[Activity, Transcribe, Correct],
+            Secrets => &[Segments, Frames, Ocr, Transcribe, Correct],
             Index => &[
-                Ingest, Calibrate, Transcribe, Silence, Git, Frames, Ocr, Activity, Segments,
-                Secrets,
+                Ingest, Calibrate, Transcribe, Correct, Silence, Git, Frames, Ocr, Activity,
+                Segments, Secrets,
             ],
             Library => &[Index],
         }
@@ -120,6 +131,7 @@ impl Stage {
         match self {
             Self::Vod | Self::Calibrate if !ctx.config.post.use_vod => Some("post.use_vod = false"),
             Self::Ocr if !ctx.config.post.ocr => Some("post.ocr = false"),
+            Self::Correct if !ctx.config.post.correct => Some("post.correct = false"),
             _ => None,
         }
     }
@@ -148,6 +160,32 @@ impl Stage {
                     ctx.language(),
                     std::env::var(transcribe::FIXTURE_ENV).ok(),
                     transcribe::context(ctx),
+                ),
+            ),
+            Self::Vocab => (
+                vec![
+                    events.clone(),
+                    session.clone(),
+                    ctx.session.readme(),
+                    ctx.dir.join("keys.jsonl.zst"),
+                    ctx.dir.join("shell.jsonl"),
+                    ctx.dir.join("chat.jsonl"),
+                ],
+                ctx.config
+                    .capture
+                    .secret_patterns
+                    .iter()
+                    .map(|p| p.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            Self::Correct => (
+                vec![],
+                format!(
+                    "{} {} {:?}",
+                    p.correct_model,
+                    p.correct_below,
+                    vocab::all(ctx)
                 ),
             ),
             Self::Silence => (vec![], format!("{} {}", p.silence_db, p.silence_min_s)),
@@ -204,7 +242,9 @@ impl Stage {
             Self::Vod => media::vod(ctx),
             Self::Calibrate => media::calibrate(ctx),
             Self::Audio => media::audio(ctx),
+            Self::Vocab => vocab::run(ctx),
             Self::Transcribe => transcribe::run(ctx),
+            Self::Correct => correct::run(ctx),
             Self::Silence => media::silence(ctx),
             Self::Git => sources::git(ctx),
             Self::Frames => frames::run(ctx),

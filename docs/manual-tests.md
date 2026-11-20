@@ -298,6 +298,13 @@ viewer, and ideally a third account you made a moderator.
    warning about a possible secret, `derived/secrets.json` with a `shell` entry (no token text)
    and that minute `[redacted]` in `index.md`.
 
+9a. Open `derived/vocab.json`. Expect: the libraries, tools and names you typed, ran or
+    committed during the stream, not common English, your README template or the bot's links.
+9b. With `post.correct = true` and `aftercast setup` run again: `aftercast post --from correct`.
+    Expect: `derived/corrections.json` with changes like `rest` to `Rust` at the right times,
+    every one of them right (check them against the video), and `aftercast doctor` showing
+    `corrector ok`.
+
 ### Optional
 
 10. Set `post.use_vod = true` and post a public or unlisted stream after YouTube finished

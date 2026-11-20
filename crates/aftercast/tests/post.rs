@@ -229,17 +229,17 @@ fn post_pipeline_on_a_ten_minute_session() {
             .env("AFTERCAST_TRANSCRIBE_FIXTURE", &words_path))
     };
 
-    // First run: every stage runs (VOD, calibration and OCR are off by default).
+    // First run: every stage runs (VOD, calibration, OCR and correction are off by default).
     let first = outcomes(&post(&[]));
     for (stage, what) in &first {
-        let expected = if ["vod", "calibrate", "ocr"].contains(&stage.as_str()) {
+        let expected = if ["vod", "calibrate", "ocr", "correct"].contains(&stage.as_str()) {
             what.starts_with("skipped")
         } else {
             what == "done"
         };
         assert!(expected, "{stage}: {what}");
     }
-    assert_eq!(first.len(), 14);
+    assert_eq!(first.len(), 16);
 
     let derived = dir.join("derived");
     let master = read(&dir.join("media/master.json"));
@@ -322,6 +322,23 @@ fn post_pipeline_on_a_ten_minute_session() {
         fs::read_dir(derived.join("frames")).unwrap().count(),
         frame_list.len()
     );
+
+    // The stream's own terms, from its shell command and commit; the transcriber got them.
+    let vocab = read(&derived.join("vocab.json"));
+    let terms: Vec<&str> = vocab["terms"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["term"].as_str().unwrap())
+        .collect();
+    for want in ["cargo", "todo", "tui", "Parser"] {
+        assert!(terms.contains(&want), "{want} missing: {terms:?}");
+    }
+    assert!(
+        !terms.contains(&"the") && !terms.contains(&"REDACTED"),
+        "{terms:?}"
+    );
+    assert!(derived.join("words.whisper.json").exists());
 
     let secrets = read(&derived.join("secrets.json"));
     assert_eq!(secrets[0]["source"], "shell");

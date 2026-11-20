@@ -90,6 +90,9 @@ pub fn run(home: &Home, config_path: Option<PathBuf>) -> u8 {
         },
     );
     checks.extend(transcriber(home, &config));
+    if config.post.correct {
+        checks.push(corrector(home, &config));
+    }
     checks.push(clock());
     checks.push(keyring());
     checks.push(obs(&config));
@@ -172,6 +175,33 @@ fn tool(name: &str, program: &Path, args: &[&str], required: bool) -> Check {
         Ok(line) => Check::new(name, Status::Ok, line),
         Err(e) if required => Check::new(name, Status::Fail(exit::TOOL_MISSING), e),
         Err(e) => Check::new(name, Status::Warn, format!("{e} (optional)")),
+    }
+}
+
+/// The correction model loads (`post.correct`); `aftercast setup` installs it.
+fn corrector(home: &Home, config: &Config) -> Check {
+    let script = match ac_post::write_helpers(home) {
+        Ok(dir) => dir.join("correct.py"),
+        Err(e) => return Check::new("corrector", Status::Fail(exit::GENERIC), e),
+    };
+    let models = home.models_dir().to_string_lossy().into_owned();
+    match first_line(
+        home.python(&config.paths.python),
+        &[
+            &script.to_string_lossy(),
+            "--check",
+            "--model",
+            &config.post.correct_model,
+            "--models",
+            &models,
+        ],
+    ) {
+        Ok(line) => Check::new("corrector", Status::Ok, line),
+        Err(e) => Check::new(
+            "corrector",
+            Status::Fail(exit::TOOL_MISSING),
+            format!("{e} (run aftercast setup)"),
+        ),
     }
 }
 

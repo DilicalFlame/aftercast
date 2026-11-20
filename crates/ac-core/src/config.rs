@@ -492,6 +492,12 @@ pub struct Post {
     pub ocr: bool,
     /// Words the transcriber should expect (names, tools, jargon), e.g. "Rust", "cargo".
     pub vocabulary: Vec<String>,
+    /// Let a local model replace misheard words with the stream's terms (stage `correct`).
+    pub correct: bool,
+    /// The correction model, `owner/repo/file.gguf` on Hugging Face.
+    pub correct_model: String,
+    /// Look-alike words Whisper was less sure of than this are checked (0 to 1).
+    pub correct_below: f64,
 }
 
 impl Default for Post {
@@ -512,6 +518,9 @@ impl Default for Post {
             focus_min_keys_per_10s: 3,
             ocr: false,
             vocabulary: Vec::new(),
+            correct: false,
+            correct_model: "unsloth/Qwen3.5-4B-GGUF/Qwen3.5-4B-Q4_K_M.gguf".into(),
+            correct_below: 0.95,
         }
     }
 }

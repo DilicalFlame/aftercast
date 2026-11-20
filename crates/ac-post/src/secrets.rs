@@ -127,6 +127,10 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
     if let Some(w) = words {
         transcribe::write_outputs(ctx, &transcribe::without(w, &redacted))?;
     }
+    let raw = ctx.derived(crate::correct::RAW);
+    if let Ok(w) = read_json::<Words>(&raw) {
+        write_json(&raw, &transcribe::without(w, &redacted))?;
+    }
     if hits.is_empty() {
         return Ok(());
     }

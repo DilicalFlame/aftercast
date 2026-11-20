@@ -52,6 +52,8 @@ pub fn run(ctx: &mut Ctx) -> Result<()> {
     };
     let duration = ctx.master()?.duration_s;
     let words = without(raw, &ctx.privacy(duration));
+    // Whisper's own words, for the correct stage (which rewrites words.json from it).
+    write_json(&ctx.derived(crate::correct::RAW), &words)?;
     write_outputs(ctx, &words)
 }
 
@@ -167,8 +169,8 @@ fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
 /// Longest prompt passed to Whisper; it keeps only about 220 tokens of it.
 const PROMPT_MAX: usize = 800;
 
-/// The transcriber's context: a prompt (series, title, `post.vocabulary`, chapter and
-/// quest titles) and the vocabulary as hotwords, applied to every 30 s window. Words only:
+/// The transcriber's context: a prompt (series, title, `post.vocabulary` and this
+/// stream's terms from `vocab.json`, chapter and quest titles) and the vocabulary as hotwords, applied to every 30 s window. Words only:
 /// Whisper reads the prompt as the speech before the recording, and descriptive sentences
 /// ("about the Rust language", "in English and Hindi") made it mishear more in tests.
 pub fn context(ctx: &Ctx) -> (String, String) {
@@ -183,15 +185,27 @@ pub fn context(ctx: &Ctx) -> (String, String) {
             topics.push(title.clone());
         }
     }
-    let p = &ctx.config.post;
+    let terms = crate::vocab::all(ctx);
     let prompt = build_prompt(
         &ctx.config.channel.series,
         ctx.session.meta.title_at_start.as_deref().unwrap_or(""),
         &topics,
-        &p.vocabulary,
+        &terms,
     );
-    (prompt, p.vocabulary.join(" "))
+    // Hotwords are repeated for every window; the strongest terms are enough.
+    (
+        prompt,
+        terms
+            .iter()
+            .take(HOTWORDS)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
 }
+
+/// Terms passed as hotwords: `post.vocabulary` first, then the stream's strongest.
+const HOTWORDS: usize = 24;
 
 fn build_prompt(series: &str, title: &str, topics: &[String], vocabulary: &[String]) -> String {
     let mut parts = vec![format!("{series}, a live coding stream.")];
