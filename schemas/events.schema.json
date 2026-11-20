@@ -38,6 +38,8 @@
         "obs.scene",
         "obs.stream",
         "obs.record",
+        "obs.mute",
+        "obs.source",
         "checkpoint",
         "checkpoint.edit",
         "checkpoint.delete",
@@ -257,6 +259,68 @@
             },
             "required": [
               "state"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "obs.mute"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "string"
+              },
+              "muted": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "input",
+              "muted"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "obs.source"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "scene": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "visible": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "scene",
+              "source",
+              "visible"
             ],
             "additionalProperties": false
           }

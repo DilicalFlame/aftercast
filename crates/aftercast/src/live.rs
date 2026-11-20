@@ -336,6 +336,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         done: false,
         obs,
         obs_scenes: None,
+        obs_media: Arc::default(),
         pending_scenes: VecDeque::new(),
         recordings,
         privacy_return: None,
@@ -419,9 +420,31 @@ fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -
             .iter()
             .map(|s| s.to_string())
             .collect();
+        // A mic, desktop audio and a camera in the main scene, for trying the controls.
+        let media = ac_core::obs::Media {
+            scenes: scenes.clone(),
+            audio: [
+                ("Mic/Aux", "wasapi_input_capture"),
+                ("Desktop Audio", "wasapi_output_capture"),
+            ]
+            .map(|(name, kind)| ac_core::obs::Audio {
+                name: name.into(),
+                kind: kind.into(),
+                muted: false,
+                volume_db: 0.0,
+            })
+            .to_vec(),
+            items: vec![ac_core::obs::Item {
+                scene: config.obs.scenes.main.clone(),
+                source: "Camera".into(),
+                id: 1,
+                enabled: true,
+            }],
+        };
         let _ = msgs.send(Msg::Obs(ac_obs::Update::Connected(ac_obs::Snapshot {
             scene: Some(config.obs.scenes.main.clone()),
             scenes: scenes.clone(),
+            media,
             ..Default::default()
         })));
         return obs::ObsLink::Fake {
@@ -599,6 +622,8 @@ struct Controller {
     obs: obs::ObsLink,
     /// Scenes in OBS while connected; `None` while OBS is unreachable.
     obs_scenes: Option<Vec<String>>,
+    /// Audio inputs and scene sources as OBS last reported them (empty while down).
+    obs_media: Arc<ac_core::obs::Media>,
     /// Scene switches sent to OBS whose echo has not arrived yet.
     pending_scenes: VecDeque<String>,
     recordings: Recordings,
@@ -753,12 +778,24 @@ impl Controller {
             Command::Brb { on, by } => self.brb(on, by),
             Command::Privacy { on, by } => self.privacy(on, by),
             Command::Scene { name } => {
-                if self.obs_scenes.as_ref().is_some_and(|s| !s.contains(&name)) {
-                    self.notice = Some(format!("OBS has no scene named {name:?}"));
-                } else {
-                    self.switch_scene(name);
+                // Typed names match case-insensitively.
+                let known = self
+                    .obs_scenes
+                    .as_ref()
+                    .map(|s| s.iter().find(|s| s.eq_ignore_ascii_case(&name)).cloned());
+                match known {
+                    Some(None) => self.notice = Some(format!("OBS has no scene named {name:?}")),
+                    Some(Some(name)) => self.switch_scene(name),
+                    None => self.switch_scene(name),
                 }
             }
+            Command::Mute { input, on } => self.mute(&input, on),
+            Command::Volume { input, db } => self.volume(&input, db),
+            Command::Source {
+                source,
+                scene,
+                visible,
+            } => self.source_visible(&source, scene.as_deref(), visible),
             Command::Quest { title } => self.emit_render(
                 "tui",
                 EventKind::QuestSet {
@@ -1074,6 +1111,7 @@ impl Controller {
             readme: self.session.readme(),
             config: self.config.clone(),
             config_path: self.config_path.clone(),
+            obs: self.obs_media.clone(),
             meta: self.session.meta.clone(),
             state: self.state.clone(),
             chapters: self.chapters.clone(),

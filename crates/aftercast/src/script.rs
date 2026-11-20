@@ -39,6 +39,8 @@ pub enum Action {
     Brb(Option<bool>),
     Privacy(Option<bool>),
     Scene(String),
+    /// `mute <input> [on|off]`, `volume <input> <dB>`, `hide|show <source>`: OBS controls.
+    Do(Command),
     /// Something OBS reports (`--mock` only), e.g. `obs record started D:/a.mkv`.
     Obs(ac_obs::Update),
     /// A chat message: `chat <author> [owner|mod|member] <text>`.
@@ -115,6 +117,31 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
             _ => None,
         }),
         "scene" => Action::Scene(required("name")?),
+        "mute" => {
+            let args = required("an input")?;
+            let (input, on) = match args.rsplit_once(' ') {
+                Some((input, "on")) => (input.to_owned(), Some(true)),
+                Some((input, "off")) => (input.to_owned(), Some(false)),
+                _ => (args, None),
+            };
+            Action::Do(Command::Mute { input, on })
+        }
+        "volume" => {
+            let args = required("an input and dB")?;
+            let (input, db) = args
+                .rsplit_once(' ')
+                .ok_or_else(|| "volume <input> <dB>".to_owned())?;
+            let db = db.parse().map_err(|_| format!("bad dB {db:?}"))?;
+            Action::Do(Command::Volume {
+                input: input.to_owned(),
+                db,
+            })
+        }
+        "hide" | "show" => Action::Do(Command::Source {
+            source: required("a source")?,
+            scene: None,
+            visible: Some(name == "show"),
+        }),
         "obs" => Action::Obs(obs_update(&args)?),
         "chat" => chat_line(&args)?,
         "question" => {
@@ -326,6 +353,7 @@ impl Action {
                 by: By::Palette,
             },
             Self::Scene(name) => Command::Scene { name },
+            Self::Do(cmd) => cmd,
             Self::Say(text) => Command::Say { text },
             Self::Overlay(name, on) => Command::Overlay { name, on },
             Self::Latency => Command::Latency,

@@ -7,6 +7,7 @@ pub mod error;
 pub mod event;
 pub mod home;
 pub mod logging;
+pub mod obs;
 pub mod recordings;
 pub mod session;
 pub mod session_state;

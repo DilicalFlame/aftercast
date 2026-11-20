@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use ac_core::event::OutputState;
+use ac_core::obs::{Audio, Item, Media};
 use futures_util::StreamExt;
 use obws::events::{Event as ObsEvent, OutputState as ObsOutput};
 use tokio::sync::mpsc;
@@ -20,6 +21,8 @@ pub struct Snapshot {
     pub scenes: Vec<String>,
     pub stream: Output,
     pub record: Output,
+    /// Audio inputs and the sources in every scene.
+    pub media: Media,
 }
 
 /// Status of the stream or record output.
@@ -42,6 +45,21 @@ pub enum Update {
         retry_in: Duration,
     },
     Scene(String),
+    /// Scenes, inputs or sources were added, removed or renamed: the fresh lists.
+    Media(Media),
+    Mute {
+        input: String,
+        muted: bool,
+    },
+    Volume {
+        input: String,
+        db: f64,
+    },
+    ItemEnabled {
+        scene: String,
+        id: i64,
+        enabled: bool,
+    },
     Stream(OutputState),
     Record {
         state: OutputState,
@@ -59,6 +77,19 @@ pub enum Request {
     RefreshBrowsers(Vec<String>),
     /// Starts OBS Virtual Camera unless it runs (a rehearsal page shows it as the video).
     StartVirtualCam,
+    Mute {
+        input: String,
+        muted: bool,
+    },
+    Volume {
+        input: String,
+        db: f64,
+    },
+    ItemEnabled {
+        scene: String,
+        id: i64,
+        enabled: bool,
+    },
 }
 
 /// Where OBS listens.
@@ -163,6 +194,10 @@ async fn serve(
         tokio::select! {
             event = events.next() => match event {
                 Some(ObsEvent::ExitStarted) => return Err("OBS is shutting down".into()),
+                // Something was added, removed or renamed: list everything again.
+                Some(event) if structural(&event) => {
+                    send(Update::Media(media(client).await.map_err(|e| error_chain(&e))?));
+                }
                 Some(event) => if let Some(update) = translate(event) { send(update) },
                 None => return Err("connection to OBS lost".into()),
             },
@@ -178,6 +213,27 @@ async fn serve(
                         && let Err(e) = cam.start().await
                     {
                         send(Update::Failed(format!("starting the virtual camera: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::Mute { input, muted }) => {
+                    if let Err(e) = client.inputs().set_muted(input.as_str().into(), muted).await {
+                        send(Update::Failed(format!("muting {input:?}: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::Volume { input, db }) => {
+                    let volume = obws::requests::inputs::Volume::Db(db as f32);
+                    if let Err(e) = client.inputs().set_volume(input.as_str().into(), volume).await {
+                        send(Update::Failed(format!("volume of {input:?}: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::ItemEnabled { scene, id, enabled }) => {
+                    let set = obws::requests::scene_items::SetEnabled {
+                        scene: scene.as_str().into(),
+                        item_id: id,
+                        enabled,
+                    };
+                    if let Err(e) = client.scene_items().set_enabled(set).await {
+                        send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
                     }
                 }
                 Some(Request::RefreshBrowsers(prefixes)) => {
@@ -214,14 +270,80 @@ async fn refresh_browsers(client: &obws::Client, prefixes: &[String]) -> obws::e
     Ok(())
 }
 
-async fn snapshot(client: &obws::Client) -> obws::error::Result<Snapshot> {
+/// Scenes in OBS's order, every audio input with its mute and volume, and the sources of
+/// every scene with their visibility.
+async fn media(client: &obws::Client) -> obws::error::Result<Media> {
     let mut scenes = client.scenes().list().await?.scenes;
-    scenes.sort_by_key(|s| s.index);
+    // OBS numbers scenes from the bottom of its list; show them top first, as OBS does.
+    scenes.sort_by_key(|s| std::cmp::Reverse(s.index));
+    let scenes: Vec<String> = scenes.into_iter().map(|s| s.id.name).collect();
+    let mut items = Vec::new();
+    for scene in &scenes {
+        let mut list = client.scene_items().list(scene.as_str().into()).await?;
+        list.sort_by_key(|i| std::cmp::Reverse(i.index));
+        for item in list {
+            let enabled = client
+                .scene_items()
+                .enabled(scene.as_str().into(), item.id)
+                .await?;
+            items.push(Item {
+                scene: scene.clone(),
+                source: item.source_name,
+                id: item.id,
+                enabled,
+            });
+        }
+    }
+    let mut audio = Vec::new();
+    for input in client.inputs().list(None).await? {
+        let name = input.id.name;
+        // Inputs without audio refuse GetInputMute.
+        let Ok(muted) = client.inputs().muted(name.as_str().into()).await else {
+            continue;
+        };
+        let volume_db = client
+            .inputs()
+            .volume(name.as_str().into())
+            .await
+            .map_or(0.0, |v| f64::from(v.db));
+        audio.push(Audio {
+            name,
+            kind: input.kind,
+            muted,
+            volume_db,
+        });
+    }
+    Ok(Media {
+        scenes,
+        audio,
+        items,
+    })
+}
+
+/// Events after which the lists of scenes, inputs and sources must be read again.
+fn structural(event: &ObsEvent) -> bool {
+    matches!(
+        event,
+        ObsEvent::InputCreated { .. }
+            | ObsEvent::InputRemoved { .. }
+            | ObsEvent::InputNameChanged { .. }
+            | ObsEvent::SceneItemCreated { .. }
+            | ObsEvent::SceneItemRemoved { .. }
+            | ObsEvent::SceneCreated { .. }
+            | ObsEvent::SceneRemoved { .. }
+            | ObsEvent::SceneNameChanged { .. }
+            | ObsEvent::SceneListChanged { .. }
+    )
+}
+
+async fn snapshot(client: &obws::Client) -> obws::error::Result<Snapshot> {
+    let media = media(client).await?;
     let stream = client.streaming().status().await?;
     let record = client.recording().status().await?;
     Ok(Snapshot {
         scene: Some(client.scenes().current_program_scene().await?.id.name),
-        scenes: scenes.into_iter().map(|s| s.id.name).collect(),
+        scenes: media.scenes.clone(),
+        media,
         stream: Output {
             active: stream.active,
             paused: false,
@@ -240,6 +362,20 @@ async fn snapshot(client: &obws::Client) -> obws::error::Result<Snapshot> {
 fn translate(event: ObsEvent) -> Option<Update> {
     Some(match event {
         ObsEvent::CurrentProgramSceneChanged { id } => Update::Scene(id.name),
+        ObsEvent::InputMuteStateChanged { id, muted } => Update::Mute {
+            input: id.name,
+            muted,
+        },
+        ObsEvent::InputVolumeChanged { id, db, .. } => Update::Volume { input: id.name, db },
+        ObsEvent::SceneItemEnableStateChanged {
+            scene,
+            item_id,
+            enabled,
+        } => Update::ItemEnabled {
+            scene: scene.name,
+            id: item_id as i64,
+            enabled,
+        },
         ObsEvent::StreamStateChanged { state, .. } => Update::Stream(output_state(state)?),
         ObsEvent::RecordStateChanged { state, path, .. } => Update::Record {
             state: output_state(state)?,

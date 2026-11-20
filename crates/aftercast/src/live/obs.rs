@@ -4,6 +4,8 @@
 use ac_core::event::{By, EventKind, OutputState, ServiceStatus, Source, StreamStatus};
 use ac_core::recordings::Reconciled;
 use ac_core::session::Status;
+use std::sync::Arc;
+
 use ac_obs::{Request, Snapshot, Update};
 use tokio::sync::mpsc;
 
@@ -37,6 +39,7 @@ impl Controller {
             Update::Connected(snapshot) => self.obs_connected(snapshot),
             Update::Down { error, retry_in } => {
                 self.obs_scenes = None;
+                self.obs_media = Arc::default();
                 self.pending_scenes.clear();
                 // One error per outage, not one per retry.
                 if self.state.services.get("obs") != Some(&ServiceStatus::Down) {
@@ -60,6 +63,45 @@ impl Controller {
                     self.scene_changed(to, true);
                 }
             }
+            Update::Media(media) => {
+                self.obs_scenes = Some(media.scenes.clone());
+                self.obs_media = Arc::new(media);
+            }
+            Update::Mute { input, muted } => {
+                let media = Arc::make_mut(&mut self.obs_media);
+                if let Some(a) = media.audio.iter_mut().find(|a| a.name == input)
+                    && a.muted != muted
+                {
+                    a.muted = muted;
+                    self.emit("obs", EventKind::ObsMute { input, muted });
+                }
+            }
+            Update::Volume { input, db } => {
+                let media = Arc::make_mut(&mut self.obs_media);
+                if let Some(a) = media.audio.iter_mut().find(|a| a.name == input) {
+                    a.volume_db = db;
+                }
+            }
+            Update::ItemEnabled { scene, id, enabled } => {
+                let media = Arc::make_mut(&mut self.obs_media);
+                if let Some(item) = media
+                    .items
+                    .iter_mut()
+                    .find(|i| i.scene == scene && i.id == id)
+                    && item.enabled != enabled
+                {
+                    item.enabled = enabled;
+                    let source = item.source.clone();
+                    self.emit(
+                        "obs",
+                        EventKind::ObsSource {
+                            scene,
+                            source,
+                            visible: enabled,
+                        },
+                    );
+                }
+            }
             Update::Stream(state) => self.stream_changed(state),
             Update::Record { state, path } => self.record_changed(state, path),
             Update::Failed(error) => {
@@ -73,6 +115,7 @@ impl Controller {
     fn obs_connected(&mut self, snap: Snapshot) {
         self.service_state("obs", ServiceStatus::Ok);
         self.obs_scenes = Some(snap.scenes);
+        self.obs_media = Arc::new(snap.media);
         let now = self.clock.now_ts();
         // Overlay pages OBS loaded while aftercast was down show an error and never retry.
         self.refresh_overlays();
@@ -324,6 +367,115 @@ impl Controller {
         if !sent {
             self.pending_scenes.pop_back();
         }
+    }
+
+    /// Sends a request to OBS; the mock echoes what OBS would report back.
+    fn obs_request(&mut self, request: Request) {
+        let sent = match &self.obs {
+            ObsLink::Real(tx) => tx.send(request).is_ok(),
+            ObsLink::Fake { msgs, .. } => {
+                let echo = match request {
+                    Request::Mute { input, muted } => Update::Mute { input, muted },
+                    Request::Volume { input, db } => Update::Volume { input, db },
+                    Request::ItemEnabled { scene, id, enabled } => {
+                        Update::ItemEnabled { scene, id, enabled }
+                    }
+                    _ => return,
+                };
+                msgs.send(Msg::Obs(echo)).is_ok()
+            }
+        };
+        if !sent {
+            self.notice = Some("OBS is not connected".into());
+        }
+    }
+
+    /// The audio input typed as `name`, or a notice listing the ones OBS has.
+    fn audio_named(&mut self, name: &str) -> Option<ac_core::obs::Audio> {
+        if self.obs_scenes.is_none() {
+            self.notice = Some("OBS is not connected".into());
+            return None;
+        }
+        let found = self.obs_media.audio(name).cloned();
+        if found.is_none() {
+            let have: Vec<&str> = self
+                .obs_media
+                .audio
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect();
+            self.notice = Some(format!(
+                "OBS has no audio named {name:?} (have: {})",
+                have.join(", ")
+            ));
+        }
+        found
+    }
+
+    /// `:mute`: on, off, or (`None`) the opposite of now.
+    pub(super) fn mute(&mut self, input: &str, on: Option<bool>) {
+        if let Some(a) = self.audio_named(input) {
+            let muted = on.unwrap_or(!a.muted);
+            self.notice = Some(format!(
+                "{} {}",
+                a.name,
+                if muted { "muted" } else { "unmuted" }
+            ));
+            self.obs_request(Request::Mute {
+                input: a.name,
+                muted,
+            });
+        }
+    }
+
+    /// `:volume`: dB, within what OBS's mixer allows.
+    pub(super) fn volume(&mut self, input: &str, db: f64) {
+        if let Some(a) = self.audio_named(input) {
+            let db = db.clamp(-100.0, 26.0);
+            self.notice = Some(format!("{} at {db:.1} dB", a.name));
+            self.obs_request(Request::Volume { input: a.name, db });
+        }
+    }
+
+    /// `:show` / `:hide`: a source in `scene` (default: the program scene).
+    pub(super) fn source_visible(
+        &mut self,
+        source: &str,
+        scene: Option<&str>,
+        visible: Option<bool>,
+    ) {
+        if self.obs_scenes.is_none() {
+            self.notice = Some("OBS is not connected".into());
+            return;
+        }
+        let scene = scene
+            .map(str::to_owned)
+            .or_else(|| self.state.scene.clone())
+            .unwrap_or_default();
+        let Some(item) = self.obs_media.item(&scene, source).cloned() else {
+            let have: Vec<&str> = self
+                .obs_media
+                .sources_in(&scene)
+                .map(|i| i.source.as_str())
+                .collect();
+            self.notice = Some(format!(
+                "scene {scene:?} has no source {source:?} (has: {})",
+                have.join(", ")
+            ));
+            return;
+        };
+        let enabled = visible.unwrap_or(!item.enabled);
+        self.notice = Some(format!(
+            "{} {} in {}",
+            item.source,
+            if enabled { "shown" } else { "hidden" },
+            item.scene
+        ));
+        self.obs_request(Request::ItemEnabled {
+            scene: item.scene,
+            id: item.id,
+            enabled,
+        });
     }
 
     fn save_recordings(&mut self) {

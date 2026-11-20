@@ -66,6 +66,45 @@ fn run(tmp: &Path, script: &str) -> (PathBuf, Vec<Value>) {
 }
 
 #[test]
+fn mute_volume_and_source_visibility_reach_obs_and_the_log() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, events) = run(
+        tmp.path(),
+        "+1s mute Mic/Aux\n+1s mute Mic/Aux\n+1s mute desktop audio on\n\
+         +1s volume Mic/Aux -6\n+1s hide Camera\n+1s show Camera\n+1s hide Nope\nquit\n",
+    );
+    let mutes: Vec<(String, bool)> = events
+        .iter()
+        .filter(|e| e["type"] == "obs.mute")
+        .map(|e| {
+            let d = &e["data"];
+            (
+                d["input"].as_str().unwrap().to_owned(),
+                d["muted"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    // Toggled twice, then a case-insensitive name with an explicit on.
+    assert_eq!(
+        mutes,
+        [
+            ("Mic/Aux".into(), true),
+            ("Mic/Aux".into(), false),
+            ("Desktop Audio".into(), true)
+        ]
+    );
+    let sources: Vec<bool> = events
+        .iter()
+        .filter(|e| e["type"] == "obs.source")
+        .map(|e| {
+            assert_eq!(e["data"]["source"], "Camera");
+            e["data"]["visible"].as_bool().unwrap()
+        })
+        .collect();
+    assert_eq!(sources, [false, true]);
+}
+
+#[test]
 fn obs_restart_after_stop_makes_the_session_live_again() {
     let tmp = tempfile::tempdir().unwrap();
     let (dir, events) = run(

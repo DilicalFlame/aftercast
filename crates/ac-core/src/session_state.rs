@@ -215,7 +215,9 @@ impl SessionState {
             | EventKind::CaptureState { .. }
             | EventKind::CaptureSecretDropped { .. }
             | EventKind::ShellCmd { .. }
-            | EventKind::ServiceError { .. } => {}
+            | EventKind::ServiceError { .. }
+            | EventKind::ObsMute { .. }
+            | EventKind::ObsSource { .. } => {}
         }
         if self.log.len() == LOG_LEN {
             self.log.pop_front();

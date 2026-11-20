@@ -5,9 +5,11 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use ac_core::command::Command;
 use ac_core::config::{
     Captions, Config, Encoder, KeysOverlay, OcrEngine, ReplyMode, Transcriber, Value,
 };
+use ac_core::obs::Media;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::style::{Color, Style};
@@ -36,7 +38,7 @@ pub enum When {
 }
 
 impl When {
-    fn text(self) -> &'static str {
+    pub fn text(self) -> &'static str {
         match self {
             When::Now => "applies now",
             When::Restart => "applies after restarting aftercast",
@@ -57,15 +59,27 @@ pub struct Setting {
     pub get: fn(&Config) -> Value,
 }
 
-pub const SECTIONS: [&str; 7] = [
+pub const SECTIONS: [&str; 8] = [
     "Display",
     "Stream",
     "YouTube",
     "Chat bot",
     "OBS",
+    "OBS live",
     "Capture",
     "After the stream",
 ];
+
+/// The section listing what OBS has right now: audio inputs and every scene's sources.
+pub const OBS_LIVE: usize = 5;
+
+/// One row of the page: a setting from `aftercast.toml`, or something live in OBS.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Row {
+    Setting(usize),
+    Audio(usize),
+    Item(usize),
+}
 
 fn text(s: &str) -> Value {
     Value::Text(s.to_owned())
@@ -316,7 +330,7 @@ pub fn all() -> Vec<Setting> {
         ),
         // Capture
         s(
-            5,
+            6,
             "capture.keys",
             "Record key presses",
             "Record typed keys and shortcuts for the keys overlay and post-processing. Privacy mode, denied apps and password boxes are always skipped.",
@@ -325,7 +339,7 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.capture.keys),
         ),
         s(
-            5,
+            6,
             "capture.shell",
             "Record shell commands",
             "Read commands from the shell hook (aftercast shell-hook) into the session.",
@@ -335,7 +349,7 @@ pub fn all() -> Vec<Setting> {
         ),
         // After the stream
         s(
-            6,
+            7,
             "post.use_vod",
             "Use the YouTube VOD",
             "Download the VOD to post-process instead of the local recording.",
@@ -344,7 +358,7 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.post.use_vod),
         ),
         s(
-            6,
+            7,
             "post.transcriber",
             "Transcriber",
             "Speech to text engine. faster-whisper is installed by aftercast setup.",
@@ -359,7 +373,7 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            6,
+            7,
             "post.whisper_model",
             "Whisper model",
             "Model name (large-v3-turbo did best on your speech) or, for whisper-cpp, a ggml .bin path.",
@@ -368,7 +382,7 @@ pub fn all() -> Vec<Setting> {
             |c| text(&c.post.whisper_model),
         ),
         s(
-            6,
+            7,
             "post.language",
             "Language",
             "auto, or a language code such as en or hi.",
@@ -377,7 +391,7 @@ pub fn all() -> Vec<Setting> {
             |c| text(&c.post.language),
         ),
         s(
-            6,
+            7,
             "post.ocr",
             "Read screen text (OCR)",
             "Read the text in sampled frames so clips and search know what was on screen.",
@@ -386,7 +400,7 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.post.ocr),
         ),
         s(
-            6,
+            7,
             "post.ocr_engine",
             "OCR engine",
             "glm-ocr: a small vision model on the GPU, far better on code and terminals. tesseract: CPU only.",
@@ -400,7 +414,7 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            6,
+            7,
             "post.correct",
             "Fix misheard terms",
             "A small local model fixes words that sound like this stream's terms (\"rest\" to \"Rust\"); every change is listed in derived/corrections.json.",
@@ -409,7 +423,7 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.post.correct),
         ),
         s(
-            6,
+            7,
             "render.encoder",
             "Video encoder",
             "h264_nvenc uses the NVIDIA GPU; libx264 works everywhere, slower.",
@@ -423,7 +437,7 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            6,
+            7,
             "render.captions",
             "Captions",
             "Burn subtitles into clips, write an .srt next to them, or none.",
@@ -438,7 +452,7 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            6,
+            7,
             "render.keys_overlay",
             "Keys overlay in clips",
             "Burn the key presses into clips, render them as a separate alpha layer, or none.",
@@ -455,7 +469,7 @@ pub fn all() -> Vec<Setting> {
     ]
 }
 
-fn show(v: &Value) -> String {
+pub fn show(v: &Value) -> String {
     match v {
         Value::Bool(true) => "on".into(),
         Value::Bool(false) => "off".into(),
@@ -473,6 +487,8 @@ pub enum Outcome {
     Close,
     /// The file changed: reload it.
     Reload,
+    /// Send this to the controller (an OBS change).
+    Command(Command),
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -490,25 +506,100 @@ pub struct Page {
 }
 
 impl Page {
-    /// The settings listed right now: the section's, or every match of the search.
-    fn visible(&self, all: &[Setting]) -> Vec<usize> {
+    /// The rows listed right now: the section's, or every match of the search (settings,
+    /// OBS audio inputs and sources alike).
+    fn visible(&self, all: &[Setting], obs: &Media) -> Vec<Row> {
         let q = self.search.to_lowercase();
-        (0..all.len())
+        let hit = |texts: &[&str]| texts.iter().any(|t| t.to_lowercase().contains(&q));
+        let mut rows: Vec<Row> = (0..all.len())
             .filter(|&i| {
                 let s = &all[i];
                 if q.is_empty() {
                     s.section == self.section
                 } else {
-                    [s.label, s.key, s.help, SECTIONS[s.section]]
-                        .iter()
-                        .any(|t| t.to_lowercase().contains(&q))
+                    hit(&[s.label, s.key, s.help, SECTIONS[s.section]])
                 }
             })
-            .collect()
+            .map(Row::Setting)
+            .collect();
+        let live = q.is_empty() && self.section == OBS_LIVE;
+        if live || !q.is_empty() {
+            for (i, a) in obs.audio.iter().enumerate() {
+                if live || hit(&[&a.name, "mute volume audio mic", SECTIONS[OBS_LIVE]]) {
+                    rows.push(Row::Audio(i));
+                }
+            }
+            // Sources grouped by scene, scenes in OBS's order.
+            for scene in &obs.scenes {
+                for (i, item) in obs.items.iter().enumerate() {
+                    if item.scene == *scene
+                        && (live || hit(&[&item.source, scene, "show hide source"]))
+                    {
+                        rows.push(Row::Item(i));
+                    }
+                }
+            }
+        }
+        rows
     }
 
-    fn selected<'a>(&self, all: &'a [Setting]) -> Option<&'a Setting> {
-        self.visible(all).get(self.row).map(|&i| &all[i])
+    fn selected(&self, all: &[Setting], obs: &Media) -> Option<Row> {
+        self.visible(all, obs).get(self.row).copied()
+    }
+
+    /// The selected row when it is a setting.
+    fn setting<'a>(&self, all: &'a [Setting], obs: &Media) -> Option<&'a Setting> {
+        match self.selected(all, obs)? {
+            Row::Setting(i) => Some(&all[i]),
+            _ => None,
+        }
+    }
+
+    /// A key on an OBS row: what to ask OBS.
+    fn obs_key(
+        &mut self,
+        code: ratatui::crossterm::event::KeyCode,
+        row: Row,
+        obs: &Media,
+    ) -> Option<Command> {
+        use ratatui::crossterm::event::KeyCode as K;
+        let cmd = match row {
+            Row::Audio(i) => {
+                let a = obs.audio.get(i)?;
+                let volume = |db: f64| Command::Volume {
+                    input: a.name.clone(),
+                    db,
+                };
+                match code {
+                    K::Enter | K::Char(' ') => Command::Mute {
+                        input: a.name.clone(),
+                        on: Some(!a.muted),
+                    },
+                    K::Char('l') | K::Right | K::Char('+') => volume((a.volume_db + 1.0).round()),
+                    K::Char('h') | K::Left | K::Char('-') => volume((a.volume_db - 1.0).round()),
+                    K::Char('r') => volume(0.0),
+                    _ => return None,
+                }
+            }
+            Row::Item(i) => {
+                let item = obs.items.get(i)?;
+                let visible = match code {
+                    K::Enter | K::Char(' ') => !item.enabled,
+                    K::Char('l') | K::Right => true,
+                    K::Char('h') | K::Left => false,
+                    _ => return None,
+                };
+                Command::Source {
+                    source: item.source.clone(),
+                    scene: Some(item.scene.clone()),
+                    visible: Some(visible),
+                }
+            }
+            Row::Setting(_) => return None,
+        };
+        self.changed = Some(("obs", Instant::now()));
+        self.status = Some(("Sent to OBS".into(), true));
+        Some(cmd)
     }
 
     pub fn key(
@@ -516,6 +607,7 @@ impl Page {
         code: ratatui::crossterm::event::KeyCode,
         config: &Config,
         path: &Path,
+        obs: &Media,
     ) -> Outcome {
         use ratatui::crossterm::event::KeyCode as K;
         let all = all();
@@ -528,7 +620,7 @@ impl Page {
                 K::Char(c) => buffer.push(c),
                 K::Enter => {
                     let buffer = self.edit.take().unwrap_or_default();
-                    let Some(s) = self.selected(&all) else {
+                    let Some(s) = self.setting(&all, obs) else {
                         return Outcome::Stay;
                     };
                     let value = match s.kind {
@@ -566,7 +658,12 @@ impl Page {
             self.row = 0;
             return Outcome::Stay;
         }
-        let len = self.visible(&all).len();
+        let len = self.visible(&all, obs).len();
+        if let Some(row @ (Row::Audio(_) | Row::Item(_))) = self.selected(&all, obs)
+            && let Some(cmd) = self.obs_key(code, row, obs)
+        {
+            return Outcome::Command(cmd);
+        }
         match code {
             // Esc clears a search first, then closes.
             K::Esc if !self.search.is_empty() => {
@@ -591,12 +688,12 @@ impl Page {
                 }
             }
             K::Char('r') => {
-                if let Some(s) = self.selected(&all) {
+                if let Some(s) = self.setting(&all, obs) {
                     return self.save(s, None, path);
                 }
             }
             K::Enter | K::Char(' ') => {
-                let Some(s) = self.selected(&all) else {
+                let Some(s) = self.setting(&all, obs) else {
                     return Outcome::Stay;
                 };
                 let current = (s.get)(config);
@@ -613,12 +710,12 @@ impl Page {
                 };
             }
             K::Char('l') | K::Right | K::Char('+') => {
-                if let Some(s) = self.selected(&all) {
+                if let Some(s) = self.setting(&all, obs) {
                     return self.step(s, 1, config, path);
                 }
             }
             K::Char('h') | K::Left | K::Char('-') => {
-                if let Some(s) = self.selected(&all) {
+                if let Some(s) = self.setting(&all, obs) {
                     return self.step(s, -1, config, path);
                 }
             }
@@ -703,7 +800,15 @@ impl Page {
         spans
     }
 
-    pub fn draw(&self, frame: &mut Frame, config: &Config, path: &Path, motion: bool) {
+    pub fn draw(
+        &self,
+        frame: &mut Frame,
+        config: &Config,
+        path: &Path,
+        obs: &Media,
+        scene: Option<&str>,
+        motion: bool,
+    ) {
         let all = all();
         let defaults = Config::default();
         // A whole page between the status bar and the key hints.
@@ -742,7 +847,7 @@ impl Page {
                 Span::styled(" / ", Style::new().fg(Color::Black).bg(INFO).bold()),
                 Span::styled(format!(" {}{caret}", self.search), Style::new().fg(TEXT)),
                 Span::styled(
-                    format!("   {} found", self.visible(&all).len()),
+                    format!("   {} found", self.visible(&all, obs).len()),
                     Style::new().fg(FAINT),
                 ),
             ])
@@ -774,6 +879,14 @@ impl Page {
                 Span::styled(format!(" {} ", i + 1), chip),
                 Span::styled(format!(" {name}"), label),
             ];
+            // OBS live: offline, or a muted mic.
+            if i == OBS_LIVE {
+                if obs.scenes.is_empty() {
+                    spans.push(Span::styled("  offline", Style::new().fg(FAINT)));
+                } else if obs.audio.iter().any(|a| a.is_mic() && a.muted) {
+                    spans.push(Span::styled("  mic off", Style::new().fg(ACCENT)));
+                }
+            }
             if changed > 0 {
                 spans.push(Span::styled(
                     format!("  •{changed}"),
@@ -788,16 +901,26 @@ impl Page {
         // Settings list and the selected one's description.
         let [list, about] =
             Layout::vertical([Constraint::Min(3), Constraint::Length(6)]).areas(main);
-        let visible = self.visible(&all);
+        let visible = self.visible(&all, obs);
         let width = list.width as usize;
         let mut rows = Vec::new();
         if visible.is_empty() {
-            rows.push(Line::styled(
-                format!("  Nothing matches {:?}.", self.search),
-                Style::new().fg(FAINT).italic(),
-            ));
+            let empty = if self.search.is_empty() && self.section == OBS_LIVE {
+                "  OBS is not connected, or has no audio inputs or sources.".to_owned()
+            } else {
+                format!("  Nothing matches {:?}.", self.search)
+            };
+            rows.push(Line::styled(empty, Style::new().fg(FAINT).italic()));
         }
-        for (r, &i) in visible.iter().enumerate() {
+        for (r, &row) in visible.iter().enumerate() {
+            let i = match row {
+                Row::Setting(i) => i,
+                other => {
+                    let prefix = !self.search.is_empty();
+                    rows.push(obs_row(other, obs, scene, r == self.row, prefix, width));
+                    continue;
+                }
+            };
             let s = &all[i];
             let value = (s.get)(config);
             let modified = value != (s.get)(&defaults);
@@ -851,7 +974,19 @@ impl Page {
         let rows: Vec<Line> = rows.into_iter().skip(skip).collect();
         frame.render_widget(Paragraph::new(rows), list);
 
-        if let Some(s) = self.selected(&all) {
+        let about_block = Block::new()
+            .borders(ratatui::widgets::Borders::TOP)
+            .border_style(Style::new().fg(FAINT))
+            .padding(Padding::horizontal(1));
+        if let Some(text) = self.selected(&all, obs).and_then(|row| obs_about(row, obs)) {
+            frame.render_widget(
+                Paragraph::new(text)
+                    .wrap(Wrap { trim: true })
+                    .block(about_block.clone()),
+                about,
+            );
+        }
+        if let Some(s) = self.setting(&all, obs) {
             let default = show(&(s.get)(&defaults));
             let when_color = if s.when == When::Now { OK } else { WARN };
             let text = vec![
@@ -863,10 +998,6 @@ impl Page {
                     Span::styled(s.when.text(), Style::new().fg(when_color)),
                 ]),
             ];
-            let about_block = Block::new()
-                .borders(ratatui::widgets::Borders::TOP)
-                .border_style(Style::new().fg(FAINT))
-                .padding(Padding::horizontal(1));
             frame.render_widget(
                 Paragraph::new(text)
                     .wrap(Wrap { trim: true })
@@ -896,6 +1027,134 @@ impl Page {
             );
         }
     }
+}
+
+/// An OBS row: an audio input with its volume and mute switch, or a source with its
+/// visibility switch.
+fn obs_row(
+    row: Row,
+    obs: &Media,
+    program: Option<&str>,
+    selected: bool,
+    prefix: bool,
+    width: usize,
+) -> Line<'static> {
+    let arrows = Style::new().fg(if selected { MUTED } else { FAINT });
+    let name_style = if selected {
+        Style::new().fg(TEXT).bold()
+    } else {
+        Style::new().fg(TEXT)
+    };
+    let mut left = vec![
+        Span::styled(if selected { "▍" } else { " " }, Style::new().fg(ACCENT)),
+        Span::raw("  "),
+    ];
+    if prefix {
+        left.push(Span::styled(
+            format!("{} › ", SECTIONS[OBS_LIVE]),
+            Style::new().fg(TEXT),
+        ));
+    }
+    let right = match row {
+        Row::Audio(i) => {
+            let a = &obs.audio[i];
+            left.push(Span::styled(a.name.clone(), name_style));
+            let kind = if a.is_mic() {
+                "mic"
+            } else if a.kind.contains("output_capture") {
+                "desktop"
+            } else {
+                "audio"
+            };
+            left.push(Span::styled(format!("  {kind}"), Style::new().fg(FAINT)));
+            let (track, label, color) = if a.muted {
+                ("●━━", " muted ", ACCENT)
+            } else {
+                ("━━●", " live  ", OK)
+            };
+            vec![
+                Span::styled("‹ ", arrows),
+                Span::styled(format!("{:.1} dB", a.volume_db), Style::new().fg(TEXT)),
+                Span::styled(" ›  ", arrows),
+                Span::styled(track, Style::new().fg(color)),
+                Span::styled(label, Style::new().fg(if a.muted { ACCENT } else { TEXT })),
+            ]
+        }
+        Row::Item(i) => {
+            let item = &obs.items[i];
+            let on_air = program == Some(item.scene.as_str());
+            left.push(Span::styled(
+                if on_air { "● " } else { "  " },
+                Style::new().fg(ACCENT),
+            ));
+            left.push(Span::styled(
+                format!("{} › ", item.scene),
+                Style::new().fg(MUTED),
+            ));
+            left.push(Span::styled(item.source.clone(), name_style));
+            let (track, label, color) = if item.enabled {
+                ("━━●", " shown ", OK)
+            } else {
+                ("●━━", " hidden", FAINT)
+            };
+            vec![
+                Span::styled(track, Style::new().fg(color)),
+                Span::styled(
+                    label,
+                    Style::new().fg(if item.enabled { TEXT } else { MUTED }),
+                ),
+            ]
+        }
+        Row::Setting(_) => Vec::new(),
+    };
+    let used: usize = left.iter().chain(&right).map(Span::width).sum();
+    let mut spans = left;
+    spans.push(Span::raw(" ".repeat(width.saturating_sub(used + 1))));
+    spans.extend(right);
+    let line = Line::from(spans);
+    if selected {
+        line.style(Style::new().bg(SELECTED))
+    } else {
+        line
+    }
+}
+
+/// The description under the list for an OBS row.
+fn obs_about(row: Row, obs: &Media) -> Option<Vec<Line<'static>>> {
+    let (title, help, meta) = match row {
+        Row::Audio(i) => {
+            let a = obs.audio.get(i)?;
+            (
+                a.name.clone(),
+                format!(
+                    "Space mutes or unmutes; h/l change the volume by 1 dB; r sets 0 dB. Also :mute {} and :volume {} <dB>.",
+                    a.name, a.name
+                ),
+                format!("OBS audio input · {}", a.kind),
+            )
+        }
+        Row::Item(i) => {
+            let item = obs.items.get(i)?;
+            (
+                format!("{} in {}", item.source, item.scene),
+                format!(
+                    "Space shows or hides it; l shows, h hides. In the program scene also :show {} and :hide {}.",
+                    item.source, item.source
+                ),
+                format!("OBS scene item {}", item.id),
+            )
+        }
+        Row::Setting(_) => return None,
+    };
+    Some(vec![
+        Line::styled(title, Style::new().fg(TEXT).bold()),
+        Line::styled(help, Style::new().fg(MUTED)),
+        Line::from(vec![
+            Span::styled(meta, Style::new().fg(FAINT)),
+            Span::styled(" · ", Style::new().fg(FAINT)),
+            Span::styled("applies now, in OBS", Style::new().fg(OK)),
+        ]),
+    ])
 }
 
 /// The value column: a switch, `‹ choice ›`, a number or a text value. `just` is the
@@ -969,49 +1228,67 @@ mod tests {
         let mut page = Page::default();
 
         // Display › Wrap long lines: Space flips it and asks for a reload.
-        assert_eq!(page.key(K::Char(' '), &load(), &path), Outcome::Reload);
+        assert_eq!(
+            page.key(K::Char(' '), &load(), &path, &Media::default()),
+            Outcome::Reload
+        );
         assert!(load().tui.wrap_lines);
         // l on an "on" switch does nothing; h turns it off.
-        assert_eq!(page.key(K::Char('l'), &load(), &path), Outcome::Stay);
-        page.key(K::Char('h'), &load(), &path);
+        assert_eq!(
+            page.key(K::Char('l'), &load(), &path, &Media::default()),
+            Outcome::Stay
+        );
+        page.key(K::Char('h'), &load(), &path, &Media::default());
         assert!(!load().tui.wrap_lines);
 
         // Section 2, last row: typed text.
-        page.key(K::Char('2'), &load(), &path);
-        page.key(K::Char('G'), &load(), &path);
-        page.key(K::Enter, &load(), &path);
+        page.key(K::Char('2'), &load(), &path, &Media::default());
+        page.key(K::Char('G'), &load(), &path, &Media::default());
+        page.key(K::Enter, &load(), &path, &Media::default());
         for _ in 0..5 {
-            page.key(K::Backspace, &load(), &path);
+            page.key(K::Backspace, &load(), &path, &Media::default());
         }
         for c in "Intro".chars() {
-            page.key(K::Char(c), &load(), &path);
+            page.key(K::Char(c), &load(), &path, &Media::default());
         }
-        assert_eq!(page.key(K::Enter, &load(), &path), Outcome::Reload);
+        assert_eq!(
+            page.key(K::Enter, &load(), &path, &Media::default()),
+            Outcome::Reload
+        );
         assert_eq!(load().stream.first_chapter_title, "Intro");
 
         // A number refuses garbage and keeps the file.
-        page.key(K::Char('k'), &load(), &path);
-        page.key(K::Enter, &load(), &path);
-        page.key(K::Char('x'), &load(), &path);
-        assert_eq!(page.key(K::Enter, &load(), &path), Outcome::Stay);
+        page.key(K::Char('k'), &load(), &path, &Media::default());
+        page.key(K::Enter, &load(), &path, &Media::default());
+        page.key(K::Char('x'), &load(), &path, &Media::default());
+        assert_eq!(
+            page.key(K::Enter, &load(), &path, &Media::default()),
+            Outcome::Stay
+        );
         assert!(page.status.as_ref().is_some_and(|(_, ok)| !ok));
         // ...and steps with l.
-        page.key(K::Char('l'), &load(), &path);
+        page.key(K::Char('l'), &load(), &path, &Media::default());
         assert_eq!(load().stream.default_latency_s, 5.5);
         // r resets it.
-        page.key(K::Char('r'), &load(), &path);
+        page.key(K::Char('r'), &load(), &path, &Media::default());
         assert_eq!(load().stream.default_latency_s, 5.0);
 
         // Search finds settings in any section; choices cycle.
-        page.key(K::Char('/'), &load(), &path);
+        page.key(K::Char('/'), &load(), &path, &Media::default());
         for c in "replies go".chars() {
-            page.key(K::Char(c), &load(), &path);
+            page.key(K::Char(c), &load(), &path, &Media::default());
         }
-        page.key(K::Enter, &load(), &path);
-        page.key(K::Char(' '), &load(), &path);
+        page.key(K::Enter, &load(), &path, &Media::default());
+        page.key(K::Char(' '), &load(), &path, &Media::default());
         assert_eq!(load().bot.default_reply, ReplyMode::Chat);
         // Esc clears the search, a second Esc closes the page.
-        assert_eq!(page.key(K::Esc, &load(), &path), Outcome::Stay);
-        assert_eq!(page.key(K::Esc, &load(), &path), Outcome::Close);
+        assert_eq!(
+            page.key(K::Esc, &load(), &path, &Media::default()),
+            Outcome::Stay
+        );
+        assert_eq!(
+            page.key(K::Esc, &load(), &path, &Media::default()),
+            Outcome::Close
+        );
     }
 }

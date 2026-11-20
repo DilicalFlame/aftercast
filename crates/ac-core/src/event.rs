@@ -153,6 +153,16 @@ pub enum EventKind {
         #[serde(default)]
         path: Option<String>,
     },
+    /// An OBS audio input was muted or unmuted (from aftercast or in OBS).
+    #[serde(rename = "obs.mute")]
+    ObsMute { input: String, muted: bool },
+    /// A source was shown or hidden in a scene (from aftercast or in OBS).
+    #[serde(rename = "obs.source")]
+    ObsSource {
+        scene: String,
+        source: String,
+        visible: bool,
+    },
     #[serde(rename = "checkpoint")]
     Checkpoint {
         cid: String,

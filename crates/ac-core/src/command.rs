@@ -52,6 +52,23 @@ pub enum Command {
     Scene {
         name: String,
     },
+    /// Mute, unmute (`Some`) or toggle (`None`) an OBS audio input (`:mute`).
+    Mute {
+        input: String,
+        on: Option<bool>,
+    },
+    /// Set an OBS audio input's volume in dB (`:volume`).
+    Volume {
+        input: String,
+        db: f64,
+    },
+    /// Show, hide (`Some`) or toggle (`None`) a source in a scene; no scene means the
+    /// program scene (`:show`, `:hide`).
+    Source {
+        source: String,
+        scene: Option<String>,
+        visible: Option<bool>,
+    },
     /// Manual quest label (`:quest`).
     Quest {
         title: String,

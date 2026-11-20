@@ -3,6 +3,7 @@
 //! The UI only reads [`View`] snapshots and sends [`Command`]s; the controller owns state.
 //! Times are captured when a key is pressed, before any prompt opens.
 
+mod palette;
 mod settings;
 mod theme;
 
@@ -56,6 +57,8 @@ pub struct View {
     pub config: Arc<ac_core::config::Config>,
     /// `aftercast.toml`, written by the settings page, then reloaded.
     pub config_path: std::path::PathBuf,
+    /// OBS scenes, audio inputs and scene sources (empty while OBS is down).
+    pub obs: Arc<ac_core::obs::Media>,
     pub meta: SessionMeta,
     pub state: SessionState,
     pub chapters: Vec<Chapter>,
@@ -324,6 +327,9 @@ struct App {
     users: UserColors,
     /// `tui.animations` as of the last frame.
     motion: bool,
+    /// The highlighted palette suggestion, and whether ↑/↓ chose it.
+    pick: usize,
+    picked: bool,
     filter: Filter,
     /// Pane proportions as drawn: they glide towards `split_target`.
     split: Split,
@@ -359,6 +365,8 @@ impl App {
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
             motion: true,
+            pick: 0,
+            picked: false,
             filter: Filter::All,
             split: [0.45, 0.6, 0.5],
             split_target: [0.45, 0.6, 0.5],
@@ -572,11 +580,47 @@ impl App {
                 pressed_at,
             } => match key.code {
                 KeyCode::Esc => {}
-                KeyCode::Enter => self.submit(prompt, text.trim().to_owned(), pressed_at, view),
-                KeyCode::Tab if prompt == Prompt::Palette => {
-                    if let Some(rest) = completion(&text) {
-                        text.push_str(rest);
-                        text.push(' ');
+                // In the palette, ↑/↓ choose a suggestion, Tab takes it, and Enter takes it
+                // too when it was chosen or the line is not a command yet.
+                KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::Enter
+                    if prompt == Prompt::Palette =>
+                {
+                    let suggestions = self.suggestions(&text, view);
+                    let n = suggestions.len();
+                    let take = match key.code {
+                        KeyCode::Up | KeyCode::Down => {
+                            if n > 0 {
+                                let step = if key.code == KeyCode::Up { n - 1 } else { 1 };
+                                self.pick = (self.pick + step) % n;
+                                self.picked = true;
+                            }
+                            false
+                        }
+                        KeyCode::Tab => true,
+                        // Enter takes the suggestion when one was chosen, when the line is
+                        // not a command yet, or when its last word is half typed (no
+                        // suggestion matches it exactly and no space ends it); otherwise
+                        // it runs the line as typed.
+                        _ => {
+                            let exact = suggestions
+                                .iter()
+                                .any(|s| s.line.trim().eq_ignore_ascii_case(text.trim()));
+                            let half_typed = text.contains(' ') && !text.ends_with(' ') && !exact;
+                            n > 0
+                                && !exact
+                                && (self.picked
+                                    || half_typed
+                                    || palette(text.trim(), self.clock.now_ts()).is_err())
+                        }
+                    };
+                    if key.code == KeyCode::Enter && !take {
+                        self.submit(prompt, text.trim().to_owned(), pressed_at, view);
+                        return;
+                    }
+                    if take && let Some(s) = suggestions.get(self.pick.min(n.saturating_sub(1))) {
+                        text = s.line.clone();
+                        self.pick = 0;
+                        self.picked = false;
                     }
                     self.mode = Mode::Input {
                         prompt,
@@ -584,7 +628,10 @@ impl App {
                         pressed_at,
                     };
                 }
+                KeyCode::Enter => self.submit(prompt, text.trim().to_owned(), pressed_at, view),
                 KeyCode::Backspace => {
+                    self.pick = 0;
+                    self.picked = false;
                     text.pop();
                     self.mode = Mode::Input {
                         prompt,
@@ -593,6 +640,8 @@ impl App {
                     };
                 }
                 KeyCode::Char(c) if !ctrl_c => {
+                    self.pick = 0;
+                    self.picked = false;
                     text.push(c);
                     self.mode = Mode::Input {
                         prompt,
@@ -623,9 +672,10 @@ impl App {
             },
             Mode::Help | Mode::Preflight => {}
             Mode::Settings(mut page) => {
-                match page.key(key.code, &view.config, &view.config_path) {
+                match page.key(key.code, &view.config, &view.config_path, &view.obs) {
                     settings::Outcome::Close => return,
                     settings::Outcome::Reload => self.send(Command::Reload),
+                    settings::Outcome::Command(cmd) => self.send(cmd),
                     settings::Outcome::Stay => {}
                 }
                 self.mode = Mode::Settings(page);
@@ -674,7 +724,11 @@ impl App {
             KeyCode::Char('c') => self.mode = input(Prompt::Checkpoint { by: By::Tui }),
             KeyCode::Char('m') => self.mode = input(Prompt::Mark),
             KeyCode::Char('n') => self.mode = input(Prompt::Note),
-            KeyCode::Char(':') => self.mode = input(Prompt::Palette),
+            KeyCode::Char(':') => {
+                self.pick = 0;
+                self.picked = false;
+                self.mode = input(Prompt::Palette)
+            }
             KeyCode::Char('s') => self.mode = Mode::Preview { scroll: 0 },
             KeyCode::Char('r') => self.edit_readme = Some(view.readme.clone()),
             KeyCode::Char(',') => self.mode = Mode::Settings(settings::Page::default()),
@@ -790,6 +844,59 @@ impl App {
         }
     }
 
+    /// Palette suggestions for `text`, from OBS's lists and the settings.
+    fn suggestions(&self, text: &str, view: &View) -> Vec<palette::Suggestion> {
+        let world = palette::World {
+            obs: &view.obs,
+            scene: view.state.scene.as_deref(),
+            config: &view.config,
+        };
+        palette::suggest(text, &world).1
+    }
+
+    /// `:set <key> [value]` and `:reset <key>`: written to aftercast.toml, then reloaded.
+    fn set_setting(&mut self, key: &str, value: Option<&str>, reset: bool, view: &View) {
+        let all = settings::all();
+        let Some(s) = all.iter().find(|s| s.key.eq_ignore_ascii_case(key)) else {
+            self.message = Some(format!("no setting {key:?} (Tab lists them)"));
+            return;
+        };
+        let current = (s.get)(&view.config);
+        let value = match (reset, value, &current) {
+            (true, ..) => None,
+            (false, Some(text), _) => match palette::parse_value(s, text) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    self.message = Some(e);
+                    return;
+                }
+            },
+            (false, None, ac_core::config::Value::Bool(b)) => {
+                Some(ac_core::config::Value::Bool(!b))
+            }
+            (false, None, v) => {
+                self.message = Some(format!("{} is {} ({})", s.key, settings::show(v), s.label));
+                return;
+            }
+        };
+        let shown = value.as_ref().map_or_else(
+            || {
+                format!(
+                    "default ({})",
+                    settings::show(&(s.get)(&Default::default()))
+                )
+            },
+            settings::show,
+        );
+        match ac_core::config::set_value(&view.config_path, s.key, value) {
+            Ok(()) => {
+                self.message = Some(format!("{} = {shown} · {}", s.key, s.when.text()));
+                self.send(Command::Reload);
+            }
+            Err(e) => self.message = Some(e.to_string()),
+        }
+    }
+
     /// The selected Inbox item.
     fn selected_item<'v>(&self, view: &'v View) -> Option<&'v ac_core::session_state::Question> {
         self.inbox(&view.state)
@@ -850,6 +957,10 @@ impl App {
                 Ok(Palette::Help) => self.mode = Mode::Help,
                 Ok(Palette::Preflight) => self.mode = Mode::Preflight,
                 Ok(Palette::Settings) => self.mode = Mode::Settings(settings::Page::default()),
+                Ok(Palette::Set { key, value }) => {
+                    self.set_setting(&key, value.as_deref(), false, view)
+                }
+                Ok(Palette::Reset { key }) => self.set_setting(&key, None, true, view),
                 Err(message) => self.message = Some(message),
             },
         }
@@ -978,6 +1089,14 @@ impl App {
                 ));
                 spans.push(Span::raw(" "));
             }
+        }
+        // A muted mic is easy to miss and ruins a stream: say so loudly.
+        if view.obs.audio.iter().any(|a| a.is_mic() && a.muted) {
+            spans.push(Span::styled(
+                " MIC MUTED ",
+                Style::new().fg(Color::Black).bg(ACCENT).bold(),
+            ));
+            spans.push(Span::raw(" "));
         }
 
         spans.push(label_span(" OBS"));
@@ -1433,7 +1552,12 @@ impl App {
             Mode::Input {
                 prompt: Prompt::Palette,
                 ..
-            } => &[("Enter", "run"), ("Tab", "complete"), ("Esc", "cancel")],
+            } => &[
+                ("↑↓", "choose"),
+                ("Tab", "complete"),
+                ("Enter", "run"),
+                ("Esc", "cancel"),
+            ],
             Mode::Input { .. } => &[("Enter", "save"), ("Esc", "cancel")],
             Mode::Preview { .. } => &[("Enter", "push"), ("j/k", "scroll"), ("Esc", "close")],
             // Global keys only, so this line never shifts; each pane shows its own keys
@@ -1467,6 +1591,99 @@ impl App {
         spans
     }
 
+    /// The command palette: the line being typed, what the command does, and a list of
+    /// suggestions (command names, then OBS scenes, inputs, sources, settings and values).
+    fn draw_palette(&self, frame: &mut Frame, text: &str, view: &View) {
+        let world = palette::World {
+            obs: &view.obs,
+            scene: view.state.scene.as_deref(),
+            config: &view.config,
+        };
+        let (spec, suggestions) = palette::suggest(text, &world);
+        const ROWS: usize = 9;
+        let area = frame.area();
+        let width = area.width.saturating_sub(8).min(96);
+        let rows = suggestions.len().min(ROWS);
+        let height = (4 + rows + usize::from(rows > 0)) as u16;
+        let popup = Rect {
+            x: area.x + (area.width.saturating_sub(width)) / 2,
+            y: area.y + (area.height / 5).min(6),
+            width,
+            height: height.min(area.height),
+        };
+        frame.render_widget(Clear, popup);
+        let block = modal_block(" Command ".into());
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        let caret = if !self.motion || self.tick().as_millis() % 1000 < 600 {
+            "▏"
+        } else {
+            " "
+        };
+        let pick = self.pick.min(suggestions.len().saturating_sub(1));
+        // Ghost text: the rest of the highlighted suggestion, when it extends the line.
+        let ghost = suggestions
+            .get(pick)
+            .and_then(|s| s.line.strip_prefix(text))
+            .unwrap_or("")
+            .to_owned();
+        let mut lines = vec![Line::from(vec![
+            Span::styled(":", Style::new().fg(ACCENT).bold()),
+            Span::styled(text.to_owned(), Style::new().fg(TEXT)),
+            Span::styled(caret, Style::new().fg(ACCENT)),
+            Span::styled(ghost, Style::new().fg(FAINT)),
+        ])];
+        lines.push(match spec {
+            Some(s) => Line::from(vec![
+                Span::styled(
+                    format!("{} {}", s.name, s.usage).trim_end().to_owned(),
+                    Style::new().fg(INFO),
+                ),
+                Span::styled(format!("  {}", s.about), Style::new().fg(MUTED)),
+            ]),
+            None if text.contains(' ') => {
+                Line::styled("unknown command (Esc, then :help)", Style::new().fg(ACCENT))
+            }
+            None => Line::styled(
+                "type a command; ↑↓ choose, Tab completes, Enter runs",
+                Style::new().fg(FAINT),
+            ),
+        });
+        if rows > 0 {
+            lines.push(Line::styled(
+                "─".repeat(inner.width as usize),
+                Style::new().fg(RAISED),
+            ));
+        }
+        // Keep the highlighted row in view.
+        let skip = (pick + 1).saturating_sub(ROWS);
+        let label_width = suggestions
+            .iter()
+            .map(|s| s.label.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(inner.width as usize / 2);
+        for (i, s) in suggestions.iter().enumerate().skip(skip).take(ROWS) {
+            let selected = i == pick;
+            let style = if selected {
+                Style::new().fg(TEXT).bg(SELECTED).bold()
+            } else {
+                Style::new().fg(TEXT)
+            };
+            let mut row = Line::from(vec![
+                Span::styled(if selected { "▍" } else { " " }, Style::new().fg(ACCENT)),
+                Span::styled(format!("{:<label_width$}  ", s.label), style),
+                Span::styled(s.detail.clone(), Style::new().fg(MUTED)),
+            ]);
+            if selected {
+                row = row.style(Style::new().bg(SELECTED));
+            }
+            lines.push(row);
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
     fn draw_modal(&self, frame: &mut Frame, view: &View) {
         let t = self.tick();
         let chips = |pairs: &[(&str, &str)]| -> Line<'static> {
@@ -1479,8 +1696,23 @@ impl App {
         };
         let (title, body, width, height): (String, Vec<Line>, u16, u16) = match &self.mode {
             Mode::Normal => return,
+            Mode::Input {
+                prompt: Prompt::Palette,
+                text,
+                ..
+            } => {
+                self.draw_palette(frame, text, view);
+                return;
+            }
             Mode::Settings(page) => {
-                page.draw(frame, &view.config, &view.config_path, self.motion);
+                page.draw(
+                    frame,
+                    &view.config,
+                    &view.config_path,
+                    &view.obs,
+                    view.state.scene.as_deref(),
+                    self.motion,
+                );
                 return;
             }
             Mode::Input {
@@ -1518,9 +1750,6 @@ impl App {
                 }
                 line.push(Span::styled(text.clone(), Style::new().fg(TEXT)));
                 line.push(Span::styled(caret, Style::new().fg(ACCENT)));
-                if palette && let Some(rest) = completion(text) {
-                    line.push(Span::styled(rest, Style::new().fg(FAINT)));
-                }
                 (format!(" {label}{hint} "), vec![Line::from(line)], 70, 3)
             }
             Mode::Preview { scroll } => {
@@ -1655,6 +1884,8 @@ impl App {
 #[derive(Debug, PartialEq)]
 enum Palette {
     Settings,
+    Set { key: String, value: Option<String> },
+    Reset { key: String },
     Command(Command),
     Help,
     Preflight,
@@ -1695,7 +1926,43 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
         "quit" | "q" => Command::Quit,
         "help" | "?" => return Ok(Palette::Help),
         "preflight" => return Ok(Palette::Preflight),
-        "settings" | "set" => return Ok(Palette::Settings),
+        "settings" => return Ok(Palette::Settings),
+        "set" if args.is_empty() => return Ok(Palette::Settings),
+        "set" => {
+            let (key, value) = args.split_once(' ').unwrap_or((args.as_str(), ""));
+            let value = Some(value.trim().to_owned()).filter(|v| !v.is_empty());
+            return Ok(Palette::Set {
+                key: key.to_owned(),
+                value,
+            });
+        }
+        "reset" => {
+            return Ok(Palette::Reset {
+                key: need("a setting")?,
+            });
+        }
+        "mute" => {
+            let (input, on) = palette::trailing_switch(&need("an audio input")?);
+            Command::Mute { input, on }
+        }
+        "unmute" => Command::Mute {
+            input: need("an audio input")?,
+            on: Some(false),
+        },
+        "volume" | "vol" => {
+            let usage = || ":volume <input> <dB>, e.g. :volume Mic/Aux -6".to_owned();
+            let (input, db) = need("an audio input and dB")?
+                .rsplit_once(' ')
+                .map(|(i, d)| (i.trim().to_owned(), d.to_lowercase()))
+                .ok_or_else(usage)?;
+            let db = db.trim_end_matches("db").parse().map_err(|_| usage())?;
+            Command::Volume { input, db }
+        }
+        "hide" | "show" => Command::Source {
+            source: need("a source")?,
+            scene: None,
+            visible: Some(name == "show"),
+        },
         "break" | "b" | "brb" => Command::Brb {
             on: Some(true),
             by: By::Palette,
@@ -2334,6 +2601,18 @@ fn help_lines() -> Vec<Line<'static>> {
                 ),
                 (":say <text>", "chat as the channel (20 quota units)"),
                 (
+                    ":mute <input>",
+                    "mute/unmute OBS audio   :volume <input> <dB>   :unmute <input>",
+                ),
+                (
+                    ":hide <source>",
+                    "hide a source in the program scene   :show <source>",
+                ),
+                (
+                    ":set <key> [v]",
+                    "change a setting (no value flips a switch)   :reset <key>",
+                ),
+                (
                     ":overlay",
                     "<name> on|off: now, question, toast, brb, latency, chapters",
                 ),
@@ -2342,7 +2621,10 @@ fn help_lines() -> Vec<Line<'static>> {
                     "start/stop measuring; :lat <n> enters the number seen",
                 ),
                 (":preflight", "the checklist again   :reload   :quit"),
-                (":settings", "the settings page (also ,)"),
+                (
+                    ":settings",
+                    "the settings page (also ,): config and OBS live",
+                ),
             ],
         ),
         (
@@ -2386,44 +2668,6 @@ fn check_line(c: &Check, spin: &'static str) -> Line<'static> {
         ));
     }
     Line::from(spans)
-}
-
-/// Palette command names, in Tab completion order.
-const COMMANDS: [&str; 20] = [
-    "checkpoint",
-    "cp",
-    "mark",
-    "note",
-    "quest",
-    "sync",
-    "finalize",
-    "reload",
-    "quit",
-    "help",
-    "preflight",
-    "brb",
-    "back",
-    "privacy",
-    "scene",
-    "say",
-    "overlay",
-    "latency",
-    "lat",
-    "settings",
-];
-
-/// What Tab adds to a half-typed palette command name (`""` when it is complete).
-fn completion(text: &str) -> Option<&'static str> {
-    if text.is_empty() || text.contains(' ') {
-        return None;
-    }
-    if COMMANDS.contains(&text) {
-        return Some("");
-    }
-    COMMANDS
-        .iter()
-        .find(|c| c.starts_with(text))
-        .map(|c| &c[text.len()..])
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -2567,6 +2811,21 @@ mod tests {
             readme: "sessions/2026/2026-11-19_ep042/README.md".into(),
             config: Arc::default(),
             config_path: "aftercast.toml".into(),
+            obs: Arc::new(ac_core::obs::Media {
+                scenes: vec!["Code".into(), "BRB".into()],
+                audio: vec![ac_core::obs::Audio {
+                    name: "Mic/Aux".into(),
+                    kind: "wasapi_input_capture".into(),
+                    muted: false,
+                    volume_db: -3.0,
+                }],
+                items: vec![ac_core::obs::Item {
+                    scene: "Code".into(),
+                    source: "Camera".into(),
+                    id: 1,
+                    enabled: true,
+                }],
+            }),
             meta: SessionMeta {
                 schema_version: 1,
                 id: "x".into(),
@@ -2884,10 +3143,6 @@ mod tests {
         press(&mut app, KeyCode::Char('9'));
         assert_eq!(app.focus, Pane::Questions);
 
-        assert_eq!(completion("fin"), Some("alize"));
-        assert_eq!(completion("lat"), Some(""));
-        assert_eq!(completion("say hi"), None);
-        assert_eq!(completion("zzz"), None);
         press(&mut app, KeyCode::Char(':'));
         for c in "sy".chars() {
             press(&mut app, KeyCode::Char(c));
@@ -3114,6 +3369,112 @@ mod tests {
         );
         press(&mut app, KeyCode::Char('x'));
         assert!(cmd_rx.try_recv().is_err(), "x does nothing in Done");
+    }
+
+    #[test]
+    fn palette_obs_and_settings_commands() {
+        let p = |line: &str| palette(line, now());
+        assert_eq!(
+            p("mute Desktop Audio off"),
+            Ok(Palette::Command(Command::Mute {
+                input: "Desktop Audio".into(),
+                on: Some(false)
+            }))
+        );
+        assert_eq!(
+            p("mute Mic/Aux"),
+            Ok(Palette::Command(Command::Mute {
+                input: "Mic/Aux".into(),
+                on: None
+            }))
+        );
+        assert_eq!(
+            p("vol Mic/Aux -6dB"),
+            Ok(Palette::Command(Command::Volume {
+                input: "Mic/Aux".into(),
+                db: -6.0
+            }))
+        );
+        assert!(p("volume Mic").is_err());
+        assert_eq!(
+            p("hide Camera"),
+            Ok(Palette::Command(Command::Source {
+                source: "Camera".into(),
+                scene: None,
+                visible: Some(false)
+            }))
+        );
+        assert_eq!(
+            p("set tui.wrap_lines on"),
+            Ok(Palette::Set {
+                key: "tui.wrap_lines".into(),
+                value: Some("on".into())
+            })
+        );
+        assert_eq!(p("set"), Ok(Palette::Settings));
+    }
+
+    #[test]
+    fn typed_set_writes_the_config_and_tab_completes_from_obs() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.state.scene = Some("Code".into());
+        let dir = tempfile::tempdir().unwrap();
+        view.config_path = dir.path().join("aftercast.toml");
+        std::fs::write(&view.config_path, "").unwrap();
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        let typed = |app: &mut App, text: &str| {
+            press(app, KeyCode::Char(':'));
+            for c in text.chars() {
+                press(app, KeyCode::Char(c));
+            }
+        };
+        // `:set stream.chapter_on_brb off` writes the file and reloads.
+        typed(&mut app, "set stream.chapter_on_brb off");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Reload);
+        let file = std::fs::read_to_string(&view.config_path).unwrap();
+        assert!(file.contains("chapter_on_brb = false"), "{file}");
+        // Tab completes the mic's name from OBS; Enter runs the full line.
+        typed(&mut app, "mute mi");
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Mute {
+                input: "Mic/Aux".into(),
+                on: None
+            }
+        );
+        // Enter on a half-typed name takes the suggestion first, then runs.
+        typed(&mut app, "hide cam");
+        press(&mut app, KeyCode::Enter);
+        assert!(cmd_rx.try_recv().is_err());
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Source {
+                source: "Camera".into(),
+                scene: None,
+                visible: Some(false)
+            }
+        );
+    }
+
+    #[test]
+    fn mic_muted_shows_in_the_status_bar() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        Arc::make_mut(&mut view.obs).audio[0].muted = true;
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        assert!(screen(&mut app, &view).contains("MIC MUTED"));
     }
 
     #[test]

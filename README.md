@@ -166,7 +166,7 @@ again resumes the session where it left off.
 | `[` / `]` | Inbox: filter All, Questions, Super Chats, Members, Done |
 | `1` `2` `3` `4` | Focus Chat, Inbox, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
-| `:` | Command palette (`:sync`, `:finalize`, `:scene <name>`, `:say <text>`, `:latency`, `:help`, ...); `Tab` completes the command name |
+| `:` | Command palette, with suggestions as you type (see Commands below) |
 | `,` | Settings (also `:settings`) |
 | `?` | Help |
 | `q` | Quit (or finalize) |
@@ -197,7 +197,7 @@ Panes with little in them shrink to fit, so the busy ones get the room.
 ### Settings
 
 `,` opens the settings page: sections on the left (Display, Stream, YouTube, Chat bot, OBS,
-Capture, After the stream), their settings on the right, each with a switch, a `‹ choice ›`,
+OBS live, Capture, After the stream), their settings on the right, each with a switch, a `‹ choice ›`,
 a number or a text value, and below the selected one what it does, its default and when a
 change applies (now, after a restart, next session or next post-processing).
 
@@ -206,7 +206,7 @@ change applies (now, after a restart, next session or next post-processing).
 | `j/k` | Move |
 | `Space` / `Enter` | Flip a switch, next choice, or edit a number or text |
 | `h/l` | Switch off/on, previous/next choice, step a number |
-| `Tab`, `1`-`7` | Next section, jump to a section |
+| `Tab`, `1`-`8` | Next section, jump to a section |
 | `/` | Search every setting by name, key or description |
 | `r` | Reset to the default |
 | `Esc` | Close (first clears a search) |
@@ -217,6 +217,37 @@ marks settings that differ from the default, and sections show how many do. The 
 the settings that make sense mid-stream; the rest (paths, secrets, templates, hotkeys) stay in
 the file. Display settings live in `[tui]`: `wrap_lines`, `animations` (off keeps the screen
 still) and `name_colors`.
+
+OBS live lists what OBS has right now, kept in step with OBS: every audio input with its
+volume and a mute switch (`Space` mutes, `h/l` change the volume by 1 dB, `r` sets 0 dB), and
+the sources of every scene with a show/hide switch (`●` marks the scene on air). Changes go
+straight to OBS. A muted mic also shows as MIC MUTED in the status bar, whoever muted it.
+
+### Commands
+
+`:` opens the command palette. It lists every command with what it does; as you type it
+suggests command names, then their arguments from what aftercast knows: OBS scenes, audio
+inputs and the sources in the scene on air, overlay names, setting keys with their current
+values, and the values a setting takes. `↑↓` choose, `Tab` completes, `Enter` runs (or takes
+the suggestion while a name is half typed). Names match regardless of case.
+
+| Command | Does |
+|---|---|
+| `:cp <title>`, `:mark [label]`, `:note <text>` | Chapter, mark or private note, timed when Enter is pressed |
+| `:scene <scene>` | Switch the OBS program scene |
+| `:mute <input> [on\|off]`, `:unmute <input>` | Mute or unmute an OBS audio input (`:mute` alone toggles) |
+| `:volume <input> <dB>` | Set an input's volume, e.g. `:volume Mic/Aux -6` |
+| `:hide <source>`, `:show <source>` | Hide or show a source in the scene on air, e.g. `:hide Camera` |
+| `:brb`, `:back`, `:privacy [on\|off]` | BRB and privacy |
+| `:set <setting> [value]` | Change any setting on the settings page, e.g. `:set stream.chapter_on_brb off`; without a value a switch flips and anything else shows its value |
+| `:reset <setting>` | Back to the default |
+| `:settings` | The settings page |
+| `:sync`, `:finalize`, `:quest <title>`, `:say <text>` | Push the description, end, set the quest, chat as the channel |
+| `:overlay <overlay> on\|off`, `:latency`, `:lat <n>` | Overlays and latency measurement |
+| `:preflight`, `:reload`, `:help`, `:quit` | |
+
+Mutes and source changes are logged as `obs.mute` and `obs.source` events, whether made from
+aftercast or in OBS.
 
 Global hotkeys work while another app (your editor) has focus: `Ctrl+Alt+M` mark,
 `Ctrl+Alt+C` checkpoint, `Ctrl+Alt+B` BRB, `Ctrl+Alt+P` privacy. Configure them in
