@@ -8,11 +8,6 @@ use ac_post::Word;
 
 use crate::{Cut, MUTE_ABOVE, round_ms};
 
-/// Characters per caption line, and lines per caption.
-const LINE: usize = 42;
-const LINES: usize = 2;
-/// Words closer than this share a caption.
-const GAP_S: f64 = 1.2;
 /// How long a shortcut chip stays, and how many stack up.
 const CHIP_S: f64 = 1.2;
 const CHIP_SLOTS: usize = 3;
@@ -23,12 +18,7 @@ const IDLE_S: f64 = 1.5;
 /// Typed characters shown.
 const TYPED: usize = 24;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Cue {
-    pub start: f64,
-    pub end: f64,
-    pub text: String,
-}
+pub use ac_post::subtitles::{Cue, srt};
 
 /// Words inside the cuts, in output time. Muted (fast) cuts have none.
 fn out_words<'a>(words: &'a [Word], cuts: &[Cut]) -> Vec<(usize, f64, f64, &'a Word)> {
@@ -49,81 +39,19 @@ fn out_words<'a>(words: &'a [Word], cuts: &[Cut]) -> Vec<(usize, f64, f64, &'a W
     out
 }
 
-/// Captions of at most two 42-character lines; words more than [`GAP_S`] apart or in
-/// different cuts start a new caption.
+/// Captions in output time (see `ac_post::subtitles`); a cut never shares a caption with
+/// another.
 pub fn captions(words: &[Word], cuts: &[Cut]) -> Vec<Cue> {
-    let mut cues: Vec<Cue> = Vec::new();
-    let mut last_cut = usize::MAX;
-    for (cut, start, end, w) in out_words(words, cuts) {
-        let text = w.w.trim();
-        if text.is_empty() {
-            continue;
-        }
-        match cues.last_mut() {
-            Some(c)
-                if cut == last_cut
-                    && start - c.end <= GAP_S
-                    && c.text.chars().count() + 1 + text.chars().count() <= LINE * LINES =>
-            {
-                c.text.push(' ');
-                c.text.push_str(text);
-                c.end = end;
-            }
-            _ => cues.push(Cue {
-                start,
-                end,
-                text: text.to_owned(),
-            }),
-        }
-        last_cut = cut;
-    }
-    cues
-}
-
-pub fn srt(cues: &[Cue]) -> String {
-    let mut out = String::new();
-    for (i, c) in cues.iter().enumerate() {
-        let _ = write!(
-            out,
-            "{}\n{} --> {}\n{}\n\n",
-            i + 1,
-            srt_time(c.start),
-            srt_time(c.end),
-            wrap(&c.text)
-        );
-    }
-    out
-}
-
-fn srt_time(t: f64) -> String {
-    let ms = (t.max(0.0) * 1000.0).round() as u64;
-    format!(
-        "{:02}:{:02}:{:02},{:03}",
-        ms / 3_600_000,
-        ms / 60_000 % 60,
-        ms / 1000 % 60,
-        ms % 1000
-    )
-}
-
-/// Breaks a caption into two lines at the last space that fits the first.
-fn wrap(text: &str) -> String {
-    if text.chars().count() <= LINE {
-        return text.to_owned();
-    }
-    let mut first = 0;
-    for (i, ch) in text.char_indices() {
-        if text[..i].chars().count() > LINE {
-            break;
-        }
-        if ch == ' ' {
-            first = i;
-        }
-    }
-    if first == 0 {
-        return text.to_owned();
-    }
-    format!("{}\n{}", &text[..first], &text[first + 1..])
+    let timed: Vec<ac_post::subtitles::Timed> = out_words(words, cuts)
+        .into_iter()
+        .map(|(cut, start, end, w)| ac_post::subtitles::Timed {
+            group: cut,
+            start,
+            end,
+            text: &w.w,
+        })
+        .collect();
+    ac_post::subtitles::cues(&timed)
 }
 
 /// Thumbnail time: the most confidently heard word in the first 3 s, else 1 s in.
@@ -399,22 +327,14 @@ mod tests {
         let texts: Vec<&str> = cues.iter().map(|c| c.text.as_str()).collect();
         // A 2.2 s gap splits; the 8x cut is muted, so no captions.
         assert_eq!(texts, ["one two", "three", "four"]);
-        assert_eq!((cues[0].start, cues[0].end), (1.0, 1.8));
+        // A short caption stays up 1 s.
+        assert_eq!((cues[0].start, cues[0].end), (1.0, 2.0));
         // 21.0 is 1 s into a 2x cut that starts at output 6.0.
         assert_eq!(cues[2].start, 6.5);
         assert_eq!(
             srt(&cues[..1]),
-            "1\n00:00:01,000 --> 00:00:01,800\none two\n\n"
+            "1\n00:00:01,000 --> 00:00:02,000\none two\n\n"
         );
-    }
-
-    #[test]
-    fn long_captions_wrap_into_two_lines() {
-        let text = "this caption is long enough that it needs two lines of text";
-        let wrapped = wrap(text);
-        let lines: Vec<&str> = wrapped.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].len() <= LINE);
     }
 
     #[test]

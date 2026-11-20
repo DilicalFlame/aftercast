@@ -12,6 +12,7 @@ mod media;
 mod secrets;
 mod segments;
 mod sources;
+pub mod subtitles;
 pub mod tool;
 mod transcribe;
 mod vocab;

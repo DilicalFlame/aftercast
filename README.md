@@ -251,7 +251,7 @@ AI-ready dataset under the session's `derived/` folder:
 | `vod`, `calibrate` | with `post.use_vod`: the YouTube VOD and its exact offset to the recording |
 | `audio` | `media/audio16k.wav` |
 | `vocab` | `derived/vocab.json`: this stream's terms, from what you typed, ran, committed and wrote |
-| `transcribe` | `derived/words.json`, `transcript.srt`, `transcript.txt` (nothing said in privacy mode) |
+| `transcribe` | `derived/words.json`, `transcript.txt` and `transcript.srt` (subtitles of at most two 42-character lines and 6 s each, split at pauses and sentence ends); nothing said in privacy mode |
 | `correct` | with `post.correct`: misheard terms fixed by a local model, listed in `derived/corrections.json` |
 | `silence` | `derived/silence.json` |
 | `git` | `git.jsonl`: commits in `capture.git_roots` made during the stream |

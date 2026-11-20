@@ -151,20 +151,34 @@ fn squeezed_repeats(words: &mut Vec<Word>) -> usize {
 /// Writes `words.json`, `transcript.srt` and `transcript.txt`.
 pub fn write_outputs(ctx: &Ctx, words: &Words) -> Result<()> {
     write_json(&ctx.derived("words.json"), words)?;
-    let srt: String = words
+    // Short cues from the word timings; a segment without words is one cue.
+    let timed: Vec<crate::subtitles::Timed> = words
         .segments
         .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            format!(
-                "{}\n{} --> {}\n{}\n\n",
-                i + 1,
-                srt_time(s.start),
-                srt_time(s.end),
-                s.text
-            )
+        .flat_map(|s| {
+            let words: Vec<crate::subtitles::Timed> = s
+                .words
+                .iter()
+                .map(|w| crate::subtitles::Timed {
+                    group: 0,
+                    start: w.start,
+                    end: w.end,
+                    text: &w.w,
+                })
+                .collect();
+            if words.is_empty() {
+                vec![crate::subtitles::Timed {
+                    group: 0,
+                    start: s.start,
+                    end: s.end,
+                    text: &s.text,
+                }]
+            } else {
+                words
+            }
         })
         .collect();
+    let srt = crate::subtitles::srt(&crate::subtitles::cues(&timed));
     let txt: String = words
         .segments
         .iter()
@@ -408,17 +422,6 @@ fn sentences(words: Vec<Word>) -> Vec<Segment> {
     out
 }
 
-fn srt_time(secs: f64) -> String {
-    let ms = (secs.max(0.0) * 1000.0).round() as u64;
-    format!(
-        "{:02}:{:02}:{:02},{:03}",
-        ms / 3_600_000,
-        ms / 60_000 % 60,
-        ms / 1000 % 60,
-        ms % 1000
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -577,6 +580,6 @@ mod tests {
 
     #[test]
     fn srt_times() {
-        assert_eq!(srt_time(3725.5), "01:02:05,500");
+        assert_eq!(crate::subtitles::srt_time(3725.5), "01:02:05,500");
     }
 }
