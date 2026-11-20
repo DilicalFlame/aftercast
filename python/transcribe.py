@@ -34,6 +34,8 @@ def faster_whisper(args):
         language=None if args.language == "auto" else args.language,
         vad_filter=True,
         word_timestamps=True,
+        initial_prompt=args.prompt or None,
+        hotwords=args.hotwords or None,
     )
     out = []
     for seg in segments:
@@ -63,7 +65,11 @@ def whisperx(args):
 
     audio = wx.load_audio(args.input)
     model = wx.load_model(
-        args.model, args.device, compute_type=args.compute, download_root=args.models
+        args.model,
+        args.device,
+        compute_type=args.compute,
+        download_root=args.models,
+        asr_options={"initial_prompt": args.prompt or None},
     )
     language = None if args.language == "auto" else args.language
     result = model.transcribe(audio, language=language)
@@ -100,6 +106,8 @@ def main():
     p.add_argument("--device", default="cuda")
     p.add_argument("--language", default="auto")
     p.add_argument("--models", help="model download folder (default: the Hugging Face cache)")
+    p.add_argument("--prompt", default="", help="context Whisper reads first (series, topics, terms)")
+    p.add_argument("--hotwords", default="", help="words to prefer in every window")
     p.add_argument("--download", action="store_true", help="only download the model")
     p.add_argument("--in", dest="input")
     p.add_argument("--out")

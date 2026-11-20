@@ -143,7 +143,12 @@ fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
     if models.exists() {
         args.extend(["--models".into(), models.into()]);
     }
-    let model = p.whisper_model.clone();
+    let (prompt, hotwords) = context(ctx);
+    args.extend(["--prompt".into(), prompt.into()]);
+    if !hotwords.is_empty() {
+        args.extend(["--hotwords".into(), hotwords.into()]);
+    }
+    let model = ctx.config.post.whisper_model.clone();
     ctx.note_tool("transcriber", format!("{backend} {model}"));
     ctx.set_message(format!("{backend} {model}"));
     tool::run_lines(ctx, &python.to_string_lossy(), args, |line| {
@@ -159,6 +164,50 @@ fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
     Ok(words)
 }
 
+/// Longest prompt passed to Whisper; it keeps only about 220 tokens of it.
+const PROMPT_MAX: usize = 800;
+
+/// The transcriber's context: a prompt (series, title, `post.vocabulary`, chapter and
+/// quest titles) and the vocabulary as hotwords, applied to every 30 s window. Words only:
+/// Whisper reads the prompt as the speech before the recording, and descriptive sentences
+/// ("about the Rust language", "in English and Hindi") made it mishear more in tests.
+pub fn context(ctx: &Ctx) -> (String, String) {
+    use ac_core::event::EventKind;
+    let mut topics: Vec<String> = Vec::new();
+    for e in &ctx.events {
+        let title = match &e.kind {
+            EventKind::Checkpoint { title, .. } | EventKind::QuestSet { title, .. } => title,
+            _ => continue,
+        };
+        if !topics.contains(title) {
+            topics.push(title.clone());
+        }
+    }
+    let p = &ctx.config.post;
+    let prompt = build_prompt(
+        &ctx.config.channel.series,
+        ctx.session.meta.title_at_start.as_deref().unwrap_or(""),
+        &topics,
+        &p.vocabulary,
+    );
+    (prompt, p.vocabulary.join(" "))
+}
+
+fn build_prompt(series: &str, title: &str, topics: &[String], vocabulary: &[String]) -> String {
+    let mut parts = vec![format!("{series}, a live coding stream.")];
+    if !title.is_empty() {
+        parts.push(format!("{title}."));
+    }
+    if !vocabulary.is_empty() {
+        parts.push(format!("Terms: {}.", vocabulary.join(", ")));
+    }
+    if !topics.is_empty() {
+        parts.push(format!("Topics: {}.", topics.join(", ")));
+    }
+    // Topics last: the least important part is the one cut.
+    parts.join(" ").chars().take(PROMPT_MAX).collect::<String>()
+}
+
 /// whisper.cpp's `whisper-cli` with one word per segment (`-ml 1`), regrouped into
 /// sentences. `post.whisper_model` is the path of the ggml model file.
 fn whisper_cpp(ctx: &mut Ctx) -> Result<Words> {
@@ -170,7 +219,10 @@ fn whisper_cpp(ctx: &mut Ctx) -> Result<Words> {
     }
     let base = ctx.derived("whisper");
     let language = ctx.language().to_owned();
+    let (prompt, _) = context(ctx);
     let args: Vec<OsString> = vec![
+        "--prompt".into(),
+        prompt.into(),
         "-m".into(),
         model.clone().into(),
         "-f".into(),
@@ -265,6 +317,25 @@ fn srt_time(secs: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_has_series_title_terms_then_topics_and_is_capped() {
+        let vocab = ["Rust".to_owned(), "cargo".to_owned()];
+        let p = build_prompt(
+            "IDD",
+            "Parser day",
+            &["Setup".to_owned(), "Lexer".to_owned()],
+            &vocab,
+        );
+        assert_eq!(
+            p,
+            "IDD, a live coding stream. Parser day. Terms: Rust, cargo. Topics: Setup, Lexer."
+        );
+        let many: Vec<String> = (0..300).map(|i| format!("topic {i}")).collect();
+        let p = build_prompt("IDD", "", &many, &vocab);
+        assert_eq!(p.chars().count(), PROMPT_MAX);
+        assert!(p.starts_with("IDD, a live coding stream. Terms: Rust, cargo. Topics: topic 0"));
+    }
 
     fn word(w: &str, start: f64, end: f64) -> Word {
         Word {

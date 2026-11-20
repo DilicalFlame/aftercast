@@ -490,6 +490,8 @@ pub struct Post {
     pub silence_min_s: f64,
     pub focus_min_keys_per_10s: u32,
     pub ocr: bool,
+    /// Words the transcriber should expect (names, tools, jargon), e.g. "Rust", "cargo".
+    pub vocabulary: Vec<String>,
 }
 
 impl Default for Post {
@@ -509,6 +511,7 @@ impl Default for Post {
             silence_min_s: 4.0,
             focus_min_keys_per_10s: 3,
             ocr: false,
+            vocabulary: Vec::new(),
         }
     }
 }

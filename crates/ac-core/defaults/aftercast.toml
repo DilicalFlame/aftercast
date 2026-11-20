@@ -161,6 +161,10 @@ silence_db = -35
 silence_min_s = 4.0
 focus_min_keys_per_10s = 3      # silent but typing ≥ this → "focus", not "dead"
 ocr = false
+# Words the transcriber should expect: Whisper reads the series, title, these and the
+# chapter titles before it listens, so it writes "Rust", not "rest". Words only: in tests,
+# sentences ("about the Rust language", "English and Hindi") made it worse.
+vocabulary = []                 # e.g. ["Rust", "cargo", "crates", "borrow checker", "tokio"]
 
 [render]
 encoder = "h264_nvenc"          # h264_nvenc | libx264

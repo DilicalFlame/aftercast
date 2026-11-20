@@ -141,12 +141,13 @@ impl Stage {
             Self::Transcribe => (
                 vec![events],
                 format!(
-                    "{:?} {} {} {} {:?}",
+                    "{:?} {} {} {} {:?} {:?}",
                     p.transcriber,
                     p.whisper_model,
                     p.whisper_compute_type,
                     ctx.language(),
-                    std::env::var(transcribe::FIXTURE_ENV).ok()
+                    std::env::var(transcribe::FIXTURE_ENV).ok(),
+                    transcribe::context(ctx),
                 ),
             ),
             Self::Silence => (vec![], format!("{} {}", p.silence_db, p.silence_min_s)),

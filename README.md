@@ -278,6 +278,12 @@ when `post.ocr = true`) under `<home>/tools` (a few GB; log in `logs/setup.log`)
 `aftercast post` uses them while `paths.python` and `paths.tesseract` keep their defaults. Rerun it after changing
 the model. Only the NVIDIA driver is needed from outside.
 
+Whisper hears jargon better when it knows it: before transcribing, aftercast gives it the
+series name, the stream title, the chapter titles and `post.vocabulary` (e.g. `["Rust",
+"cargo", "borrow checker"]`), so "Rust" no longer comes out as "rest". Use words only: in tests
+on a real stream, descriptive sentences such as "in English and Hindi" made it mishear more.
+After changing the vocabulary, `aftercast post --from transcribe` redoes the transcript.
+
 Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. whisperx
 (`post.transcriber = "whisperx"`, also installed by `aftercast setup`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,
 `post.whisper_model` = path of a ggml `.bin`) work too.
