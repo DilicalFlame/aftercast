@@ -2459,7 +2459,7 @@ fn pane_block(pane: Pane, label: &str, extra: Vec<Span<'static>>, focused: bool)
         (
             Style::new().fg(MUTED).bg(RAISED),
             Style::new().fg(MUTED),
-            FAINT,
+            crate::theme::BORDER,
         )
     };
     let mut title = vec![

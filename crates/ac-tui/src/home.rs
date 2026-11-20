@@ -21,7 +21,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
-use crate::theme::{ACCENT, FAINT, INFO, MUTED, OK, RAISED, SELECTED, TEXT, WARN};
+use crate::theme::{ACCENT, BORDER, FAINT, INFO, MUTED, OK, RAISED, SELECTED, TEXT, WARN};
 use crate::{Check, CheckState, KeysStatus, View};
 
 /// Something on Home that j/k can reach and Enter acts on.
@@ -275,7 +275,7 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
         scene,
     };
     let [head, _, body] = Layout::vertical([
-        Constraint::Length(3),
+        Constraint::Length(4),
         Constraint::Length(1),
         Constraint::Min(3),
     ])
@@ -321,7 +321,7 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
                         Constraint::Length(1),
                         Constraint::Length(session.len() as u16 + 1),
                         Constraint::Length(1),
-                        Constraint::Min(2),
+                        Constraint::Fill(1),
                     ])
                     .areas(right);
                     ctx.info(frame, s1, "Status", status);
@@ -424,32 +424,25 @@ impl Ctx<'_> {
             Constraint::Length(44),
         ])
         .areas(area);
-        // A red play button. Wedges from Unicode's Legacy Computing block give the slopes:
-        // corners cut on a diagonal, and a triangle whose edges fall a third of a row per
-        // column. Corners are red on the page; the triangle white on red.
-        let red = Style::new().fg(ACCENT);
+        // A red play button, 11 by 4. The triangle's edges fall an eighth of a row at a time
+        // (lower eighth blocks; under the middle, red on white), so they slope smoothly
+        // with only Block Elements, which terminals draw themselves.
         let fill = Style::new().bg(ACCENT);
-        let tri = Style::new().fg(Color::White).bg(ACCENT);
-        let edge = |corner: &'static str, cells: &'static str, other: &'static str| {
-            Line::from(vec![
-                Span::raw(" "),
-                Span::styled(corner, red),
-                Span::styled("    ", fill),
-                Span::styled(cells, tri),
-                Span::styled("    ", fill),
-                Span::styled(other, red),
-            ])
+        let white = Style::new().fg(Color::White).bg(ACCENT);
+        let under = Style::new().fg(ACCENT).bg(Color::White);
+        let red = || Span::styled("           ", fill);
+        let row = |cells: Vec<Span<'static>>| {
+            let mut spans = vec![Span::raw(" "), Span::styled("    ", fill)];
+            spans.extend(cells);
+            spans.push(Span::styled("   ", fill));
+            Line::from(spans)
         };
         frame.render_widget(
             Paragraph::new(vec![
-                edge("\u{1FB41}", "\u{1FB51}\u{1FB3D}", "\u{1FB4C}"),
-                Line::from(vec![
-                    Span::raw(" "),
-                    Span::styled("     ", fill),
-                    Span::styled("██\u{1FB6C}", tri),
-                    Span::styled("    ", fill),
-                ]),
-                edge("\u{1FB52}", "\u{1FB5C}\u{1FB58}", "\u{1FB5D}"),
+                Line::from(vec![Span::raw(" "), red()]),
+                row(vec![Span::styled("█▅▃▁", white)]),
+                row(vec![Span::styled("█", white), Span::styled("▃▅▇", under)]),
+                Line::from(vec![Span::raw(" "), red()]),
             ]),
             logo,
         );
@@ -567,7 +560,7 @@ impl Ctx<'_> {
         }
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(if lit { ACCENT } else { RAISED }))
+            .border_style(Style::new().fg(if lit { ACCENT } else { BORDER }))
             .title(Line::from(title))
             .padding(Padding::horizontal(1));
         if card == Card::Checks {
@@ -678,7 +671,7 @@ impl Ctx<'_> {
         }
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(FAINT))
+            .border_style(Style::new().fg(BORDER))
             .title(Span::styled(" Scenes ", Style::new().fg(MUTED).bold()))
             .title_bottom(Span::styled(" ^j/k ", Style::new().fg(MUTED)));
         let inner = block.inner(area);

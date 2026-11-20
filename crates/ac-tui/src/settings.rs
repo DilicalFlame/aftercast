@@ -930,7 +930,7 @@ impl Page {
         }
         let sections = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(RAISED))
+            .border_style(Style::new().fg(crate::theme::BORDER))
             .title(Span::styled(" Sections ", Style::new().fg(MUTED).bold()))
             .title_bottom(Span::styled(" Tab 1-8 ", Style::new().fg(FAINT)))
             .padding(Padding::new(1, 1, 1, 0));

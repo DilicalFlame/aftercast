@@ -15,6 +15,8 @@ pub const TEXT: Color = Color::Rgb(0xE8, 0xE8, 0xE8);
 pub const OK: Color = Color::Rgb(0x4C, 0xD9, 0x7B);
 pub const WARN: Color = Color::Rgb(0xFF, 0xC1, 0x4D);
 pub const INFO: Color = Color::Rgb(0x5E, 0xA8, 0xFF);
+/// Borders of cards and panes without the focus (the focused one is lit in the accent).
+pub const BORDER: Color = Color::Rgb(0x6A, 0x6A, 0x72);
 /// Background of the selected row and of key chips.
 pub const RAISED: Color = Color::Rgb(0x2E, 0x2E, 0x34);
 pub const SELECTED: Color = Color::Rgb(0x42, 0x24, 0x26);
