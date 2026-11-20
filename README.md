@@ -160,16 +160,18 @@ again resumes the session where it left off.
 | `r` | Edit the session README in Neovim (`nvim --clean`, none of your config) inside the terminal; `:wq` returns to aftercast. Saving re-renders the description, nothing is pushed |
 | `s` | Preview the description; `Enter` pushes it to YouTube |
 | `e` / `d` | Edit / delete the selected chapter |
-| `Enter` / `t` / `x` | Inbox: show on stream (again: done) / done without showing / dismiss |
+| `Enter` | Inbox: show the item on stream; again: answered / done |
+| `x` / `t` | Inbox: dismiss a question / thank a supporter (without showing them) |
 | `[` / `]` | Inbox: filter All, Questions, Super Chats, Members |
 | `1` `2` `3` `4` | Focus Chat, Inbox, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
 | `:` | Command palette (`:sync`, `:finalize`, `:scene <name>`, `:say <text>`, `:latency`, `:help`, ...); `Tab` completes the command name |
+| `,` | Settings (also `:settings`) |
 | `?` | Help |
 | `q` | Quit (or finalize) |
 
-Every chat message and log event keeps to one line, ending in `…` when it is cut (`w` wraps
-them all instead). Focus Chat or the Event log and a highlighted cursor sits on the newest line,
+Every chat message and log event keeps to one line, ending in `…` when it is cut (or wraps,
+with Settings › Display › Wrap long lines). Focus Chat or the Event log and a highlighted cursor sits on the newest line,
 opened in full under its author. `j/k` move the cursor through lines that stay put, scrolling
 only at the edges, like an editor; new chat arriving meanwhile does not move it, and `G` follows
 the newest again. The selected Inbox item opens the same way.
@@ -178,12 +180,37 @@ The Inbox (pane 2) is a to-do list, not a second chat: only what needs you lands
 everything leaves once handled. Super Chats, Super Stickers and memberships (joins,
 milestones, gifts) are pinned on top with their amount or a "member" chip, and stay, across
 restarts, until handled; questions (`!q`) follow. Any item can go on stream: `Enter` shows it
-on the question overlay and `Enter` again marks it done. `t` marks it done without showing
-(a quiet thank-you or answer) and `x` dismisses it. `[` and `]` switch the filter tabs in the
+on the question overlay and `Enter` again marks it done. A question can be dismissed with `x`;
+a supporter is never dismissed, `t` thanks them without showing. The key hints follow the
+selected item. `[` and `]` switch the filter tabs in the
 pane title (All, Questions, Super Chats, Members, each with its count); unfocused, the title
 just says how many supporters wait. Messages members write in chat stay in chat.
 
 Panes with little in them shrink to fit, so the busy ones get the room.
+
+### Settings
+
+`,` opens the settings page: sections on the left (Display, Stream, YouTube, Chat bot, OBS,
+Capture, After the stream), their settings on the right, each with a switch, a `‹ choice ›`,
+a number or a text value, and below the selected one what it does, its default and when a
+change applies (now, after a restart, next session or next post-processing).
+
+| Key | Action |
+|---|---|
+| `j/k` | Move |
+| `Space` / `Enter` | Flip a switch, next choice, or edit a number or text |
+| `h/l` | Switch off/on, previous/next choice, step a number |
+| `Tab`, `1`-`7` | Next section, jump to a section |
+| `/` | Search every setting by name, key or description |
+| `r` | Reset to the default |
+| `Esc` | Close (first clears a search) |
+
+Every change is written to `aftercast.toml` at once, keeping your comments and layout (a
+value the config would reject is refused and the file is left alone), then reloaded. A `•`
+marks settings that differ from the default, and sections show how many do. The page covers
+the settings that make sense mid-stream; the rest (paths, secrets, templates, hotkeys) stay in
+the file. Display settings live in `[tui]`: `wrap_lines`, `animations` (off keeps the screen
+still) and `name_colors`.
 
 Global hotkeys work while another app (your editor) has focus: `Ctrl+Alt+M` mark,
 `Ctrl+Alt+C` checkpoint, `Ctrl+Alt+B` BRB, `Ctrl+Alt+P` privacy. Configure them in

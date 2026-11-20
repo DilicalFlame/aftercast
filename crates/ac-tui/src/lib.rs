@@ -3,6 +3,7 @@
 //! The UI only reads [`View`] snapshots and sends [`Command`]s; the controller owns state.
 //! Times are captured when a key is pressed, before any prompt opens.
 
+mod settings;
 mod theme;
 
 use std::collections::VecDeque;
@@ -51,6 +52,10 @@ pub struct View {
     pub session: String,
     /// The session's `README.md` (`r` opens it in Neovim).
     pub readme: std::path::PathBuf,
+    /// The config in effect; the settings page (`,`) shows and edits it.
+    pub config: Arc<ac_core::config::Config>,
+    /// `aftercast.toml`, written by the settings page, then reloaded.
+    pub config_path: std::path::PathBuf,
     pub meta: SessionMeta,
     pub state: SessionState,
     pub chapters: Vec<Chapter>,
@@ -158,6 +163,8 @@ enum Mode {
     Ended,
     /// A `!title` from the owner's chat waits for confirmation.
     ConfirmTitle(String),
+    /// The settings page (`,`).
+    Settings(settings::Page),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -307,8 +314,8 @@ struct App {
     /// The notice on screen and when it appeared, so it can fade.
     notice: (String, Instant),
     users: UserColors,
-    /// `w`: wrap every line in Chat, Questions and the log instead of cutting them.
-    wrap_all: bool,
+    /// `tui.animations` as of the last frame.
+    motion: bool,
     filter: Filter,
     /// Pane proportions as drawn: they glide towards `split_target`.
     split: Split,
@@ -343,7 +350,7 @@ impl App {
             flash_until: None,
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
-            wrap_all: false,
+            motion: true,
             filter: Filter::All,
             split: [0.45, 0.6, 0.5],
             split_target: [0.45, 0.6, 0.5],
@@ -359,6 +366,24 @@ impl App {
             .collect()
     }
 
+    /// A breathing 0..1..0 over `period`; still (1) with animations off.
+    fn pulse(&self, period: Duration) -> f64 {
+        if self.motion {
+            pulse(self.tick(), period)
+        } else {
+            0.0
+        }
+    }
+
+    /// A spinner frame; `…` with animations off.
+    fn spin(&self) -> &'static str {
+        if self.motion {
+            spinner(self.tick())
+        } else {
+            "…"
+        }
+    }
+
     /// Time since start, the input of every animation.
     fn tick(&self) -> Duration {
         self.started.elapsed()
@@ -369,7 +394,11 @@ impl App {
     fn animate_split(&mut self) {
         let dt = self.last_frame.elapsed().as_secs_f64();
         self.last_frame = Instant::now();
-        let k = (dt * 20.0).min(1.0);
+        let k = if self.motion {
+            (dt * 20.0).min(1.0)
+        } else {
+            1.0
+        };
         for (cur, goal) in self.split.iter_mut().zip(self.split_target) {
             *cur += (goal - *cur) * k;
             if (goal - *cur).abs() < 0.002 {
@@ -548,6 +577,14 @@ impl App {
                 _ => self.mode = Mode::Preview { scroll },
             },
             Mode::Help | Mode::Preflight => {}
+            Mode::Settings(mut page) => {
+                match page.key(key.code, &view.config, &view.config_path) {
+                    settings::Outcome::Close => return,
+                    settings::Outcome::Reload => self.send(Command::Reload),
+                    settings::Outcome::Stay => {}
+                }
+                self.mode = Mode::Settings(page);
+            }
             Mode::ConfirmQuit => match key.code {
                 KeyCode::Char('y') => self.finish(Command::Quit),
                 KeyCode::Char('f') => self.finish(Command::Finalize),
@@ -595,17 +632,7 @@ impl App {
             KeyCode::Char(':') => self.mode = input(Prompt::Palette),
             KeyCode::Char('s') => self.mode = Mode::Preview { scroll: 0 },
             KeyCode::Char('r') => self.edit_readme = Some(view.readme.clone()),
-            KeyCode::Char('w') => {
-                self.wrap_all = !self.wrap_all;
-                self.message = Some(
-                    if self.wrap_all {
-                        "wrapping every line (w: one line each)"
-                    } else {
-                        "one line each, the cursor line opens in full (w: wrap all)"
-                    }
-                    .into(),
-                );
-            }
+            KeyCode::Char(',') => self.mode = Mode::Settings(settings::Page::default()),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
             KeyCode::Char('b') => self.send(Command::Brb {
@@ -631,11 +658,25 @@ impl App {
             KeyCode::Enter if self.focus == Pane::Questions => {
                 self.question(view, QuestionAction::Show)
             }
+            // A question can be dismissed; a supporter is thanked, never dismissed.
             KeyCode::Char('x') if self.focus == Pane::Questions => {
-                self.question(view, QuestionAction::Dismiss)
+                match self.selected_item(view).map(|q| q.support.is_some()) {
+                    Some(false) => self.question(view, QuestionAction::Dismiss),
+                    Some(true) => {
+                        self.message = Some("supporters are thanked with t, not dismissed".into())
+                    }
+                    None => {}
+                }
             }
             KeyCode::Char('t') if self.focus == Pane::Questions => {
-                self.question(view, QuestionAction::Answer)
+                match self.selected_item(view).map(|q| q.support.is_some()) {
+                    Some(true) => self.question(view, QuestionAction::Answer),
+                    Some(false) => {
+                        self.message =
+                            Some("questions: Enter shows then answers, x dismisses".into())
+                    }
+                    None => {}
+                }
             }
             KeyCode::Char(c @ ('[' | ']')) if self.focus == Pane::Questions => {
                 self.filter = self.filter.step(if c == ']' { 1 } else { -1 });
@@ -694,6 +735,13 @@ impl App {
         }
     }
 
+    /// The selected Inbox item.
+    fn selected_item<'v>(&self, view: &'v View) -> Option<&'v ac_core::session_state::Question> {
+        self.inbox(&view.state)
+            .get(self.questions.selected()?)
+            .copied()
+    }
+
     /// Sends `action` for the selected question.
     fn question(&mut self, view: &View, action: QuestionAction) {
         let selected = self.questions.selected();
@@ -746,6 +794,7 @@ impl App {
                 }
                 Ok(Palette::Help) => self.mode = Mode::Help,
                 Ok(Palette::Preflight) => self.mode = Mode::Preflight,
+                Ok(Palette::Settings) => self.mode = Mode::Settings(settings::Page::default()),
                 Err(message) => self.message = Some(message),
             },
         }
@@ -757,6 +806,7 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame, view: &View) {
+        self.motion = view.config.tui.animations;
         let [status, body, info, keys] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(5),
@@ -802,7 +852,7 @@ impl App {
         .areas(info);
         frame.render_widget(readme_line(view), a);
         frame.render_widget(notice, b);
-        frame.render_widget(Line::from(self.keys_line()), keys);
+        frame.render_widget(Line::from(self.keys_line(view)), keys);
         self.draw_modal(frame, view);
     }
 
@@ -825,11 +875,10 @@ impl App {
     }
 
     fn status_line(&self, view: &View) -> Line<'static> {
-        let t = self.tick();
         let now = self.clock.now_ts();
         let anchors = &view.meta.anchors;
         let state = &view.state;
-        let breathing = mix(ACCENT, ACCENT_DIM, pulse(t, Duration::from_secs(2)));
+        let breathing = mix(ACCENT, ACCENT_DIM, self.pulse(Duration::from_secs(2)));
         let (dot, label, color) = match state.stream {
             Some(StreamStatus::Live) if !state.ended => ("●", "LIVE", breathing),
             Some(StreamStatus::Upcoming) => ("○", "UPCOMING", WARN),
@@ -842,9 +891,9 @@ impl App {
             .unwrap_or_default();
         let service = |name: &str| match state.services.get(name) {
             Some(ServiceStatus::Ok) => Span::styled("●", Style::new().fg(OK)),
-            Some(ServiceStatus::Retrying) => Span::styled(spinner(t), Style::new().fg(WARN)),
+            Some(ServiceStatus::Retrying) => Span::styled(self.spin(), Style::new().fg(WARN)),
             Some(ServiceStatus::Down) => Span::styled("✖", Style::new().fg(ACCENT).bold()),
-            None => Span::styled(spinner(t), Style::new().fg(MUTED)),
+            None => Span::styled(self.spin(), Style::new().fg(MUTED)),
         };
         let label_span = |text: &str| Span::styled(format!("{text} "), Style::new().fg(MUTED));
         let dot_sep = || Span::styled(" · ", Style::new().fg(FAINT));
@@ -907,7 +956,7 @@ impl App {
             KeysStatus::Off => Span::styled("off", Style::new().fg(FAINT)),
             KeysStatus::Error => Span::styled("✖", Style::new().fg(ACCENT).bold()),
             _ if state.privacy => Span::styled("✖ privacy", Style::new().fg(WARN)),
-            KeysStatus::Starting => Span::styled(spinner(t), Style::new().fg(MUTED)),
+            KeysStatus::Starting => Span::styled(self.spin(), Style::new().fg(MUTED)),
             KeysStatus::On => Span::styled(sparkline(&view.keys_per_min), Style::new().fg(INFO)),
         });
         spans.extend([
@@ -918,7 +967,7 @@ impl App {
         ]);
         if view.latency_running {
             spans.push(Span::styled(
-                format!("lat {} measuring", spinner(t)),
+                format!("lat {} measuring", self.spin()),
                 Style::new().fg(WARN),
             ));
         } else {
@@ -1016,25 +1065,35 @@ impl App {
         let now = self.clock.now_ts();
         let ids: Vec<&str> = view.chat.iter().map(|m| m.id.as_str()).collect();
         let users = &self.users;
+        let colors = view.config.tui.name_colors;
         let make = |i: usize| {
             let m = &view.chat[i];
             let fresh = now.secs_since(m.t_received) < FRESH_S;
-            let line = chat_line(m, users.peek(&m.author_channel_id), fresh);
+            let color = if colors {
+                users.peek(&m.author_channel_id)
+            } else {
+                TEXT
+            };
+            let line = chat_line(m, color, fresh);
             let indent = line
                 .width()
                 .saturating_sub(Span::raw(m.text.as_str()).width());
             (line, indent)
         };
-        let (rows, newer) =
-            self.chat_feed
-                .layout(&ids, make, focused, self.wrap_all, (width, height));
+        let (rows, newer) = self.chat_feed.layout(
+            &ids,
+            make,
+            focused,
+            view.config.tui.wrap_lines,
+            (width, height),
+        );
         let block = pane_block(Pane::Chat, "Chat", scrolled_hint(newer), focused);
         if rows.is_empty() {
             let connected = view.state.services.get("chat") == Some(&ServiceStatus::Ok);
             let text = if connected {
                 "No messages yet.".to_owned()
             } else {
-                format!("{} waiting for chat", spinner(self.tick()))
+                format!("{} waiting for chat", self.spin())
             };
             frame.render_widget(empty_state(&[&text]).block(block), area);
             return;
@@ -1045,11 +1104,7 @@ impl App {
     fn draw_questions(&mut self, frame: &mut Frame, area: Rect, view: &View) {
         let all = queue(&view.state);
         let queue = self.inbox(&view.state);
-        let live = mix(
-            ACCENT,
-            ACCENT_DIM,
-            pulse(self.tick(), Duration::from_secs(2)),
-        );
+        let live = mix(ACCENT, ACCENT_DIM, self.pulse(Duration::from_secs(2)));
         let items: Vec<Line> = queue
             .iter()
             .map(|q| {
@@ -1059,7 +1114,11 @@ impl App {
                 } else {
                     Span::raw("  ")
                 };
-                let color = self.users.get(&q.author_id);
+                let color = if view.config.tui.name_colors {
+                    self.users.get(&q.author_id)
+                } else {
+                    TEXT
+                };
                 let mut spans = vec![mark];
                 if let Some(support) = &q.support {
                     let bg = if support.kind == ChatKind::Membership {
@@ -1089,7 +1148,7 @@ impl App {
             .into_iter()
             .enumerate()
             .map(|(i, line)| {
-                if self.wrap_all || (focused && self.questions.selected() == Some(i)) {
+                if view.config.tui.wrap_lines || (focused && self.questions.selected() == Some(i)) {
                     let text = line.spans.last().map_or(0, Span::width);
                     let indent = line.width() - text;
                     ListItem::new(wrap(line, width, indent))
@@ -1181,16 +1240,21 @@ impl App {
             ]);
             (line, 11)
         };
-        let (rows, newer) =
-            self.log_feed
-                .layout(&ids, make, focused, self.wrap_all, (width, height));
+        let (rows, newer) = self.log_feed.layout(
+            &ids,
+            make,
+            focused,
+            view.config.tui.wrap_lines,
+            (width, height),
+        );
         let block = pane_block(Pane::Log, "Event log", scrolled_hint(newer), focused);
         frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
     /// Hints for the current mode and pane, most useful first (cut at the right edge).
-    fn keys_line(&self) -> Vec<Span<'static>> {
+    fn keys_line(&self, view: &View) -> Vec<Span<'static>> {
         let pairs: &[(&str, &str)] = match &self.mode {
+            Mode::Settings(page) => return page.hints(),
             Mode::Input {
                 prompt: Prompt::Palette,
                 ..
@@ -1199,12 +1263,22 @@ impl App {
             Mode::Preview { .. } => &[("Enter", "push"), ("j/k", "scroll"), ("Esc", "close")],
             _ => {
                 let pane: &[(&str, &str)] = match self.focus {
-                    Pane::Questions => &[
-                        ("Enter", "on stream/done"),
-                        ("t", "done"),
-                        ("x", "dismiss"),
-                        ("[ ]", "filter"),
-                    ],
+                    // Questions are answered or dismissed; supporters are thanked.
+                    Pane::Questions => {
+                        match self.selected_item(view).map(|q| q.support.is_some()) {
+                            Some(true) => &[
+                                ("Enter", "on stream/done"),
+                                ("t", "thank"),
+                                ("[ ]", "filter"),
+                            ],
+                            Some(false) => &[
+                                ("Enter", "on stream/answered"),
+                                ("x", "dismiss"),
+                                ("[ ]", "filter"),
+                            ],
+                            None => &[("[ ]", "filter")],
+                        }
+                    }
                     Pane::Chapters => &[("e", "edit"), ("d", "delete")],
                     Pane::Chat | Pane::Log => &[("j/k", "read"), ("G", "newest")],
                 };
@@ -1218,7 +1292,7 @@ impl App {
                     ("?", "help"),
                     ("n", "note"),
                     ("r", "readme"),
-                    ("w", "wrap"),
+                    (",", "settings"),
                     (":", "command"),
                     ("q", "quit"),
                 ];
@@ -1248,6 +1322,10 @@ impl App {
         };
         let (title, body, width, height): (String, Vec<Line>, u16, u16) = match &self.mode {
             Mode::Normal => return,
+            Mode::Settings(page) => {
+                page.draw(frame, &view.config, &view.config_path, self.motion);
+                return;
+            }
             Mode::Input {
                 prompt,
                 text,
@@ -1272,7 +1350,7 @@ impl App {
                     format!(" (time {at})")
                 };
                 // A blinking caret, and the palette's Tab completion as gray ghost text.
-                let caret = if t.as_millis() % 1000 < 600 {
+                let caret = if !self.motion || t.as_millis() % 1000 < 600 {
                     "▏"
                 } else {
                     " "
@@ -1349,7 +1427,7 @@ impl App {
                     ]),
                     Line::raw(""),
                 ];
-                lines.extend(view.preflight.iter().map(|c| check_line(c, t)));
+                lines.extend(view.preflight.iter().map(|c| check_line(c, self.spin())));
                 lines.push(Line::raw(""));
                 lines.push(Line::styled(
                     "Any key closes; :preflight opens this again.",
@@ -1419,6 +1497,7 @@ impl App {
 /// A parsed `:` command.
 #[derive(Debug, PartialEq)]
 enum Palette {
+    Settings,
     Command(Command),
     Help,
     Preflight,
@@ -1459,6 +1538,7 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
         "quit" | "q" => Command::Quit,
         "help" | "?" => return Ok(Palette::Help),
         "preflight" => return Ok(Palette::Preflight),
+        "settings" | "set" => return Ok(Palette::Settings),
         "break" | "b" | "brb" => Command::Brb {
             on: Some(true),
             by: By::Palette,
@@ -2055,6 +2135,7 @@ fn help_lines() -> Vec<Line<'static>> {
                     "r",
                     "edit the README in Neovim (clean, no config); :wq comes back",
                 ),
+                (",", "settings: display, chapters, bot, OBS, capture, post"),
             ],
         ),
         (
@@ -2063,11 +2144,10 @@ fn help_lines() -> Vec<Line<'static>> {
                 ("1 2 3 4", "focus Chat, Inbox, Chapters, Event log"),
                 ("Tab", "next pane (Shift+Tab: previous)"),
                 ("j/k", "move or scroll; g/G first/newest"),
-                ("w", "wrap every line / one line each (cursor line opens)"),
                 ("e / d", "edit / delete the selected chapter"),
-                ("Enter", "Inbox: show on stream; again: done"),
-                ("t", "Inbox: done without showing (thanked, answered)"),
-                ("x", "Inbox: dismiss"),
+                ("Enter", "Inbox: show on stream; again: answered / done"),
+                ("t", "Inbox: thank a supporter without showing"),
+                ("x", "Inbox: dismiss a question"),
                 ("[ ]", "Inbox: filter All, Questions, Super Chats, Members"),
             ],
         ),
@@ -2096,6 +2176,7 @@ fn help_lines() -> Vec<Line<'static>> {
                     "start/stop measuring; :lat <n> enters the number seen",
                 ),
                 (":preflight", "the checklist again   :reload   :quit"),
+                (":settings", "the settings page (also ,)"),
             ],
         ),
         (
@@ -2122,11 +2203,11 @@ fn help_lines() -> Vec<Line<'static>> {
     lines
 }
 
-fn check_line(c: &Check, t: Duration) -> Line<'static> {
+fn check_line(c: &Check, spin: &'static str) -> Line<'static> {
     let (mark, style) = match c.state {
         CheckState::Ok => ("✔", Style::new().fg(OK)),
         CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
-        CheckState::Pending => (spinner(t), Style::new().fg(MUTED)),
+        CheckState::Pending => (spin, Style::new().fg(MUTED)),
     };
     let mut spans = vec![
         Span::styled(format!(" {mark} "), style),
@@ -2142,7 +2223,7 @@ fn check_line(c: &Check, t: Duration) -> Line<'static> {
 }
 
 /// Palette command names, in Tab completion order.
-const COMMANDS: [&str; 19] = [
+const COMMANDS: [&str; 20] = [
     "checkpoint",
     "cp",
     "mark",
@@ -2162,6 +2243,7 @@ const COMMANDS: [&str; 19] = [
     "overlay",
     "latency",
     "lat",
+    "settings",
 ];
 
 /// What Tab adds to a half-typed palette command name (`""` when it is complete).
@@ -2317,6 +2399,8 @@ mod tests {
         View {
             session: "2026-11-19_ep042".into(),
             readme: "sessions/2026/2026-11-19_ep042/README.md".into(),
+            config: Arc::default(),
+            config_path: "aftercast.toml".into(),
             meta: SessionMeta {
                 schema_version: 1,
                 id: "x".into(),
@@ -2567,9 +2651,17 @@ mod tests {
                 action: QuestionAction::Dismiss
             }
         );
-        // `]` again: Super Chats only; `t` thanks without showing.
+        // `]` again: Super Chats only. A supporter is not dismissed; `t` thanks them.
         press(&mut app, KeyCode::Char(']'));
         screen(&mut app, &view);
+        press(&mut app, KeyCode::Char('x'));
+        assert!(cmd_rx.try_recv().is_err());
+        assert!(
+            app.message
+                .as_deref()
+                .unwrap_or("")
+                .contains("thanked with t")
+        );
         press(&mut app, KeyCode::Char('t'));
         assert_eq!(
             cmd_rx.try_recv().unwrap(),
@@ -2749,6 +2841,40 @@ mod tests {
         step(&mut feed, &more, 100);
         assert_eq!(feed.cursor, None);
         assert_eq!(shown(&mut feed, &more).0[3], "message 11");
+    }
+
+    #[test]
+    fn comma_opens_settings_and_a_change_is_saved_then_reloaded() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        let dir = tempfile::tempdir().unwrap();
+        view.config_path = dir.path().join("aftercast.toml");
+        std::fs::write(
+            &view.config_path,
+            "# keep me
+",
+        )
+        .unwrap();
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        press(&mut app, KeyCode::Char(','));
+        let text = screen(&mut app, &view);
+        assert!(
+            text.contains("Settings") && text.contains("Wrap long lines"),
+            "{text}"
+        );
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Reload);
+        let file = std::fs::read_to_string(&view.config_path).unwrap();
+        assert!(
+            file.starts_with("# keep me") && file.contains("wrap_lines = true"),
+            "{file}"
+        );
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]

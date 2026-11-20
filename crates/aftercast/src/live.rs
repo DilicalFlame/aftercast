@@ -320,7 +320,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let mut controller = Controller {
         home: home.clone(),
         config_path: config_path.to_path_buf(),
-        config,
+        config: Arc::new(config),
         clock: clock.clone(),
         yt,
         session,
@@ -581,7 +581,8 @@ fn watch_readme(
 struct Controller {
     home: Home,
     config_path: PathBuf,
-    config: Config,
+    /// Shared with the TUI's settings page through [`View`].
+    config: Arc<Config>,
     clock: Arc<Clock>,
     yt: Arc<Client>,
     session: Session,
@@ -966,7 +967,7 @@ impl Controller {
         match Config::load(&self.config_path) {
             Ok(config) => {
                 self.renderer = Renderer::new(&self.home.path(&config.paths.templates));
-                self.config = config;
+                self.config = Arc::new(config);
                 self.notice = Some("config and templates reloaded".into());
             }
             Err(e) => self.notice = Some(format!("reload failed, keeping old config: {e}")),
@@ -1071,6 +1072,8 @@ impl Controller {
         View {
             session: self.session.name(),
             readme: self.session.readme(),
+            config: self.config.clone(),
+            config_path: self.config_path.clone(),
             meta: self.session.meta.clone(),
             state: self.state.clone(),
             chapters: self.chapters.clone(),
