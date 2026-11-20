@@ -275,10 +275,12 @@ streaming, `M` unmute the mic) and the steps where it cannot (start OBS and turn
 WebSocket server, create a missing scene, turn on live chat, a taken overlay port, the quota
 reserve, the shell hook); a live level meter for every audio input (mics first; green, amber
 from -12 dB, red from -3 dB, "muted"), so you can talk and watch your mic before going live;
-and the sources of the scene on air. Checks that are fine fold into one row of `✔ name`
-chips, and on a wide terminal checks, audio and the scene on air sit in three columns, so
-the page fits on one screen; a column that is still too long scrolls to keep the focus in
-view.
+and the sources of the scene on air. Every section takes the full width and only the rows it
+needs, so nothing is cut: what needs you (each fix wrapped under its text), a long meter per
+audio input, the scene on air as a row of switches, and the fine checks folded into rows of
+`✔ name` chips. When it all does not fit, the page scrolls as one, keeping the focus in view,
+and the bottom border says `↓ more`; on very wide terminals (160 columns) the sections sit in
+two columns.
 
 Everything on Home can be reached and used from the keyboard: `j/k` (or arrows) move through
 the buttons, the checks aftercast can fix, every audio input and every source on air; `Tab`
