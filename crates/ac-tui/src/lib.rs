@@ -852,7 +852,7 @@ impl App {
         .areas(info);
         frame.render_widget(readme_line(view), a);
         frame.render_widget(notice, b);
-        frame.render_widget(Line::from(self.keys_line(view)), keys);
+        frame.render_widget(Line::from(self.keys_line()), keys);
         self.draw_modal(frame, view);
     }
 
@@ -1036,6 +1036,10 @@ impl App {
         }
         let focused = self.focus == Pane::Chapters;
         let block = pane_block(Pane::Chapters, "Chapters", extra, focused);
+        let block = match self.pane_keys(Pane::Chapters, view) {
+            Some(keys) => block.title_bottom(keys),
+            None => block,
+        };
         if items.is_empty() {
             let hint = empty_state(&[
                 "No chapters yet.",
@@ -1088,6 +1092,10 @@ impl App {
             (width, height),
         );
         let block = pane_block(Pane::Chat, "Chat", scrolled_hint(newer), focused);
+        let block = match self.pane_keys(Pane::Chat, view) {
+            Some(keys) => block.title_bottom(keys),
+            None => block,
+        };
         if rows.is_empty() {
             let connected = view.state.services.get("chat") == Some(&ServiceStatus::Ok);
             let text = if connected {
@@ -1188,6 +1196,10 @@ impl App {
             ));
         }
         let block = pane_block(Pane::Questions, "Inbox", extra, focused);
+        let block = match self.pane_keys(Pane::Questions, view) {
+            Some(keys) => block.title_bottom(keys),
+            None => block,
+        };
         if items.is_empty() {
             let other = format!(
                 "Nothing under {}; ] shows the next filter.",
@@ -1248,11 +1260,50 @@ impl App {
             (width, height),
         );
         let block = pane_block(Pane::Log, "Event log", scrolled_hint(newer), focused);
+        let block = match self.pane_keys(Pane::Log, view) {
+            Some(keys) => block.title_bottom(keys),
+            None => block,
+        };
         frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
     /// Hints for the current mode and pane, most useful first (cut at the right edge).
-    fn keys_line(&self, view: &View) -> Vec<Span<'static>> {
+    /// The focused pane's own keys, drawn faded in its bottom border.
+    fn pane_keys(&self, pane: Pane, view: &View) -> Option<Line<'static>> {
+        if self.focus != pane {
+            return None;
+        }
+        let pairs: &[(&str, &str)] = match pane {
+            // Questions are answered or dismissed; supporters are thanked.
+            Pane::Questions => match self.selected_item(view).map(|q| q.support.is_some()) {
+                Some(true) => &[
+                    ("Enter", "on stream/done"),
+                    ("t", "thank"),
+                    ("[ ]", "filter"),
+                ],
+                Some(false) => &[
+                    ("Enter", "on stream/answered"),
+                    ("x", "dismiss"),
+                    ("[ ]", "filter"),
+                ],
+                None => &[("[ ]", "filter")],
+            },
+            Pane::Chapters => &[("e", "edit"), ("d", "delete"), ("j/k", "move")],
+            Pane::Chat | Pane::Log => &[("j/k", "read"), ("G", "newest")],
+        };
+        let mut spans = vec![Span::raw(" ")];
+        for (i, (k, label)) in pairs.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(" · ", Style::new().fg(FAINT)));
+            }
+            spans.push(Span::styled(*k, Style::new().fg(MUTED)));
+            spans.push(Span::styled(format!(" {label}"), Style::new().fg(FAINT)));
+        }
+        spans.push(Span::raw(" "));
+        Some(Line::from(spans))
+    }
+
+    fn keys_line(&self) -> Vec<Span<'static>> {
         let pairs: &[(&str, &str)] = match &self.mode {
             Mode::Settings(page) => return page.hints(),
             Mode::Input {
@@ -1261,27 +1312,9 @@ impl App {
             } => &[("Enter", "run"), ("Tab", "complete"), ("Esc", "cancel")],
             Mode::Input { .. } => &[("Enter", "save"), ("Esc", "cancel")],
             Mode::Preview { .. } => &[("Enter", "push"), ("j/k", "scroll"), ("Esc", "close")],
+            // Global keys only, so this line never shifts; each pane shows its own keys
+            // in its bottom border.
             _ => {
-                let pane: &[(&str, &str)] = match self.focus {
-                    // Questions are answered or dismissed; supporters are thanked.
-                    Pane::Questions => {
-                        match self.selected_item(view).map(|q| q.support.is_some()) {
-                            Some(true) => &[
-                                ("Enter", "on stream/done"),
-                                ("t", "thank"),
-                                ("[ ]", "filter"),
-                            ],
-                            Some(false) => &[
-                                ("Enter", "on stream/answered"),
-                                ("x", "dismiss"),
-                                ("[ ]", "filter"),
-                            ],
-                            None => &[("[ ]", "filter")],
-                        }
-                    }
-                    Pane::Chapters => &[("e", "edit"), ("d", "delete")],
-                    Pane::Chat | Pane::Log => &[("j/k", "read"), ("G", "newest")],
-                };
                 let global: &[(&str, &str)] = &[
                     ("c", "checkpoint"),
                     ("m", "mark"),
@@ -1297,7 +1330,7 @@ impl App {
                     ("q", "quit"),
                 ];
                 let mut spans = vec![Span::raw(" ")];
-                for (k, label) in pane.iter().chain(global) {
+                for (k, label) in global {
                     spans.extend(hint(k, label));
                 }
                 return spans;
