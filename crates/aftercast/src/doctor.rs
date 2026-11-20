@@ -73,7 +73,7 @@ pub fn run(home: &Home, config_path: Option<PathBuf>) -> u8 {
         &["--version"],
         config.post.ocr,
     ));
-    checks.extend(transcriber(&config));
+    checks.extend(transcriber(home, &config));
     checks.push(clock());
     checks.push(keyring());
     checks.push(obs(&config));
@@ -159,7 +159,7 @@ fn tool(name: &str, program: &Path, args: &[&str], required: bool) -> Check {
     }
 }
 
-fn transcriber(config: &Config) -> Vec<Check> {
+fn transcriber(home: &Home, config: &Config) -> Vec<Check> {
     let paths = &config.paths;
     let package = match config.post.transcriber {
         Transcriber::FasterWhisper => "faster-whisper",
@@ -177,7 +177,7 @@ fn transcriber(config: &Config) -> Vec<Check> {
             ];
         }
     };
-    let python = &paths.python;
+    let python = &home.python(&paths.python);
     let version =
         format!("import importlib.metadata as m; print('{package}', m.version('{package}'))");
     let cuda = match first_line(

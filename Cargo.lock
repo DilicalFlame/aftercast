@@ -169,6 +169,7 @@ dependencies = [
  "clap",
  "futures-util",
  "httpdate",
+ "indicatif",
  "jsonschema",
  "keyring",
  "notify",

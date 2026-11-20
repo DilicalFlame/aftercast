@@ -243,9 +243,11 @@ viewer, and ideally a third account you made a moderator.
 
 ### Setup (once)
 
-1. `pip install faster-whisper`, then `aftercast doctor`. Expect: `faster-whisper` and `cuda`
-   ok (a CUDA device count of at least 1). If `cuda` fails, install CUDA 12 and cuDNN 9, or
-   set `post.whisper_compute_type = "int8_float16"` and retry.
+1. `aftercast setup`. Expect: `ok` lines for uv, the Python 3.12 venv, faster-whisper and the
+   model, then `done: 1 CUDA device(s) visible`; `<home>/tools` holds `python`, `whisper` and
+   `models`. Rerun: the venv step is skipped and the rest finishes quickly.
+2. `aftercast doctor`. Expect: `python` pointing at `tools\whisper`, `faster-whisper` and
+   `cuda` ok.
 
 ### A short stream
 

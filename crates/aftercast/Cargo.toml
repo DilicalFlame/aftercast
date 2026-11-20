@@ -23,6 +23,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-std", "io-util"] }
 ulid.workspace = true
 httpdate.workspace = true
+indicatif = "0.18"
 keyring.workspace = true
 tracing.workspace = true
 ac-core.workspace = true

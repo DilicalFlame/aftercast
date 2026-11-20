@@ -5,6 +5,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
+use ac_core::Home;
 use ac_core::config::Transcriber;
 use ac_core::time::hms;
 use serde::{Deserialize, Serialize};
@@ -120,13 +121,24 @@ pub fn without(mut words: Words, ranges: &[(f64, f64)]) -> Words {
     words
 }
 
+/// Writes the bundled Python helper to `<home>/state/transcribe.py` and returns its path.
+pub fn write_helper(home: &Home) -> Result<PathBuf> {
+    let script = home.join("state/transcribe.py");
+    if let Some(dir) = script.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    fs::write(&script, HELPER).map_err(|e| format!("{}: {e}", script.display()))?;
+    Ok(script)
+}
+
 /// faster-whisper or whisperx through the bundled Python helper.
 fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
-    let script = ctx.home.join("state/transcribe.py");
-    fs::write(&script, HELPER).map_err(|e| format!("{}: {e}", script.display()))?;
+    let script = write_helper(&ctx.home)?;
     let out = ctx.derived("words.raw.json");
+    let python = ctx.home.python(&ctx.config.paths.python);
+    let models = ctx.home.models_dir();
     let p = &ctx.config.post;
-    let args: Vec<OsString> = vec![
+    let mut args: Vec<OsString> = vec![
         script.into(),
         "--backend".into(),
         backend.into(),
@@ -141,10 +153,13 @@ fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
         "--out".into(),
         out.clone().into(),
     ];
+    if models.exists() {
+        args.extend(["--models".into(), models.into()]);
+    }
     let model = p.whisper_model.clone();
     ctx.note_tool("transcriber", format!("{backend} {model}"));
     ctx.set_message(format!("{backend} {model}"));
-    tool::run_lines(ctx, "python", args, |line| {
+    tool::run_lines(ctx, &python.to_string_lossy(), args, |line| {
         if let Some(f) = line
             .strip_prefix("progress ")
             .and_then(|f| f.trim().parse().ok())

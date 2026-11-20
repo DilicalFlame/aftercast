@@ -224,15 +224,20 @@ everything; `--language hi` overrides `post.language` for this run. Each tool's 
 and output go to `derived/logs/<stage>.log`. Nothing from privacy mode or around a leaked
 secret is kept in frames, transcript or the index.
 
-Transcription runs locally on the GPU with faster-whisper (once):
+Transcription runs locally on the GPU with faster-whisper. Install it once with
+[uv](https://docs.astral.sh/uv/) (`winget install astral-sh.uv`):
 
 ```powershell
-pip install faster-whisper
-# CUDA 12 + cuDNN 9 for the GPU; `aftercast doctor` checks both
+aftercast setup
 ```
 
+This puts Python 3.12, faster-whisper, the CUDA 12 / cuDNN 9 libraries and the
+`post.whisper_model` model under `<home>/tools` (a few GB; log in `logs/setup.log`), and
+`aftercast post` uses them while `paths.python` is left at `python`. Rerun it after changing
+the model. Only the NVIDIA driver is needed from outside.
+
 Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. whisperx
-(`pip install whisperx`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,
+(`post.transcriber = "whisperx"`, also installed by `aftercast setup`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,
 `post.whisper_model` = path of a ggml `.bin`) work too.
 
 ### Other commands
@@ -240,6 +245,7 @@ Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. w
 ```text
 aftercast init               create the home folder
 aftercast doctor             check tools, config, clock, keyring, OBS
+aftercast setup              install the transcriber and model under <home>/tools
 aftercast auth login | status | logout | obs
 aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
 aftercast post [SESSION]     process a finished session (see above)

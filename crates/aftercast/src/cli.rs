@@ -57,6 +57,8 @@ pub enum Command {
     },
     /// Check tools, config, clock and keyring
     Doctor,
+    /// Install the transcriber (Python, faster-whisper, CUDA libraries, model) under <home>/tools with uv
+    Setup,
     /// List sessions
     Sessions {
         #[arg(long)]

@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub use ctx::Ctx;
+pub use transcribe::write_helper;
 
 pub type Result<T> = std::result::Result<T, String>;
 

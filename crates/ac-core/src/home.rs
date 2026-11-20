@@ -89,6 +89,30 @@ impl Home {
         self.join("logs")
     }
 
+    /// Python of the transcription venv that `aftercast setup` creates.
+    pub fn whisper_python(&self) -> PathBuf {
+        if cfg!(windows) {
+            self.join("tools/whisper/Scripts/python.exe")
+        } else {
+            self.join("tools/whisper/bin/python")
+        }
+    }
+
+    /// Where `aftercast setup` downloads whisper models.
+    pub fn models_dir(&self) -> PathBuf {
+        self.join("tools/models")
+    }
+
+    /// `paths.python`, or the setup venv's Python when that is left at the default `python`.
+    pub fn python(&self, configured: &Path) -> PathBuf {
+        let venv = self.whisper_python();
+        if configured == Path::new("python") && venv.exists() {
+            venv
+        } else {
+            configured.to_path_buf()
+        }
+    }
+
     /// Creates the home tree and default files. Existing files are never overwritten.
     pub fn init(&self) -> Result<Vec<(PathBuf, InitAction)>> {
         for dir in DIRS {

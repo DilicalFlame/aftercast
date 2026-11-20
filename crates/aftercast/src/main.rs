@@ -4,6 +4,7 @@ mod error;
 mod live;
 mod script;
 mod secret;
+mod setup;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -37,6 +38,7 @@ fn run(cli: Cli) -> Result<u8> {
     match cli.command {
         Some(Command::Init) => init(&home),
         Some(Command::Doctor) => Ok(doctor::run(&home, cli.config)),
+        Some(Command::Setup) => setup::run(&home, &config_path),
         Some(Command::Auth { action }) => runtime()?.block_on(auth(&home, &config_path, action)),
         Some(Command::ShellHook { shell }) => shell_hook(&home, &config_path, shell),
         Some(Command::Post {
