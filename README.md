@@ -262,6 +262,11 @@ an existing one); `q` before that quits and a new draft is deleted, leaving ever
 was. OBS changes you make from Home (recording, mute) are real, because you asked for them.
 Headless runs (`--no-tui`) start at once, as before.
 
+With `obs.record_into_session` (on by default, Settings › OBS), OBS records into the session's
+`media` folder while aftercast runs, so the master lives with the session instead of your
+Videos folder; OBS's own folder is put back when aftercast exits (needs OBS 30.2 or newer).
+Quitting a draft while OBS records stops the recording first, then deletes the draft with it.
+
 Home fills the screen (the status bar would only repeat it): the episode, its link and what
 is live; the decision ("Enter Start the session", "q Quit, keep nothing") with a verdict
 ("Everything is ready." or "2 things need you below."); every check, what needs you first,
@@ -270,9 +275,16 @@ streaming, `M` unmute the mic) and the steps where it cannot (start OBS and turn
 WebSocket server, create a missing scene, turn on live chat, a taken overlay port, the quota
 reserve, the shell hook); a live level meter for every audio input (mics first; green, amber
 from -12 dB, red from -3 dB, "muted"), so you can talk and watch your mic before going live;
-and the sources of the scene on air. `,` opens settings and `:` the palette from Home too.
-Once started, `0` brings Home back and `Enter`, `Esc` or `0` go to the dashboard. Levels are
-asked of OBS only while Home is open.
+and the sources of the scene on air.
+
+Everything on Home can be reached and used from the keyboard: `j/k` (or arrows) move through
+the buttons, the checks aftercast can fix, every audio input and every source on air; `Tab`
+jumps to the next group; `Enter` or `Space` does what the focused row offers (start, quit,
+start recording, mute or unmute, show or hide), and the key hints say what that is; on an
+audio input `h/l` change the volume by 1 dB, on a source `h` hides and `l` shows. `R`, `S`
+and `M` work from anywhere on the page, `,` opens settings and `:` the palette. Once started,
+`0` brings Home back and `Esc` or `0` go to the dashboard. Levels are asked of OBS only while
+Home is open.
 
 Mutes and source changes are logged as `obs.mute` and `obs.source` events, whether made from
 aftercast or in OBS.

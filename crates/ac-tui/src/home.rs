@@ -1,12 +1,13 @@
 //! The Home page (`0`, and where a session starts): what this session is, whether
 //! everything is ready (every check, with how to fix what is not), live audio meters and
-//! the scene on air.
+//! the scene on air. Everything on it can be reached with j/k and acted on with Enter.
 //!
-//! A new session is a draft here: nothing lasting or public happens until Enter starts
-//! it, and `q` before that quits keeping nothing.
+//! A new session is a draft here: nothing lasting or public happens until it is started,
+//! and quitting before that keeps nothing.
 
 use std::time::Duration;
 
+use ac_core::command::{Command, OutputAction};
 use ac_core::obs::{Audio, Media};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -14,8 +15,118 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
-use crate::theme::{ACCENT, FAINT, INFO, MUTED, OK, RAISED, TEXT, WARN};
+use crate::theme::{ACCENT, FAINT, INFO, MUTED, OK, RAISED, SELECTED, TEXT, WARN};
 use crate::{Check, CheckState, View};
+
+/// Something on Home that j/k can reach and Enter acts on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Item {
+    /// Start (or resume) the session.
+    Start,
+    /// Quit; a new draft keeps nothing.
+    Quit,
+    Dashboard,
+    /// A check aftercast can fix with this key (R, S, M).
+    Fix(char),
+    /// An audio input: Enter mutes or unmutes, h/l change the volume.
+    Audio(String),
+    /// A source in the scene on air: Enter shows or hides it.
+    Source(String),
+}
+
+/// What `Enter` on an item asks, as a command for the session (None: handled by the TUI).
+pub fn command(item: &Item, view: &View) -> Option<Command> {
+    Some(match item {
+        Item::Start => Command::Begin,
+        Item::Quit => Command::Quit,
+        Item::Dashboard => return None,
+        Item::Fix('R') => Command::Record {
+            action: OutputAction::Start,
+        },
+        Item::Fix('S') => Command::Stream { on: true },
+        Item::Fix(_) => Command::Mute {
+            input: mic(&view.obs)?.name.clone(),
+            on: Some(false),
+        },
+        Item::Audio(name) => Command::Mute {
+            input: name.clone(),
+            on: None,
+        },
+        Item::Source(source) => Command::Source {
+            source: source.clone(),
+            scene: None,
+            visible: None,
+        },
+    })
+}
+
+/// Everything j/k can reach, in order: the decision, the fixes, audio, the scene on air.
+pub fn items(view: &View) -> Vec<Item> {
+    let mut items = if view.begun {
+        vec![Item::Dashboard]
+    } else {
+        vec![Item::Start, Item::Quit]
+    };
+    items.extend(
+        sorted_checks(view)
+            .into_iter()
+            .filter_map(|c| fix_key(c).map(Item::Fix)),
+    );
+    items.extend(
+        sorted_audio(view)
+            .into_iter()
+            .map(|a| Item::Audio(a.name.clone())),
+    );
+    let scene = view.state.scene.as_deref().unwrap_or_default();
+    items.extend(
+        view.obs
+            .sources_in(scene)
+            .map(|i| Item::Source(i.source.clone())),
+    );
+    items
+}
+
+/// The first item of the next group after `pick` (Tab), wrapping to the top.
+pub fn next_group(items: &[Item], pick: usize) -> usize {
+    let group = |i: &Item| match i {
+        Item::Start | Item::Quit | Item::Dashboard => 0,
+        Item::Fix(_) => 1,
+        Item::Audio(_) => 2,
+        Item::Source(_) => 3,
+    };
+    let now = items.get(pick).map_or(0, group);
+    items
+        .iter()
+        .enumerate()
+        .skip(pick)
+        .find(|(_, i)| group(i) != now)
+        .map_or(0, |(n, _)| n)
+}
+
+/// What Enter does on `item`, for the key hints.
+pub fn what(item: &Item, view: &View) -> String {
+    match item {
+        Item::Start if view.fresh => "start the session".into(),
+        Item::Start => "resume the session".into(),
+        Item::Quit if view.fresh => "quit, keep nothing".into(),
+        Item::Quit => "quit".into(),
+        Item::Dashboard => "go to the dashboard".into(),
+        Item::Fix('R') => "start recording".into(),
+        Item::Fix('S') => "start streaming".into(),
+        Item::Fix(_) => "unmute the mic".into(),
+        Item::Audio(name) => match view.obs.audio(name) {
+            Some(a) if a.muted => format!("unmute {name}"),
+            _ => format!("mute {name}"),
+        },
+        Item::Source(source) => match view
+            .obs
+            .item(view.state.scene.as_deref().unwrap_or_default(), source)
+        {
+            Some(i) if i.enabled => format!("hide {source}"),
+            _ => format!("show {source}"),
+        },
+    }
+}
 
 /// The key Home offers for a check that is not fine, if aftercast can fix it.
 pub fn fix_key(check: &Check) -> Option<char> {
@@ -30,14 +141,34 @@ pub fn fix_key(check: &Check) -> Option<char> {
     }
 }
 
-/// The microphone `M` mutes: the first audio input capture.
+/// The microphone `M` acts on: the first audio input capture.
 pub fn mic(obs: &Media) -> Option<&Audio> {
     obs.audio.iter().find(|a| a.is_mic())
 }
 
+/// What needs you first, then what is still checking, then what is fine.
+fn sorted_checks(view: &View) -> Vec<&Check> {
+    let mut checks: Vec<&Check> = view.preflight.iter().collect();
+    checks.sort_by_key(|c| match c.state {
+        CheckState::Fail => 0,
+        CheckState::Pending => 1,
+        CheckState::Ok => 2,
+    });
+    checks
+}
+
+/// Mics first.
+fn sorted_audio(view: &View) -> Vec<&Audio> {
+    let mut audio: Vec<&Audio> = view.obs.audio.iter().collect();
+    audio.sort_by_key(|a| !a.is_mic());
+    audio
+}
+
 /// Draws the page over everything but the key hints (the status bar would repeat it).
-/// `live` is the status bar's live part; `spin` a spinner frame.
-pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static str) {
+/// `live` is the status bar's live part, `spin` a spinner frame, `pick` the focused item.
+pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static str, pick: usize) {
+    let items = items(view);
+    let focus = items.get(pick).cloned();
     let area = frame.area();
     let outer = Rect {
         height: area.height.saturating_sub(1),
@@ -102,7 +233,7 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         who,
     );
 
-    // The one decision on this page.
+    // The decision: buttons (the focused one lit), a verdict, and what starting means.
     let (ok, failing, total) = counts(&view.preflight);
     let ready = failing == 0 && ok == total;
     let verdict = match failing {
@@ -114,66 +245,84 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
             Style::new().fg(ACCENT).bold(),
         ),
     };
-    let lines = if draft {
-        let what = if view.fresh {
+    let button = |label: &str, item: Item, color: Color| {
+        if focus.as_ref() == Some(&item) {
+            Span::styled(
+                format!(" ▶ {label} "),
+                Style::new().fg(Color::Black).bg(color).bold(),
+            )
+        } else {
+            Span::styled(format!("   {label} "), Style::new().fg(TEXT).bg(RAISED))
+        }
+    };
+    let go = if ready { OK } else { WARN };
+    let (buttons, about) = if draft {
+        let start = if view.fresh {
+            "Start the session"
+        } else {
+            "Resume the session"
+        };
+        let quit = if view.fresh {
+            "Quit, keep nothing"
+        } else {
+            "Quit"
+        };
+        let about = if view.fresh {
             "Nothing is kept until you start. Starting creates the session, pushes the \
              description (if set), and starts key capture and the bot."
         } else {
-            "This session already exists; Resume continues it where it stopped."
+            "This session already exists; resuming continues it where it stopped."
         };
-        let (start, quit) = if view.fresh {
-            (" Enter  Start the session ", " q  Quit, keep nothing ")
-        } else {
-            (" Enter  Resume the session ", " q  Quit ")
-        };
-        vec![
-            Line::from(vec![
-                Span::styled(
-                    start,
-                    Style::new()
-                        .fg(Color::Black)
-                        .bg(if ready { OK } else { WARN })
-                        .bold(),
-                ),
-                Span::raw("   "),
-                Span::styled(quit, Style::new().fg(TEXT).bg(RAISED)),
-                Span::raw("   "),
-                verdict,
-            ]),
-            Line::raw(""),
-            Line::styled(what, Style::new().fg(MUTED)),
-        ]
+        (
+            vec![
+                button(start, Item::Start, go),
+                Span::raw("  "),
+                button(quit, Item::Quit, ACCENT),
+            ],
+            about,
+        )
     } else {
-        vec![
-            Line::from(vec![
+        (
+            vec![
                 Span::styled(" ● STARTED ", Style::new().fg(Color::Black).bg(OK).bold()),
-                Span::raw("   "),
-                verdict,
-            ]),
-            Line::raw(""),
-            Line::styled(
-                "Enter, Esc or 0 go to the dashboard; 0 brings you back here.",
-                Style::new().fg(MUTED),
-            ),
-        ]
+                Span::raw("  "),
+                button("Dashboard", Item::Dashboard, ACCENT),
+            ],
+            "0 brings you back here from the dashboard.",
+        )
     };
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), action);
+    let mut first = buttons;
+    first.push(Span::raw("   "));
+    first.push(verdict);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(first),
+            Line::raw(""),
+            Line::styled(about, Style::new().fg(MUTED)),
+        ])
+        .wrap(Wrap { trim: true }),
+        action,
+    );
 
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(body);
+    let lit = |line: Line<'static>, on: bool, width: u16| {
+        if !on {
+            return line;
+        }
+        let mut spans = vec![Span::styled("▍", Style::new().fg(ACCENT))];
+        spans.extend(line.spans.into_iter().skip(1));
+        let used: usize = spans.iter().map(Span::width).sum();
+        spans.push(Span::raw(" ".repeat((width as usize).saturating_sub(used))));
+        Line::from(spans).style(Style::new().bg(SELECTED))
+    };
 
     // Checks: what needs you first, each with how to fix it; then the fine ones.
-    let mut checks: Vec<&Check> = view.preflight.iter().collect();
-    checks.sort_by_key(|c| match c.state {
-        CheckState::Fail => 0,
-        CheckState::Pending => 1,
-        CheckState::Ok => 2,
-    });
     let mut lines = vec![
         section(&format!("Checks · {ok} of {total} fine")),
         Line::raw(""),
     ];
-    for c in checks {
+    for c in sorted_checks(view) {
         let (mark, style) = match c.state {
             CheckState::Ok => ("✔", Style::new().fg(OK)),
             CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
@@ -184,7 +333,10 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         } else {
             Style::new().fg(TEXT).bold()
         };
+        let key = fix_key(c);
+        let on = key.is_some() && focus == key.map(Item::Fix);
         let mut spans = vec![
+            Span::raw(" "),
             Span::styled(format!("{mark} "), style),
             Span::styled(c.label.clone(), label),
         ];
@@ -194,20 +346,21 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
                 Style::new().fg(FAINT),
             ));
         }
-        lines.push(Line::from(spans));
+        lines.push(lit(Line::from(spans), on, left.width));
         if !c.fix.is_empty() {
-            let mut fix = vec![Span::raw("  ")];
-            if let Some(key) = fix_key(c) {
-                fix.push(Span::styled(
-                    format!(" {key} "),
-                    Style::new().fg(Color::Black).bg(WARN).bold(),
-                ));
-                fix.push(Span::raw(" "));
-            } else {
-                fix.push(Span::styled("↳ ", Style::new().fg(WARN)));
+            let mut fix = vec![Span::raw(" "), Span::raw("  ")];
+            match key {
+                Some(key) => {
+                    fix.push(Span::styled(
+                        format!(" {key} "),
+                        Style::new().fg(Color::Black).bg(WARN).bold(),
+                    ));
+                    fix.push(Span::raw(" "));
+                }
+                None => fix.push(Span::styled("↳ ", Style::new().fg(WARN))),
             }
             fix.push(Span::styled(c.fix.clone(), Style::new().fg(WARN)));
-            lines.push(Line::from(fix));
+            lines.push(lit(Line::from(fix), on, left.width));
         }
     }
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), left);
@@ -216,11 +369,10 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
     let width = right.width as usize;
     let mut lines = vec![section("Audio"), Line::raw("")];
     let levels = view.levels.lock().map(|m| m.clone()).unwrap_or_default();
-    let mut audio: Vec<&Audio> = view.obs.audio.iter().collect();
-    audio.sort_by_key(|a| !a.is_mic());
+    let audio = sorted_audio(view);
     if audio.is_empty() {
         lines.push(Line::styled(
-            "OBS is not connected, or has no audio inputs.",
+            " OBS is not connected, or has no audio inputs.",
             Style::new().fg(FAINT).italic(),
         ));
     }
@@ -230,23 +382,31 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         .max()
         .unwrap_or(0)
         .min(16);
-    let bar = width.saturating_sub(name_width + 18).clamp(6, 30);
+    let bar = width.saturating_sub(name_width + 26).clamp(6, 30);
     for a in audio {
         let level = levels.get(&a.name).copied();
-        let mut spans = vec![Span::styled(
-            format!("{:<name_width$.name_width$} ", a.name),
-            Style::new().fg(TEXT),
-        )];
+        let mut spans = vec![
+            Span::raw(" "),
+            Span::styled(
+                format!("{:<name_width$.name_width$} ", a.name),
+                Style::new().fg(TEXT),
+            ),
+        ];
         spans.extend(meter(level, a.muted, bar));
         spans.push(Span::styled(
             match (a.muted, level) {
                 (true, _) => " muted".to_owned(),
                 (false, Some(db)) if db > -60.0 => format!(" {db:>4.0} dB"),
-                (false, _) => "  …".to_owned(),
+                (false, _) => "  …   ".to_owned(),
             },
             Style::new().fg(if a.muted { ACCENT } else { MUTED }),
         ));
-        lines.push(Line::from(spans));
+        spans.push(Span::styled(
+            format!("  vol {:+.0}", a.volume_db),
+            Style::new().fg(FAINT),
+        ));
+        let on = focus.as_ref() == Some(&Item::Audio(a.name.clone()));
+        lines.push(lit(Line::from(spans), on, right.width));
     }
     let scene = view.state.scene.clone().unwrap_or_default();
     if !scene.is_empty() {
@@ -259,13 +419,16 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
             } else {
                 ("●━━", Style::new().fg(FAINT))
             };
-            lines.push(Line::from(vec![
+            let line = Line::from(vec![
+                Span::raw(" "),
                 Span::styled(format!("{mark} "), style),
                 Span::styled(
                     item.source.clone(),
                     Style::new().fg(if item.enabled { TEXT } else { MUTED }),
                 ),
-            ]));
+            ]);
+            let on = focus.as_ref() == Some(&Item::Source(item.source.clone()));
+            lines.push(lit(line, on, right.width));
         }
     }
     frame.render_widget(Paragraph::new(lines), right);
@@ -278,7 +441,10 @@ fn counts(checks: &[Check]) -> (usize, usize, usize) {
 }
 
 fn section(name: &str) -> Line<'static> {
-    Line::styled(name.to_uppercase(), Style::new().fg(MUTED).bold())
+    Line::styled(
+        format!(" {}", name.to_uppercase()),
+        Style::new().fg(MUTED).bold(),
+    )
 }
 
 /// A level meter: `cells` wide over -60..0 dBFS, green, amber from -12, red from -3.
@@ -306,33 +472,25 @@ pub fn meter(level: Option<f32>, muted: bool, cells: usize) -> Vec<Span<'static>
     spans
 }
 
-/// Key hints for the page: the decision first, then the fixes on offer.
-pub fn hints(view: &View) -> Vec<(String, String)> {
-    let mut pairs: Vec<(String, String)> = if view.begun {
-        vec![("Enter".into(), "dashboard".into())]
-    } else if view.fresh {
-        vec![
-            ("Enter".into(), "start".into()),
-            ("q".into(), "quit, keep nothing".into()),
-        ]
-    } else {
-        vec![
-            ("Enter".into(), "resume".into()),
-            ("q".into(), "quit".into()),
-        ]
-    };
-    let mut mic_fixed = false;
-    for c in &view.preflight {
-        if let Some(key) = fix_key(c) {
-            mic_fixed |= key == 'M';
-            let what = c.fix.split(" (").next().unwrap_or_default();
-            pairs.push((key.to_string(), what.to_owned()));
+/// Key hints: what Enter does on the focused item first, then the rest.
+pub fn hints(view: &View, pick: usize) -> Vec<(String, String)> {
+    let items = items(view);
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    if let Some(item) = items.get(pick) {
+        pairs.push(("Enter".into(), what(item, view)));
+        if matches!(item, Item::Audio(_)) {
+            pairs.push(("h/l".into(), "volume".into()));
         }
     }
-    if !mic_fixed && let Some(m) = mic(&view.obs) {
-        let what = if m.muted { "unmute mic" } else { "mute mic" };
-        pairs.push(("M".into(), what.into()));
-    }
+    pairs.push(("j/k".into(), "move".into()));
+    pairs.push(("Tab".into(), "next group".into()));
+    pairs.push(if view.begun {
+        ("q".into(), "quit".into())
+    } else if view.fresh {
+        ("q".into(), "quit, keep nothing".into())
+    } else {
+        ("q".into(), "quit".into())
+    });
     pairs.push((",".into(), "settings".into()));
     pairs.push((":".into(), "command".into()));
     pairs
@@ -379,5 +537,21 @@ mod tests {
         assert_eq!(fix_key(&check("OBS recording", CheckState::Ok)), None);
         assert_eq!(fix_key(&check("Mic live", CheckState::Fail)), Some('M'));
         assert_eq!(fix_key(&check("Config valid", CheckState::Fail)), None);
+    }
+
+    #[test]
+    fn tab_jumps_to_the_next_group() {
+        let items = [
+            Item::Start,
+            Item::Quit,
+            Item::Fix('R'),
+            Item::Audio("Mic".into()),
+            Item::Audio("Desktop".into()),
+            Item::Source("Camera".into()),
+        ];
+        assert_eq!(next_group(&items, 0), 2);
+        assert_eq!(next_group(&items, 2), 3);
+        assert_eq!(next_group(&items, 4), 5);
+        assert_eq!(next_group(&items, 5), 0);
     }
 }

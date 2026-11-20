@@ -343,6 +343,8 @@ struct App {
     picked: bool,
     /// Audio meters were asked of OBS (a page showing them is open).
     meters: bool,
+    /// The focused item on Home.
+    home_pick: usize,
     /// Palette lines run before, oldest first (`<home>/state/history`), read on first use.
     history: Option<Vec<String>>,
     filter: Filter,
@@ -383,6 +385,7 @@ impl App {
             pick: 0,
             picked: false,
             meters: false,
+            home_pick: 0,
             history: None,
             filter: Filter::All,
             split: [0.45, 0.6, 0.5],
@@ -724,27 +727,11 @@ impl App {
                 _ => self.mode = Mode::Preview { scroll },
             },
             Mode::Help => {}
-            // Home: Enter, Esc or 0 go to the dashboard; R, S and M fix what they say.
-            // Before the session starts: Enter starts it, q quits (keeping nothing for a
-            // new one); other keys stay here.
-            Mode::Preflight if !view.begun => match key.code {
-                KeyCode::Enter => self.send(Command::Begin),
-                KeyCode::Char('q') => self.finish(Command::Quit),
-                KeyCode::Char(c @ ('R' | 'r' | 'S' | 's' | 'M' | 'm' | ',' | ':')) => {
-                    self.mode = Mode::Preflight;
-                    self.home_key(c, view);
-                }
-                _ => self.mode = Mode::Preflight,
-            },
-            Mode::Preflight => match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('0') => {}
-                KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
-                KeyCode::Char(c @ ('R' | 'r' | 'S' | 's' | 'M' | 'm' | ',' | ':')) => {
-                    self.mode = Mode::Preflight;
-                    self.home_key(c, view);
-                }
-                _ => self.mode = Mode::Preflight,
-            },
+            // Home: j/k move through everything on it, Enter acts on what is focused.
+            Mode::Preflight => {
+                self.mode = Mode::Preflight;
+                self.home_input(key.code, view);
+            }
             Mode::ConfirmStreamStop => {
                 if key.code == KeyCode::Char('y') {
                     self.send(Command::Stream { on: false });
@@ -921,6 +908,69 @@ impl App {
             Pane::Chat => {
                 let ids: Vec<&str> = view.chat.iter().map(|m| m.id.as_str()).collect();
                 self.chat_feed.step(delta, &ids)
+            }
+        }
+    }
+
+    /// A key on Home. Before the session starts, Esc and 0 stay (Home is the only way in).
+    fn home_input(&mut self, code: KeyCode, view: &View) {
+        let items = home::items(view);
+        let last = items.len().saturating_sub(1);
+        self.home_pick = self.home_pick.min(last);
+        let focused = items.get(self.home_pick).cloned();
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => self.home_pick = (self.home_pick + 1).min(last),
+            KeyCode::Char('k') | KeyCode::Up => self.home_pick = self.home_pick.saturating_sub(1),
+            KeyCode::Char('g') | KeyCode::Home => self.home_pick = 0,
+            KeyCode::Char('G') | KeyCode::End => self.home_pick = last,
+            KeyCode::Tab => self.home_pick = home::next_group(&items, self.home_pick),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if let Some(item) = focused {
+                    self.home_act(item, view);
+                }
+            }
+            // h/l: an input's volume by 1 dB, a source hidden or shown.
+            KeyCode::Char(c @ ('h' | 'l')) => {
+                let up = c == 'l';
+                match focused {
+                    Some(home::Item::Audio(name)) => {
+                        if let Some(a) = view.obs.audio(&name) {
+                            let db = (a.volume_db + if up { 1.0 } else { -1.0 }).round();
+                            self.send(Command::Volume { input: name, db });
+                        }
+                    }
+                    Some(home::Item::Source(source)) => self.send(Command::Source {
+                        source,
+                        scene: None,
+                        visible: Some(up),
+                    }),
+                    _ => {}
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('0') if view.begun => self.mode = Mode::Normal,
+            KeyCode::Char('q') if view.begun => self.mode = Mode::ConfirmQuit,
+            KeyCode::Char('q') => self.finish(Command::Quit),
+            KeyCode::Char(c @ ('R' | 'r' | 'S' | 's' | 'M' | 'm' | ',' | ':')) => {
+                self.home_key(c, view)
+            }
+            _ => {}
+        }
+    }
+
+    /// Enter on a Home item.
+    fn home_act(&mut self, item: home::Item, view: &View) {
+        match item {
+            home::Item::Dashboard => self.mode = Mode::Normal,
+            home::Item::Quit => self.finish(Command::Quit),
+            // Started: on to the dashboard.
+            home::Item::Start => {
+                self.send(Command::Begin);
+                self.mode = Mode::Normal;
+            }
+            other => {
+                if let Some(cmd) = home::command(&other, view) {
+                    self.send(cmd);
+                }
             }
         }
     }
@@ -1716,7 +1766,7 @@ impl App {
     fn keys_line(&self, view: &View) -> Vec<Span<'static>> {
         if self.mode == Mode::Preflight {
             let mut spans = vec![Span::raw(" ")];
-            for (k, label) in home::hints(view) {
+            for (k, label) in home::hints(view, self.home_pick) {
                 spans.extend(hint(&k, &label));
             }
             return spans;
@@ -1973,7 +2023,7 @@ impl App {
                 // The status bar's live part, without the episode chip the page already shows.
                 let mut status = self.status_line(view);
                 status.spans.remove(0);
-                home::draw(frame, view, status, self.spin());
+                home::draw(frame, view, status, self.spin(), self.home_pick);
                 return;
             }
             Mode::ConfirmStreamStop => (
@@ -3091,7 +3141,7 @@ mod tests {
             text.contains("STARTED") && text.contains("1 thing needs you"),
             "{text}"
         );
-        assert!(text.contains(" R  start recording"), "fix key: {text}");
+        assert!(text.contains("▶ Dashboard"), "{text}");
         assert!(text.contains("✖ OBS recording"), "{text}");
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &view);
 
@@ -3706,8 +3756,8 @@ mute Mic/Aux
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock.clone(), rx, cmd_tx);
         let text = screen(&mut app, &view);
-        assert!(text.contains("Enter  Start the session"), "{text}");
-        assert!(text.contains("q  Quit, keep nothing"), "{text}");
+        assert!(text.contains("▶ Start the session"), "{text}");
+        assert!(text.contains("Quit, keep nothing"), "{text}");
         // No status bar on Home: the page starts at the top.
         assert!(text.lines().next().unwrap().contains("aftercast"), "{text}");
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
@@ -3723,6 +3773,84 @@ mute Mic/Aux
         press(&mut app, KeyCode::Char('q'));
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Quit);
         assert!(app.exit);
+    }
+
+    #[test]
+    fn home_is_navigated_with_j_k_and_enter_acts_on_the_focused_item() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.begun = false;
+        view.fresh = true;
+        view.state.scene = Some("Code".into());
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        let draw = |app: &mut App| {
+            let mut t =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 32)).unwrap();
+            t.draw(|f| app.draw(f, &view)).unwrap();
+            let b = t.backend().buffer().clone();
+            (0..b.area.height)
+                .map(|y| {
+                    (0..b.area.width)
+                        .map(|x| b[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                )
+        };
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        // Start, Quit, the recording fix, the mic, the camera.
+        press(&mut app, KeyCode::Char('j'));
+        assert!(draw(&mut app).contains("▶ Quit, keep nothing"));
+        press(&mut app, KeyCode::Char('j'));
+        let text = draw(&mut app);
+        assert!(text.contains("Enter  start recording"), "{text}");
+        assert!(text.contains(" R  start recording in OBS"), "{text}");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Record {
+                action: ac_core::command::OutputAction::Start
+            }
+        );
+        // Tab: on to audio; Enter mutes, l raises the volume by 1 dB.
+        press(&mut app, KeyCode::Tab);
+        assert!(draw(&mut app).contains("Enter  mute Mic/Aux"));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Mute {
+                input: "Mic/Aux".into(),
+                on: None
+            }
+        );
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Volume {
+                input: "Mic/Aux".into(),
+                db: -2.0
+            }
+        );
+        // j: the camera in the scene on air; Enter hides it.
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Source {
+                source: "Camera".into(),
+                scene: None,
+                visible: None
+            }
+        );
+        // Tab wraps to Start; Enter starts.
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
     }
 
     #[test]
