@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+ac-library.workspace = true
 ac-capture.workspace = true
 ac-core.workspace = true
 ac-template.workspace = true

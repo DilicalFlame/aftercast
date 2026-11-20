@@ -45,9 +45,10 @@ pub enum Stage {
     Segments,
     Secrets,
     Index,
+    Library,
 }
 
-pub const STAGES: [Stage; 13] = [
+pub const STAGES: [Stage; 14] = [
     Stage::Ingest,
     Stage::Vod,
     Stage::Calibrate,
@@ -61,6 +62,7 @@ pub const STAGES: [Stage; 13] = [
     Stage::Segments,
     Stage::Secrets,
     Stage::Index,
+    Stage::Library,
 ];
 
 impl Stage {
@@ -79,6 +81,7 @@ impl Stage {
             Self::Segments => "segments",
             Self::Secrets => "secrets",
             Self::Index => "index",
+            Self::Library => "library",
         }
     }
 
@@ -108,6 +111,7 @@ impl Stage {
                 Ingest, Calibrate, Transcribe, Silence, Git, Frames, Ocr, Activity, Segments,
                 Secrets,
             ],
+            Library => &[Index],
         }
     }
 
@@ -186,6 +190,10 @@ impl Stage {
                 vec![events, session, ctx.dir.join("chat.jsonl")],
                 String::new(),
             ),
+            Self::Library => (
+                vec![session, ctx.dir.join("ai/suggestions.json")],
+                String::new(),
+            ),
         }
     }
 
@@ -204,6 +212,7 @@ impl Stage {
             Self::Segments => segments::run(ctx),
             Self::Secrets => secrets::run(ctx),
             Self::Index => index::run(ctx),
+            Self::Library => ac_library::Library::open(&ctx.home)?.upsert(&ctx.dir),
         }
     }
 }

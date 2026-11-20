@@ -239,7 +239,7 @@ fn post_pipeline_on_a_ten_minute_session() {
         };
         assert!(expected, "{stage}: {what}");
     }
-    assert_eq!(first.len(), 13);
+    assert_eq!(first.len(), 14);
 
     let derived = dir.join("derived");
     let master = read(&dir.join("media/master.json"));
@@ -385,8 +385,10 @@ fn post_pipeline_on_a_ten_minute_session() {
 
     // --from frames: earlier stages untouched, frames onward rerun.
     for (stage, what) in outcomes(&post(&["--from", "frames"])) {
-        let rerun =
-            ["frames", "activity", "segments", "secrets", "index"].contains(&stage.as_str());
+        let rerun = [
+            "frames", "activity", "segments", "secrets", "index", "library",
+        ]
+        .contains(&stage.as_str());
         if rerun {
             assert_eq!(what, "done", "{stage}");
         } else {
