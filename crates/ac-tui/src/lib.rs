@@ -266,6 +266,8 @@ struct App {
     /// The notice on screen and when it appeared, so it can fade.
     notice: (String, Instant),
     users: UserColors,
+    /// `w`: wrap every line in Chat, Questions and the log instead of cutting them.
+    wrap_all: bool,
     /// Pane proportions as drawn: they glide towards `split_target`.
     split: Split,
     split_target: Split,
@@ -299,6 +301,7 @@ impl App {
             flash_until: None,
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
+            wrap_all: false,
             split: [0.45, 0.6, 0.5],
             split_target: [0.45, 0.6, 0.5],
             last_frame: Instant::now(),
@@ -541,6 +544,17 @@ impl App {
             KeyCode::Char(':') => self.mode = input(Prompt::Palette),
             KeyCode::Char('s') => self.mode = Mode::Preview { scroll: 0 },
             KeyCode::Char('r') => self.edit_readme = Some(view.readme.clone()),
+            KeyCode::Char('w') => {
+                self.wrap_all = !self.wrap_all;
+                self.message = Some(
+                    if self.wrap_all {
+                        "wrapping every line (w: one line each)"
+                    } else {
+                        "one line each, the cursor line opens in full (w: wrap all)"
+                    }
+                    .into(),
+                );
+            }
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
             KeyCode::Char('b') => self.send(Command::Brb {
@@ -969,7 +983,7 @@ impl App {
             return;
         }
         let open = focused.then(|| entries.len() - 1);
-        let rows = feed_rows(entries, open, width, height);
+        let rows = feed_rows(entries, open, self.wrap_all, width, height);
         frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
@@ -1006,7 +1020,7 @@ impl App {
             .into_iter()
             .enumerate()
             .map(|(i, line)| {
-                if focused && self.questions.selected() == Some(i) {
+                if self.wrap_all || (focused && self.questions.selected() == Some(i)) {
                     let indent = line.width() - line.spans[3].width();
                     ListItem::new(wrap(line, width, indent))
                 } else {
@@ -1066,7 +1080,7 @@ impl App {
         let focused = self.focus == Pane::Log;
         let block = pane_block(Pane::Log, "Event log", scrolled_hint(scroll), focused);
         let open = focused.then(|| entries.len().checked_sub(1)).flatten();
-        let rows = feed_rows(entries, open, width, height);
+        let rows = feed_rows(entries, open, self.wrap_all, width, height);
         frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
@@ -1095,6 +1109,7 @@ impl App {
                     ("?", "help"),
                     ("n", "note"),
                     ("r", "readme"),
+                    ("w", "wrap"),
                     (":", "command"),
                     ("q", "quit"),
                 ];
@@ -1508,6 +1523,7 @@ fn scrolled_hint(scroll: usize) -> Vec<Span<'static>> {
 fn feed_rows(
     entries: Vec<(Line<'static>, usize)>,
     open: Option<usize>,
+    wrap_all: bool,
     width: usize,
     height: usize,
 ) -> Vec<Line<'static>> {
@@ -1521,6 +1537,10 @@ fn feed_rows(
                 let pad = width.saturating_sub(row.width());
                 row.spans.push(Span::raw(" ".repeat(pad)));
                 rows.push_front(row.style(Style::new().bg(SELECTED)));
+            }
+        } else if wrap_all {
+            for row in wrap(line, width, indent).into_iter().rev() {
+                rows.push_front(row);
             }
         } else {
             rows.push_front(truncate(line, width));
@@ -1849,6 +1869,7 @@ fn help_lines() -> Vec<Line<'static>> {
                 ("1 2 3 4", "focus Chat, Questions, Chapters, Event log"),
                 ("Tab", "next pane (Shift+Tab: previous)"),
                 ("j/k", "move or scroll; g/G first/newest"),
+                ("w", "wrap every line / one line each (cursor line opens)"),
                 ("e / d", "edit / delete the selected chapter"),
                 ("Enter", "show the selected question; again: answered"),
                 ("x", "dismiss the selected question"),
@@ -2437,9 +2458,10 @@ mod tests {
         );
 
         let entries = vec![(line(), 5), (line(), 5)];
-        let rows = feed_rows(entries.clone(), None, 16, 10);
+        let rows = feed_rows(entries.clone(), None, false, 16, 10);
         assert_eq!(rows.len(), 2, "one row per entry when nothing is open");
-        let rows = feed_rows(entries, Some(1), 16, 3);
+        assert_eq!(feed_rows(entries.clone(), None, true, 16, 10).len(), 8);
+        let rows = feed_rows(entries, Some(1), false, 16, 3);
         assert_eq!(
             rows.len(),
             3,
