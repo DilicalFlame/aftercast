@@ -52,6 +52,7 @@
         "question.show",
         "question.answered",
         "question.dismiss",
+        "question.reopen",
         "bot.cmd",
         "bot.reply",
         "mod.action",
@@ -730,6 +731,31 @@
         "properties": {
           "type": {
             "const": "question.dismiss"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "qid": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "qid"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "question.reopen"
           }
         }
       },

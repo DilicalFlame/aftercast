@@ -376,6 +376,13 @@ impl Controller {
             (QuestionAction::Dismiss, QuestionState::Open | QuestionState::Shown) => {
                 EventKind::QuestionDismiss { qid }
             }
+            // From Done: back on stream, or back to waiting.
+            (QuestionAction::Show, QuestionState::Answered | QuestionState::Dismissed) => {
+                EventKind::QuestionShow { qid }
+            }
+            (QuestionAction::Reopen, QuestionState::Answered | QuestionState::Dismissed) => {
+                EventKind::QuestionReopen { qid }
+            }
             _ => return,
         };
         // Answered questions can become chapters (stream.chapter_on_question).

@@ -99,6 +99,8 @@ pub enum QuestionAction {
     Show,
     Answer,
     Dismiss,
+    /// Back to waiting in the Inbox, after an answer, thanks or dismissal.
+    Reopen,
 }
 
 #[cfg(test)]

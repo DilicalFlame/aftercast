@@ -47,6 +47,8 @@ pub struct Question {
     pub support: Option<crate::chat::Support>,
     pub state: QuestionState,
     pub shown_at: Option<Timestamp>,
+    /// When it was answered, thanked or dismissed; `None` while it waits.
+    pub done_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -153,13 +155,23 @@ impl SessionState {
                 support: support.clone(),
                 state: QuestionState::Open,
                 shown_at: None,
+                done_at: None,
             }),
-            EventKind::QuestionShow { qid } => self.question(qid, QuestionState::Shown, Some(e.t)),
+            EventKind::QuestionShow { qid } => {
+                self.question(qid, QuestionState::Shown, Some(e.t));
+                self.question_done(qid, None);
+            }
             EventKind::QuestionAnswered { qid } => {
-                self.question(qid, QuestionState::Answered, None)
+                self.question(qid, QuestionState::Answered, None);
+                self.question_done(qid, Some(e.t));
             }
             EventKind::QuestionDismiss { qid } => {
-                self.question(qid, QuestionState::Dismissed, None)
+                self.question(qid, QuestionState::Dismissed, None);
+                self.question_done(qid, Some(e.t));
+            }
+            EventKind::QuestionReopen { qid } => {
+                self.question(qid, QuestionState::Open, None);
+                self.question_done(qid, None);
             }
             EventKind::BrbStart { return_scene, .. } => {
                 self.brb = true;
@@ -211,6 +223,12 @@ impl SessionState {
         self.log.push_back(e.clone());
     }
 
+    fn question_done(&mut self, qid: &str, at: Option<Timestamp>) {
+        if let Some(q) = self.questions.iter_mut().find(|q| q.qid == qid) {
+            q.done_at = at;
+        }
+    }
+
     fn question(&mut self, qid: &str, state: QuestionState, shown_at: Option<Timestamp>) {
         if let Some(q) = self.questions.iter_mut().find(|q| q.qid == qid) {
             q.state = state;
@@ -224,6 +242,35 @@ mod tests {
     use super::*;
     use crate::event::{Event, EventLog, read_events};
     use crate::time::Clock;
+
+    #[test]
+    fn handled_questions_record_when_and_reopen_clears_it() {
+        let clock = Clock::new();
+        let mut state = SessionState::default();
+        let add = EventKind::QuestionAdd {
+            qid: "q1".into(),
+            author: "bob".into(),
+            author_id: "UCbob".into(),
+            text: "why?".into(),
+            support: None,
+        };
+        state.apply(&Event::new(&clock, "bot", add));
+        let answered = Event::new(
+            &clock,
+            "tui",
+            EventKind::QuestionAnswered { qid: "q1".into() },
+        );
+        state.apply(&answered);
+        assert_eq!(state.questions[0].state, QuestionState::Answered);
+        assert_eq!(state.questions[0].done_at, Some(answered.t));
+        state.apply(&Event::new(
+            &clock,
+            "tui",
+            EventKind::QuestionReopen { qid: "q1".into() },
+        ));
+        assert_eq!(state.questions[0].state, QuestionState::Open);
+        assert_eq!(state.questions[0].done_at, None);
+    }
 
     #[test]
     fn replay_restores_checkpoints_with_edits_and_deletes() {

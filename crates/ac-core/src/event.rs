@@ -216,6 +216,9 @@ pub enum EventKind {
     QuestionAnswered { qid: String },
     #[serde(rename = "question.dismiss")]
     QuestionDismiss { qid: String },
+    /// An answered or dismissed Inbox item goes back to waiting (undo).
+    #[serde(rename = "question.reopen")]
+    QuestionReopen { qid: String },
     #[serde(rename = "bot.cmd")]
     BotCmd {
         cmd: String,
