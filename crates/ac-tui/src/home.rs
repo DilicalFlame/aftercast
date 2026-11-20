@@ -252,11 +252,13 @@ pub fn short_names(scenes: &[String]) -> Vec<String> {
 /// Draws the page over everything but the key hints.
 pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, focus: &Focus) {
     let area = frame.area();
+    // A margin all round: two columns at the sides, one row above and below (a cell is
+    // about twice as tall as wide), then the footer of key hints.
     let page = Rect {
-        x: area.x + 1,
-        width: area.width.saturating_sub(2),
-        height: area.height.saturating_sub(1),
-        ..area
+        x: area.x + 2,
+        y: area.y + 1,
+        width: area.width.saturating_sub(4),
+        height: area.height.saturating_sub(3),
     };
     // Everything but the footer of key hints.
     frame.render_widget(
@@ -280,7 +282,12 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
         Constraint::Min(3),
     ])
     .areas(page);
-    ctx.header(frame, head);
+    // The decision sits over the right pane, flush with its edges.
+    let right = match view.config.tui.home_layout {
+        HomeLayout::Columns => halves(body)[1],
+        HomeLayout::Tabs => split(body)[1],
+    };
+    ctx.header(frame, head, right.x);
 
     match view.config.tui.home_layout {
         HomeLayout::Columns => {
@@ -303,10 +310,7 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
             ])
             .areas(body);
             frame.render_widget(tab_bar(view, focus.tab), bar);
-            let [left, right] =
-                Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
-                    .spacing(2)
-                    .areas(rest);
+            let [left, right] = split(rest);
             match focus.tab {
                 0 => {
                     ctx.card(frame, Card::Checks, left, false);
@@ -337,6 +341,13 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
             }
         }
     }
+}
+
+/// The `tabs` layout's two panes: the card, and what sits beside it.
+fn split(area: Rect) -> [Rect; 2] {
+    Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
+        .spacing(2)
+        .areas(area)
 }
 
 /// Two columns of `area`, 2 apart.
@@ -416,12 +427,14 @@ impl Ctx<'_> {
     }
 
     /// Logo, episode, link; top right the decision: buttons, state and verdict.
-    fn header(&self, frame: &mut Frame, area: Rect) {
+    /// `pane` is where the right pane starts: the buttons column begins there.
+    fn header(&self, frame: &mut Frame, area: Rect, pane: u16) {
         let view = self.view;
+        let room = (area.x + area.width).saturating_sub(pane).max(40);
         let [logo, who, right] = Layout::horizontal([
             Constraint::Length(14),
             Constraint::Min(10),
-            Constraint::Length(44),
+            Constraint::Length(room),
         ])
         .areas(area);
         // A red play button, 11 by 4. The triangle's edges fall an eighth of a row at a time
@@ -432,17 +445,17 @@ impl Ctx<'_> {
         let under = Style::new().fg(ACCENT).bg(Color::White);
         let red = || Span::styled("           ", fill);
         let row = |cells: Vec<Span<'static>>| {
-            let mut spans = vec![Span::raw(" "), Span::styled("    ", fill)];
+            let mut spans = vec![Span::styled("    ", fill)];
             spans.extend(cells);
             spans.push(Span::styled("   ", fill));
             Line::from(spans)
         };
         frame.render_widget(
             Paragraph::new(vec![
-                Line::from(vec![Span::raw(" "), red()]),
+                Line::from(red()),
                 row(vec![Span::styled("█▅▃▁", white)]),
                 row(vec![Span::styled("█", white), Span::styled("▃▅▇", under)]),
-                Line::from(vec![Span::raw(" "), red()]),
+                Line::from(red()),
             ]),
             logo,
         );

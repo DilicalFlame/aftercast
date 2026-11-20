@@ -3948,7 +3948,10 @@ mute Mic/Aux
         // Top right: the buttons, the draft tag and the verdict; no status bar on Home.
         assert!(text.contains("Start") && text.contains("Quit"), "{text}");
         assert!(text.contains("DRAFT"), "{text}");
-        assert!(text.lines().next().unwrap().contains("#042"), "{text}");
+        // A margin row on top, then the episode.
+        let mut lines = text.lines();
+        assert!(lines.next().unwrap().trim().is_empty(), "{text}");
+        assert!(lines.next().unwrap().contains("#042"), "{text}");
         // The footer of key hints stays under Home.
         assert!(text.lines().last().unwrap().contains("Tab"), "{text}");
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
@@ -4081,7 +4084,7 @@ mute Mic/Aux
         let (_tx, rx) = watch::channel(view.clone());
         let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock.clone(), rx, cmd_tx);
-        let text = text_at(&mut app, &view, 110, 26);
+        let text = text_at(&mut app, &view, 110, 30);
         assert!(text.contains("✔ OBS connected"), "{text}");
         assert!(text.contains("SESSION") && text.contains("MIC"), "{text}");
         // The mic's and camera's hardware.
