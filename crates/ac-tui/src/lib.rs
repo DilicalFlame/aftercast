@@ -1001,12 +1001,20 @@ impl App {
                     Span::raw("  ")
                 };
                 let color = self.users.get(&q.author_id);
-                Line::from(vec![
-                    mark,
+                let mut spans = vec![mark];
+                if let Some(amount) = &q.amount {
+                    spans.push(Span::styled(
+                        format!(" {amount} "),
+                        Style::new().fg(Color::Black).bg(WARN).bold(),
+                    ));
+                    spans.push(Span::raw(" "));
+                }
+                spans.extend([
                     Span::styled(q.author.clone(), Style::new().fg(color).bold()),
                     Span::styled(": ", Style::new().fg(FAINT)),
                     Span::styled(q.text.clone(), Style::new().fg(TEXT)),
-                ])
+                ]);
+                Line::from(spans)
             })
             .collect();
         let focused = self.focus == Pane::Questions;
@@ -1018,20 +1026,34 @@ impl App {
             .enumerate()
             .map(|(i, line)| {
                 if self.wrap_all || (focused && self.questions.selected() == Some(i)) {
-                    let indent = line.width() - line.spans[3].width();
+                    let text = line.spans.last().map_or(0, Span::width);
+                    let indent = line.width() - text;
                     ListItem::new(wrap(line, width, indent))
                 } else {
                     ListItem::new(truncate(line, width))
                 }
             })
             .collect();
-        let extra = vec![Span::styled(
-            format!("({}) ", queue.len()),
+        let supers = queue.iter().filter(|q| q.amount.is_some()).count();
+        let mut extra = vec![Span::styled(
+            format!("{} questions ", queue.len() - supers),
             Style::new().fg(MUTED),
         )];
-        let block = pane_block(Pane::Questions, "Questions", extra, focused);
+        if supers > 0 {
+            extra.push(Span::styled(
+                format!(
+                    "· {supers} Super Chat{} ",
+                    if supers == 1 { "" } else { "s" }
+                ),
+                Style::new().fg(WARN).bold(),
+            ));
+        }
+        let block = pane_block(Pane::Questions, "Inbox", extra, focused);
         if items.is_empty() {
-            let hint = empty_state(&["No questions yet. Viewers ask with !q <question>."]);
+            let hint = empty_state(&[
+                "Nothing waiting. Questions (!q <question>) and Super Chats land here",
+                "and stay until you show them on stream (Enter) or dismiss them (x).",
+            ]);
             frame.render_widget(hint.block(block), area);
             return;
         }
@@ -1393,13 +1415,17 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
 }
 
 /// Questions waiting or on screen, in the order they were asked.
+/// The inbox: Super Chats, then questions, waiting or on screen.
 fn queue(state: &SessionState) -> Vec<&ac_core::session_state::Question> {
     use ac_core::session_state::QuestionState;
-    state
+    let mut list: Vec<_> = state
         .questions
         .iter()
         .filter(|q| matches!(q.state, QuestionState::Open | QuestionState::Shown))
-        .collect()
+        .collect();
+    // Super Chats are pinned above the questions, each group in arrival order.
+    list.sort_by_key(|q| q.amount.is_none());
+    list
 }
 
 fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'static> {
@@ -1837,6 +1863,11 @@ fn summary(e: &Event) -> (String, bool) {
         EventKind::BotReply { mode, text, .. } => {
             (format!("bot ({mode:?}): {text}").to_lowercase(), true)
         }
+        EventKind::QuestionAdd {
+            author,
+            amount: Some(amount),
+            ..
+        } => (format!("Super Chat {amount} from {author}"), false),
         EventKind::QuestionAdd { author, .. } => (format!("question from {author}"), false),
         EventKind::QuestionShow { .. } => ("question on stream".into(), false),
         EventKind::QuestionAnswered { .. } => ("question answered".into(), false),
@@ -1892,6 +1923,9 @@ fn event_icon(e: &Event) -> (&'static str, Color) {
         | EventKind::BrbEnd {}
         | EventKind::PrivacyStart { .. }
         | EventKind::PrivacyEnd {} => ("◐", WARN),
+        EventKind::QuestionAdd {
+            amount: Some(_), ..
+        } => ("◈", WARN),
         EventKind::QuestionAdd { .. }
         | EventKind::QuestionShow { .. }
         | EventKind::QuestionAnswered { .. }
@@ -1932,13 +1966,13 @@ fn help_lines() -> Vec<Line<'static>> {
         (
             "Panes",
             &[
-                ("1 2 3 4", "focus Chat, Questions, Chapters, Event log"),
+                ("1 2 3 4", "focus Chat, Inbox, Chapters, Event log"),
                 ("Tab", "next pane (Shift+Tab: previous)"),
                 ("j/k", "move or scroll; g/G first/newest"),
                 ("w", "wrap every line / one line each (cursor line opens)"),
                 ("e / d", "edit / delete the selected chapter"),
-                ("Enter", "show the selected question; again: answered"),
-                ("x", "dismiss the selected question"),
+                ("Enter", "Inbox: show on stream; again: done"),
+                ("x", "Inbox: dismiss (Super Chats stay pinned until then)"),
             ],
         ),
         (
@@ -2373,12 +2407,19 @@ mod tests {
     fn questions_pane_shows_and_dismisses_and_title_asks() {
         let clock = Arc::new(Clock::new());
         let mut view = sample_view(&clock);
-        for (qid, author) in [("q1", "bob"), ("q2", "cy")] {
+        // The Super Chat arrives last but is pinned first.
+        let asks = [
+            ("q1", "bob", None),
+            ("q2", "cy", None),
+            ("s1", "eve", Some("₹100.00")),
+        ];
+        for (qid, author, amount) in asks {
             let kind = EventKind::QuestionAdd {
                 qid: qid.into(),
                 author: author.into(),
                 author_id: format!("UC{author}"),
                 text: "why rust?".into(),
+                amount: amount.map(Into::into),
             };
             view.state.apply(&Event::new(&clock, "bot", kind));
         }
@@ -2387,16 +2428,24 @@ mod tests {
         let mut app = App::new(clock, rx, cmd_tx);
         app.mode = Mode::Normal;
         let text = screen(&mut app, &view);
-        assert!(text.contains("Questions (2)"), "{text}");
+        assert!(text.contains("1 Super Chat"), "{text}");
+        assert!(
+            text.contains(" ₹100.00  eve: why rust?"),
+            "pinned first: {text}"
+        );
         assert!(
             text.contains("bob: !q why rust over go?"),
             "chat pane: {text}"
         );
-        assert!(text.contains(" 2  Questions (2)"), "numbered panes: {text}");
+        assert!(
+            text.contains(" 2  Inbox 2 questions"),
+            "numbered panes: {text}"
+        );
         assert!(text.contains("lat 4.2s"), "{text}");
 
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
         press(&mut app, KeyCode::BackTab); // Chapters -> Questions
+        press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(

@@ -160,8 +160,8 @@ again resumes the session where it left off.
 | `r` | Edit the session README in Neovim (`nvim --clean`, none of your config) inside the terminal; `:wq` returns to aftercast. Saving re-renders the description, nothing is pushed |
 | `s` | Preview the description; `Enter` pushes it to YouTube |
 | `e` / `d` | Edit / delete the selected chapter |
-| `Enter` / `x` | Questions pane: show on stream (again: answered) / dismiss |
-| `1` `2` `3` `4` | Focus Chat, Questions, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
+| `Enter` / `x` | Inbox: show on stream (again: done) / dismiss |
+| `1` `2` `3` `4` | Focus Chat, Inbox, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
 | `:` | Command palette (`:sync`, `:finalize`, `:scene <name>`, `:say <text>`, `:latency`, `:help`, ...); `Tab` completes the command name |
 | `?` | Help |
@@ -171,7 +171,12 @@ Every chat message and log event keeps to one line, ending in `…` when it is c
 them all instead). Focus Chat or the Event log and a highlighted cursor sits on the newest line,
 opened in full under its author. `j/k` move the cursor through lines that stay put, scrolling
 only at the edges, like an editor; new chat arriving meanwhile does not move it, and `G` follows
-the newest again. The selected question opens the same way. Panes with little in them shrink to fit, so the busy ones get the
+the newest again. The selected Inbox item opens the same way.
+
+The Inbox (pane 2) holds viewer questions (`!q`) and Super Chats. Super Chats and Super
+Stickers are pinned above the questions with their amount, and stay there, across restarts,
+until you show them on stream (`Enter`, again when done) or dismiss them (`x`), so a
+supporter is never lost in a busy chat. Panes with little in them shrink to fit, so the busy ones get the
 room.
 
 Global hotkeys work while another app (your editor) has focus: `Ctrl+Alt+M` mark,
@@ -191,7 +196,7 @@ Commands start with `!`:
 
 | Command | Who | Does |
 |---|---|---|
-| `!q <question>` | anyone | adds to the Questions pane (one open question each) |
+| `!q <question>` | anyone | adds to the Inbox (one open question each) |
 | `!quest`, `!uptime`, `!lurk` | anyone | toast on the overlay |
 | `!chapters`, `!help` | anyone | chat reply |
 | your `[bot.commands]` (`!links`, ...) | anyone | reply as configured |

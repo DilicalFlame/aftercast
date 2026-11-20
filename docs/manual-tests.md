@@ -154,10 +154,10 @@ viewer, and ideally a third account you made a moderator.
 ### Bot and questions
 
 7. Viewer: `!q why rust?`. Expect: the toast overlay says "question received from ...";
-   the Questions pane lists it.
+   the Inbox (pane 2) lists it.
 8. Viewer, 30 s later: `!q another one`. Expect: toast "you already have an open question";
    no second entry.
-9. In the Questions pane (Tab to it), Enter. Expect: the `question` overlay shows the card
+9. In the Inbox (press 2), Enter. Expect: the `question` overlay shows the card
    within a moment; Enter again hides it and marks it answered. `x` dismisses.
 10. Viewer: `!uptime`, `!quest`, `!lurk` (wait 20 s between the same command). Expect:
     toasts on the overlay, nothing in chat.
@@ -187,7 +187,8 @@ viewer, and ideally a third account you made a moderator.
 
 1. With OBS running and not streaming: `aftercast rehearse`. Expect: the TUI with
    "Rehearsal (not live)", OBS connected, and within a minute demo chat messages, two
-   questions in the queue, a `!links` toast and a "Rehearsal chapter" chapter.
+   questions in the queue, eve's ₹100.00 Super Chat pinned above them in the Inbox, a
+   `!links` toast and a "Rehearsal chapter" chapter.
 2. `b`, `p`, `:latency`, `question show`: expect the same scenes and overlays as in a real
    stream.
 3. Edit `<home>\overlays\overlay.css` (or a custom `brb.html`) and save. Expect: OBS shows the

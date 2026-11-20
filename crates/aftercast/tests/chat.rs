@@ -104,6 +104,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
     say("+5s chat ana mod !chapter Parser with nom\n\
          +5s chat dan !links\n\
          +5s chat eve !links\n\
+         +1s chat fay super:₹100.00 keep it up!\n\
          +1s latency\n\
          +240s chat me owner !lat 2350\n\
          +20s latency\n\
@@ -126,9 +127,13 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .collect();
     let of = |ty: &str| -> Vec<&Value> { events.iter().filter(|e| e["type"] == ty).collect() };
 
-    // One question per viewer, near-duplicates dropped.
+    // One question per viewer, near-duplicates dropped; the Super Chat joins the inbox
+    // with its amount.
     let added = of("question.add");
-    assert_eq!(added.len(), 1, "{added:?}");
+    assert_eq!(added.len(), 2, "{added:?}");
+    assert_eq!(added[1]["data"]["amount"], "₹100.00");
+    assert_eq!(added[1]["data"]["text"], "keep it up!");
+    assert!(added[0]["data"].get("amount").is_none());
     let toasts: Vec<&str> = of("bot.cmd")
         .iter()
         .map(|e| e["data"]["cmd"].as_str().unwrap())
@@ -181,7 +186,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .lines()
         .map(|l| serde_json::from_str(l).unwrap())
         .collect();
-    assert_eq!(chat.len(), 7);
+    assert_eq!(chat.len(), 8);
     let ts = |v: &Value| serde_json::from_value::<ac_core::time::Timestamp>(v.clone()).unwrap();
     let received = chat
         .iter()

@@ -112,6 +112,9 @@ impl Controller {
         chat.push_back(msg.clone());
         // History YouTube sends on connect is shown, never executed.
         let fresh = msg.t_published.unwrap_or(msg.t_received) >= self.started;
+        if fresh && let Some(amount) = &msg.amount {
+            return self.super_add(amount, &msg);
+        }
         if msg.kind != ChatKind::Text || !fresh {
             return;
         }
@@ -325,9 +328,33 @@ impl Controller {
                 author: msg.author_name.clone(),
                 author_id: msg.author_channel_id.clone(),
                 text,
+                amount: None,
             },
         );
         self.toast(&format!("question received from {}", msg.author_name));
+    }
+
+    /// A Super Chat or Super Sticker joins the inbox, pinned above the questions, so it
+    /// can be read and thanked long after chat has scrolled past it.
+    fn super_add(&mut self, amount: &str, msg: &ChatMessage) {
+        let text = match msg.text.trim() {
+            "" if msg.kind == ChatKind::Supersticker => "(sticker)".to_owned(),
+            t => t.chars().take(QUESTION_MAX).collect(),
+        };
+        self.emit(
+            "chat",
+            EventKind::QuestionAdd {
+                qid: ulid::Ulid::generate().to_string(),
+                author: msg.author_name.clone(),
+                author_id: msg.author_channel_id.clone(),
+                text,
+                amount: Some(amount.to_owned()),
+            },
+        );
+        self.notice = Some(format!(
+            "{amount} Super Chat from {}: pinned in the inbox",
+            msg.author_name
+        ));
     }
 
     pub(super) fn question(&mut self, qid: String, action: QuestionAction) {
@@ -533,7 +560,8 @@ impl Controller {
             .filter(|q| q.state == QuestionState::Shown)
             .max_by_key(|q| q.shown_at)
             .map_or_else(hide, |q| {
-                (Action::Show, json!({ "author": q.author, "text": q.text }))
+                let data = json!({ "author": q.author, "text": q.text, "amount": q.amount });
+                (Action::Show, data)
             });
         let brb = if self.state.brb {
             let since = self.state.brb_starts.last().map(|t| t.unix_ms());

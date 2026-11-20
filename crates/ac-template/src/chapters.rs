@@ -74,6 +74,10 @@ pub fn candidates(state: &SessionState, stream: &config::Stream) -> Vec<Candidat
     }
     if stream.chapter_on_question {
         out.extend(state.questions.iter().filter_map(|q| {
+            // Super Chats are thanked on stream, not chapters.
+            if q.amount.is_some() {
+                return None;
+            }
             let shown = q.shown_at.filter(|_| q.state != QuestionState::Dismissed)?;
             Some((shown, format!("Q: {}", q.text), ChapterKind::Question))
         }));

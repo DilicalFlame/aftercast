@@ -46,6 +46,8 @@ pub enum Action {
         author: String,
         level: Level,
         text: String,
+        /// `super:<amount>`: a Super Chat.
+        amount: Option<String>,
     },
     /// `question show|answer|dismiss [n]`: the n-th question in the queue (default 1).
     Question(QuestionAction, usize),
@@ -201,7 +203,11 @@ fn obs_update(args: &str) -> Result<ac_obs::Update, String> {
 fn chat_line(args: &str) -> Result<Action, String> {
     let (author, rest) = args
         .split_once(' ')
-        .ok_or_else(|| "chat <author> [owner|mod|member] <text>".to_owned())?;
+        .ok_or_else(|| "chat <author> [super:<amount>] [owner|mod|member] <text>".to_owned())?;
+    let (amount, rest) = match rest.split_once(' ') {
+        Some((word, rest)) if word.starts_with("super:") => (Some(word[6..].to_owned()), rest),
+        _ => (None, rest),
+    };
     let (level, text) = match rest.split_once(' ') {
         Some(("owner", text)) => (Level::Owner, text),
         Some(("mod", text)) => (Level::Mod, text),
@@ -212,6 +218,7 @@ fn chat_line(args: &str) -> Result<Action, String> {
         author: author.into(),
         level,
         text: unquote(text.trim()),
+        amount,
     })
 }
 
@@ -411,6 +418,7 @@ async fn execute(
                 author,
                 level,
                 text,
+                amount,
             } => {
                 let now = clock.now_ts();
                 let msg = ChatMessage {
@@ -422,9 +430,13 @@ async fn execute(
                     is_owner: level == Level::Owner,
                     is_moderator: level == Level::Mod,
                     is_member: level == Level::Member,
-                    kind: ChatKind::Text,
+                    kind: if amount.is_some() {
+                        ChatKind::Superchat
+                    } else {
+                        ChatKind::Text
+                    },
                     text,
-                    amount: None,
+                    amount,
                 };
                 let _ = msgs.send(Msg::Chat(ac_youtube::chat::ChatUpdate::Message(msg)));
             }
@@ -519,7 +531,8 @@ mod tests {
             Action::Chat {
                 author: "ana".into(),
                 level: Level::Mod,
-                text: "!chapter \"Parser\"".into()
+                text: "!chapter \"Parser\"".into(),
+                amount: None,
             }
         );
         assert_eq!(
@@ -527,7 +540,17 @@ mod tests {
             Action::Chat {
                 author: "bob".into(),
                 level: Level::Viewer,
-                text: "!q why rust?".into()
+                text: "!q why rust?".into(),
+                amount: None,
+            }
+        );
+        assert_eq!(
+            line("chat eve super:₹100.00 member keep it up!").action,
+            Action::Chat {
+                author: "eve".into(),
+                level: Level::Member,
+                text: "keep it up!".into(),
+                amount: Some("₹100.00".into()),
             }
         );
         assert_eq!(
