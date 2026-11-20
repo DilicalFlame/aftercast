@@ -276,7 +276,7 @@ its fix, with a key where aftercast can do it (`R`, `S`, `M`); meters are green,
 Top right of Home: `Start` (or `Resume`) and `Quit`, a `DRAFT` tag and the verdict
 ("✖ 2 need you", "✔ ready"). Below, cards you act on have rounded borders (**Checks**,
 **Mixer**, **Sources**); information you only read has none (**Status**, **Session**,
-**Mic**, in the tabs layout). A record light breathes top left. The Mixer and Sources show one scene at a time: the Mixer that scene's audio (its
+**Mic**, in the tabs layout). A red play button sits top left. The Mixer and Sources show one scene at a time: the Mixer that scene's audio (its
 own sources with audio plus OBS's global devices) with level, volume and mute, Sources its
 sources with show/hide.
 

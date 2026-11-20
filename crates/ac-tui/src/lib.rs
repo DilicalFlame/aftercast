@@ -1953,20 +1953,7 @@ impl App {
     }
 
     fn draw_home(&self, frame: &mut Frame, view: &View) {
-        // The record light breathes; still and full with animations off.
-        let glow = if self.motion {
-            self.pulse(Duration::from_millis(1600))
-        } else {
-            1.0
-        };
-        home::draw(
-            frame,
-            view,
-            self.clock.now_ts(),
-            self.spin(),
-            glow,
-            &self.home,
-        );
+        home::draw(frame, view, self.clock.now_ts(), self.spin(), &self.home);
     }
 
     /// The command palette: the line being typed, what the command does, and a list of

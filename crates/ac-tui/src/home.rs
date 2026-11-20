@@ -250,15 +250,7 @@ pub fn short_names(scenes: &[String]) -> Vec<String> {
 }
 
 /// Draws the page over everything but the key hints.
-/// `glow` (0..1) breathes the record light.
-pub fn draw(
-    frame: &mut Frame,
-    view: &View,
-    now: Timestamp,
-    spin: &'static str,
-    glow: f64,
-    focus: &Focus,
-) {
+pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, focus: &Focus) {
     let area = frame.area();
     let page = Rect {
         x: area.x + 1,
@@ -279,7 +271,6 @@ pub fn draw(
         view,
         focus,
         spin,
-        glow,
         now,
         scene,
     };
@@ -407,7 +398,6 @@ struct Ctx<'a> {
     view: &'a View,
     focus: &'a Focus,
     spin: &'static str,
-    glow: f64,
     now: Timestamp,
     /// The scene the Mixer and Sources show.
     scene: String,
@@ -429,18 +419,40 @@ impl Ctx<'_> {
     fn header(&self, frame: &mut Frame, area: Rect) {
         let view = self.view;
         let [logo, who, right] = Layout::horizontal([
-            Constraint::Length(11),
+            Constraint::Length(14),
             Constraint::Min(10),
             Constraint::Length(44),
         ])
         .areas(area);
-        // A record light, breathing.
-        let dot = Style::new().fg(crate::theme::mix(RAISED, ACCENT, 0.35 + 0.65 * self.glow));
+        // A red play button: a rectangle with rounded corners, a white triangle inside
+        // (half blocks, so no glyph of uncertain width).
+        let red = Style::new().fg(ACCENT);
+        let fill = Style::new().bg(ACCENT);
+        let tri = Style::new().fg(Color::White).bg(ACCENT);
         frame.render_widget(
             Paragraph::new(vec![
-                Line::styled("  ▄███▄", dot),
-                Line::styled(" ███████", dot),
-                Line::styled("  ▀███▀", dot),
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled("▗", red),
+                    Span::styled("   ", fill),
+                    Span::styled("▄", tri),
+                    Span::styled("     ", fill),
+                    Span::styled("▖", red),
+                ]),
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled("    ", fill),
+                    Span::styled("█▌", tri),
+                    Span::styled("     ", fill),
+                ]),
+                Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled("▝", red),
+                    Span::styled("   ", fill),
+                    Span::styled("▀", tri),
+                    Span::styled("     ", fill),
+                    Span::styled("▘", red),
+                ]),
             ]),
             logo,
         );
