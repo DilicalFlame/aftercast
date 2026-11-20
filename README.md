@@ -189,8 +189,8 @@ title (All, Questions, Super Chats, Members, Done, each with its count; empty on
 when the pane is narrow); unfocused, the title just says how many supporters wait.
 
 Handled items are never lost. Done lists what you answered (✔), thanked (♥) or dismissed (✕),
-newest first with the time; `Enter` there shows one on stream again and `u` puts it back to
-waiting. Anywhere in the Inbox, `u` undoes the last one you handled. Messages members write in chat stay in chat.
+newest first with the time; `Enter` or `u` there puts one back to waiting, where it can go
+on stream again. Anywhere in the Inbox, `u` undoes the last one you handled. Messages members write in chat stay in chat.
 
 Panes with little in them shrink to fit, so the busy ones get the room.
 

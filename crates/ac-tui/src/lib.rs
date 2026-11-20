@@ -700,6 +700,10 @@ impl App {
                 _ => self.move_selection(isize::MAX / 2, view),
             },
             KeyCode::Home | KeyCode::Char('g') => self.move_selection(-isize::MAX / 2, view),
+            // In Done, Enter (like u) puts the item back to waiting.
+            KeyCode::Enter if self.focus == Pane::Questions && self.filter == Filter::Done => {
+                self.undo(view)
+            }
             KeyCode::Enter if self.focus == Pane::Questions => {
                 self.question(view, QuestionAction::Show)
             }
@@ -1356,11 +1360,10 @@ impl App {
                 let can_undo = view.state.questions.iter().any(|q| q.done_at.is_some());
                 let mut pairs: Vec<(&str, String)> = match self.selected_item(view) {
                     None => Vec::new(),
-                    // Done: what u and Enter would do now.
-                    Some(_) if self.filter == Filter::Done => vec![
-                        ("Enter", "show again".into()),
-                        ("u", "back to waiting".into()),
-                    ],
+                    // Done: Enter and u both put it back to waiting.
+                    Some(_) if self.filter == Filter::Done => {
+                        vec![("Enter/u", "back to waiting".into())]
+                    }
                     Some(q) => {
                         let supporter = q.support.is_some();
                         let enter = if q.state == QuestionState::Shown {
@@ -2304,7 +2307,10 @@ fn help_lines() -> Vec<Line<'static>> {
                 ("Enter", "Inbox: show on stream; again: answered / done"),
                 ("t", "Inbox: thank a supporter without showing"),
                 ("x", "Inbox: dismiss a question"),
-                ("u", "Inbox: undo the last answer, thanks or dismissal"),
+                (
+                    "u",
+                    "Inbox: undo the last answer, thanks or dismissal (Done: Enter too)",
+                ),
                 (
                     "[ ]",
                     "Inbox: filter All, Questions, Super Chats, Members, Done",
@@ -3092,18 +3098,19 @@ mod tests {
         assert!(rows[0].contains("✕") && rows[0].contains("cy"), "{rows:?}");
         assert!(rows[1].contains("♥") && rows[1].contains("eve"), "{rows:?}");
         assert!(rows[2].contains("✔") && rows[2].contains("bob"), "{rows:?}");
-        assert!(
-            text.contains("Enter show again · u back to waiting"),
-            "{text}"
-        );
+        assert!(text.contains("Enter/u back to waiting"), "{text}");
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(
             cmd_rx.try_recv().unwrap(),
             Command::Question {
                 qid: "s1".into(),
-                action: QuestionAction::Show
+                action: QuestionAction::Reopen
             }
+        );
+        assert_eq!(
+            app.message.as_deref(),
+            Some("eve's Super Chat is back in the Inbox")
         );
         press(&mut app, KeyCode::Char('x'));
         assert!(cmd_rx.try_recv().is_err(), "x does nothing in Done");
