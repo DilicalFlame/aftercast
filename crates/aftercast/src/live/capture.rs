@@ -127,7 +127,7 @@ impl Controller {
             let data = match (rec.combo(), &rec.ch) {
                 (Some(combo), _) => json!({ "combo": combo }),
                 (None, Some(ch)) => json!({ "ch": ch }),
-                (None, None) if rec.k == "BackSpace" => json!({ "back": true }),
+                (None, None) if rec.k == "Backspace" => json!({ "back": true }),
                 (None, None) => json!({ "key": rec.k }),
             };
             self.overlays.send(OverlayMsg {
