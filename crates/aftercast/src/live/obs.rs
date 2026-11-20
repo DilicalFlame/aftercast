@@ -102,6 +102,12 @@ impl Controller {
                     );
                 }
             }
+            Update::Levels(levels) => {
+                if let Ok(mut map) = self.obs_levels.lock() {
+                    map.clear();
+                    map.extend(levels);
+                }
+            }
             Update::Stream(state) => self.stream_changed(state),
             Update::Record { state, path } => self.record_changed(state, path),
             Update::Failed(error) => {
@@ -380,6 +386,23 @@ impl Controller {
                     Request::ItemEnabled { scene, id, enabled } => {
                         Update::ItemEnabled { scene, id, enabled }
                     }
+                    Request::Record(action) => {
+                        use ac_core::command::OutputAction as A;
+                        let state = match action {
+                            A::Start => OutputState::Started,
+                            A::Stop => OutputState::Stopped,
+                            A::Pause => OutputState::Paused,
+                            A::Resume => OutputState::Resumed,
+                        };
+                        let path = (action == A::Start).then(|| "D:/OBS/mock.mkv".to_owned());
+                        Update::Record { state, path }
+                    }
+                    Request::Stream(on) => Update::Stream(if on {
+                        OutputState::Started
+                    } else {
+                        OutputState::Stopped
+                    }),
+                    // The fake OBS has no audio to measure.
                     _ => return,
                 };
                 msgs.send(Msg::Obs(echo)).is_ok()
@@ -387,6 +410,66 @@ impl Controller {
         };
         if !sent {
             self.notice = Some("OBS is not connected".into());
+        }
+    }
+
+    /// `:record`: OBS reports the result as a record state change.
+    pub(super) fn record(&mut self, action: ac_core::command::OutputAction) {
+        use ac_core::command::OutputAction as A;
+        if self.obs_scenes.is_none() {
+            self.notice = Some("OBS is not connected".into());
+            return;
+        }
+        let recording = matches!(
+            self.state.obs_record,
+            Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
+        );
+        let paused = self.state.obs_record == Some(OutputState::Paused);
+        let refused = match action {
+            A::Start if recording => Some("OBS is already recording"),
+            A::Stop | A::Pause if !recording => Some("OBS is not recording"),
+            A::Pause if paused => Some("the recording is already paused"),
+            A::Resume if !paused => Some("the recording is not paused"),
+            _ => None,
+        };
+        if let Some(why) = refused {
+            self.notice = Some(why.into());
+            return;
+        }
+        self.obs_request(Request::Record(action));
+    }
+
+    /// `:stream start|stop`.
+    pub(super) fn stream(&mut self, on: bool) {
+        if self.obs_scenes.is_none() {
+            self.notice = Some("OBS is not connected".into());
+            return;
+        }
+        let streaming = matches!(
+            self.state.obs_stream,
+            Some(OutputState::Started | OutputState::Reconnecting)
+        );
+        if streaming == on {
+            self.notice = Some(
+                if on {
+                    "OBS is already streaming"
+                } else {
+                    "OBS is not streaming"
+                }
+                .into(),
+            );
+            return;
+        }
+        self.obs_request(Request::Stream(on));
+    }
+
+    /// Audio levels are asked of OBS only while a page shows them.
+    pub(super) fn meters(&mut self, on: bool) {
+        if !on && let Ok(mut map) = self.obs_levels.lock() {
+            map.clear();
+        }
+        if let ObsLink::Real(tx) = &self.obs {
+            let _ = tx.send(Request::Meters(on));
         }
     }
 

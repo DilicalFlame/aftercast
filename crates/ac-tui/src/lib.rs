@@ -3,6 +3,7 @@
 //! The UI only reads [`View`] snapshots and sends [`Command`]s; the controller owns state.
 //! Times are captured when a key is pressed, before any prompt opens.
 
+mod home;
 mod palette;
 mod settings;
 mod theme;
@@ -59,6 +60,8 @@ pub struct View {
     pub config_path: std::path::PathBuf,
     /// OBS scenes, audio inputs and scene sources (empty while OBS is down).
     pub obs: Arc<ac_core::obs::Media>,
+    /// Live audio peaks per input, filled while a page with meters is open.
+    pub levels: ac_core::obs::Levels,
     pub meta: SessionMeta,
     pub state: SessionState,
     pub chapters: Vec<Chapter>,
@@ -168,6 +171,8 @@ enum Mode {
     ConfirmTitle(String),
     /// The settings page (`,`).
     Settings(settings::Page),
+    /// `:stream stop` asks first: ending the broadcast cannot be undone.
+    ConfirmStreamStop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,6 +335,10 @@ struct App {
     /// The highlighted palette suggestion, and whether ↑/↓ chose it.
     pick: usize,
     picked: bool,
+    /// Audio meters were asked of OBS (a page showing them is open).
+    meters: bool,
+    /// Palette lines run before, oldest first (`<home>/state/history`), read on first use.
+    history: Option<Vec<String>>,
     filter: Filter,
     /// Pane proportions as drawn: they glide towards `split_target`.
     split: Split,
@@ -367,6 +376,8 @@ impl App {
             motion: true,
             pick: 0,
             picked: false,
+            meters: false,
+            history: None,
             filter: Filter::All,
             split: [0.45, 0.6, 0.5],
             split_target: [0.45, 0.6, 0.5],
@@ -491,7 +502,19 @@ impl App {
             // 10 frames a second keeps the spinners and pulses smooth; ratatui only
             // writes the cells that changed.
             // While panes resize, draw at 60 frames a second.
-            let frame = if self.resizing() { 16 } else { 100 };
+            // OBS sends audio levels only while the Home page shows them.
+            let want = self.mode == Mode::Preflight;
+            if want != self.meters {
+                self.meters = want;
+                self.send(Command::Meters { on: want });
+            }
+            let frame = if self.resizing() {
+                16
+            } else if self.mode == Mode::Preflight {
+                home::FRAME.as_millis() as u64
+            } else {
+                100
+            };
             if event::poll(Duration::from_millis(frame))?
                 && let event::Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
@@ -670,7 +693,45 @@ impl App {
                 }
                 _ => self.mode = Mode::Preview { scroll },
             },
-            Mode::Help | Mode::Preflight => {}
+            Mode::Help => {}
+            // Home: Enter, Esc or 0 go to the dashboard; R, S and M fix what they say.
+            Mode::Preflight => match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('0' | 'q') => {}
+                KeyCode::Char('R' | 'r') => {
+                    self.send(Command::Record {
+                        action: ac_core::command::OutputAction::Start,
+                    });
+                    self.mode = Mode::Preflight;
+                }
+                KeyCode::Char('S' | 's') => {
+                    self.send(Command::Stream { on: true });
+                    self.mode = Mode::Preflight;
+                }
+                KeyCode::Char('M' | 'm') => {
+                    if let Some(mic) = home::mic(&view.obs) {
+                        let input = mic.name.clone();
+                        self.send(Command::Mute { input, on: None });
+                    }
+                    self.mode = Mode::Preflight;
+                }
+                KeyCode::Char(',') => self.mode = Mode::Settings(settings::Page::default()),
+                KeyCode::Char(':') => {
+                    self.pick = 0;
+                    self.picked = false;
+                    self.history(view);
+                    self.mode = Mode::Input {
+                        prompt: Prompt::Palette,
+                        text: String::new(),
+                        pressed_at: self.clock.now_ts(),
+                    };
+                }
+                _ => self.mode = Mode::Preflight,
+            },
+            Mode::ConfirmStreamStop => {
+                if key.code == KeyCode::Char('y') {
+                    self.send(Command::Stream { on: false });
+                }
+            }
             Mode::Settings(mut page) => {
                 match page.key(key.code, &view.config, &view.config_path, &view.obs) {
                     settings::Outcome::Close => return,
@@ -727,10 +788,12 @@ impl App {
             KeyCode::Char(':') => {
                 self.pick = 0;
                 self.picked = false;
+                self.history(view);
                 self.mode = input(Prompt::Palette)
             }
             KeyCode::Char('s') => self.mode = Mode::Preview { scroll: 0 },
             KeyCode::Char('r') => self.edit_readme = Some(view.readme.clone()),
+            KeyCode::Char('0') => self.mode = Mode::Preflight,
             KeyCode::Char(',') => self.mode = Mode::Settings(settings::Page::default()),
             KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
@@ -850,6 +913,7 @@ impl App {
             obs: &view.obs,
             scene: view.state.scene.as_deref(),
             config: &view.config,
+            recent: self.history.as_deref().unwrap_or_default(),
         };
         palette::suggest(text, &world).1
     }
@@ -949,6 +1013,19 @@ impl App {
             Prompt::Edit { .. } => {}
             // Palette commands take their time when Enter is pressed.
             Prompt::Palette => match palette(&text, self.clock.now_ts()) {
+                Ok(parsed) if !text.is_empty() => {
+                    self.remember(&text, view);
+                    self.run_palette(Ok(parsed), view);
+                }
+                other => self.run_palette(other, view),
+            },
+        }
+    }
+
+    /// Carries out a parsed palette line.
+    fn run_palette(&mut self, parsed: Result<Palette, String>, view: &View) {
+        {
+            match parsed {
                 Ok(Palette::Command(cmd)) => {
                     let ends = matches!(cmd, Command::Quit | Command::Finalize);
                     self.send(cmd);
@@ -956,13 +1033,57 @@ impl App {
                 }
                 Ok(Palette::Help) => self.mode = Mode::Help,
                 Ok(Palette::Preflight) => self.mode = Mode::Preflight,
+                Ok(Palette::StopStream) => self.mode = Mode::ConfirmStreamStop,
                 Ok(Palette::Settings) => self.mode = Mode::Settings(settings::Page::default()),
                 Ok(Palette::Set { key, value }) => {
                     self.set_setting(&key, value.as_deref(), false, view)
                 }
                 Ok(Palette::Reset { key }) => self.set_setting(&key, None, true, view),
                 Err(message) => self.message = Some(message),
-            },
+            }
+        }
+    }
+
+    /// `<home>/state/history`; `None` (kept in memory only) without a home folder.
+    fn history_path(view: &View) -> Option<std::path::PathBuf> {
+        let home = view
+            .config_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())?;
+        Some(home.join("state").join("history"))
+    }
+
+    /// Palette lines run before, oldest first.
+    fn history(&mut self, view: &View) -> &[String] {
+        self.history.get_or_insert_with(|| {
+            Self::history_path(view)
+                .and_then(|p| std::fs::read_to_string(p).ok())
+                .unwrap_or_default()
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+    }
+
+    /// Adds a line to the history (once, as the newest) and saves the last 100.
+    fn remember(&mut self, line: &str, view: &View) {
+        let line = line.trim().to_owned();
+        self.history(view);
+        let history = self.history.get_or_insert_with(Vec::new);
+        history.retain(|l| *l != line);
+        history.push(line);
+        let keep = history.len().saturating_sub(100);
+        history.drain(..keep);
+        let Some(path) = Self::history_path(view) else {
+            return;
+        };
+        let text = history.join("\n") + "\n";
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, text) {
+            self.message = Some(format!("palette history: {e}"));
         }
     }
 
@@ -1018,7 +1139,7 @@ impl App {
         .areas(info);
         frame.render_widget(readme_line(view), a);
         frame.render_widget(notice, b);
-        frame.render_widget(Line::from(self.keys_line()), keys);
+        frame.render_widget(Line::from(self.keys_line(view)), keys);
         self.draw_modal(frame, view);
     }
 
@@ -1546,7 +1667,14 @@ impl App {
         Some(Line::from(spans))
     }
 
-    fn keys_line(&self) -> Vec<Span<'static>> {
+    fn keys_line(&self, view: &View) -> Vec<Span<'static>> {
+        if self.mode == Mode::Preflight {
+            let mut spans = vec![Span::raw(" ")];
+            for (k, label) in home::hints(view) {
+                spans.extend(hint(k, &label));
+            }
+            return spans;
+        }
         let pairs: &[(&str, &str)] = match &self.mode {
             Mode::Settings(page) => return page.hints(),
             Mode::Input {
@@ -1598,6 +1726,7 @@ impl App {
             obs: &view.obs,
             scene: view.state.scene.as_deref(),
             config: &view.config,
+            recent: self.history.as_deref().unwrap_or_default(),
         };
         let (spec, suggestions) = palette::suggest(text, &world);
         const ROWS: usize = 9;
@@ -1795,33 +1924,22 @@ impl App {
                 (" Help · any key closes ".into(), lines, 84, height)
             }
             Mode::Preflight => {
-                let ok = view
-                    .preflight
-                    .iter()
-                    .filter(|c| c.state == CheckState::Ok)
-                    .count();
-                let mut lines = vec![
-                    Line::from(vec![
-                        Span::styled(
-                            " ◉ aftercast ",
-                            Style::new().fg(Color::Black).bg(ACCENT).bold(),
-                        ),
-                        Span::styled(
-                            format!("  {ok} of {} checks pass", view.preflight.len()),
-                            Style::new().fg(MUTED),
-                        ),
-                    ]),
-                    Line::raw(""),
-                ];
-                lines.extend(view.preflight.iter().map(|c| check_line(c, self.spin())));
-                lines.push(Line::raw(""));
-                lines.push(Line::styled(
-                    "Any key closes; :preflight opens this again.",
-                    Style::new().fg(FAINT),
-                ));
-                let height = lines.len() as u16 + 2;
-                (" Pre-flight ".into(), lines, 90, height)
+                // The status bar's live part, without the episode chip the page already shows.
+                let mut status = self.status_line(view);
+                status.spans.remove(0);
+                home::draw(frame, view, status, self.spin());
+                return;
             }
+            Mode::ConfirmStreamStop => (
+                " Stop the stream ".into(),
+                vec![
+                    Line::raw("End the live stream on YouTube? Viewers see it end at once."),
+                    Line::raw(""),
+                    chips(&[("y", "stop streaming"), ("any key", "keep streaming")]),
+                ],
+                76,
+                5,
+            ),
             Mode::ConfirmQuit => (
                 " Quit ".into(),
                 vec![
@@ -1884,8 +2002,15 @@ impl App {
 #[derive(Debug, PartialEq)]
 enum Palette {
     Settings,
-    Set { key: String, value: Option<String> },
-    Reset { key: String },
+    /// `:stream stop`: confirmed first.
+    StopStream,
+    Set {
+        key: String,
+        value: Option<String>,
+    },
+    Reset {
+        key: String,
+    },
     Command(Command),
     Help,
     Preflight,
@@ -1925,7 +2050,21 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
         "reload" => Command::Reload,
         "quit" | "q" => Command::Quit,
         "help" | "?" => return Ok(Palette::Help),
-        "preflight" => return Ok(Palette::Preflight),
+        "preflight" | "home" => return Ok(Palette::Preflight),
+        "record" | "rec" => Command::Record {
+            action: match args.as_str() {
+                "start" | "" => ac_core::command::OutputAction::Start,
+                "stop" => ac_core::command::OutputAction::Stop,
+                "pause" => ac_core::command::OutputAction::Pause,
+                "resume" => ac_core::command::OutputAction::Resume,
+                _ => return Err(":record start|stop|pause|resume".into()),
+            },
+        },
+        "stream" => match args.as_str() {
+            "start" => Command::Stream { on: true },
+            "stop" => return Ok(Palette::StopStream),
+            _ => return Err(":stream start|stop".into()),
+        },
         "settings" => return Ok(Palette::Settings),
         "set" if args.is_empty() => return Ok(Palette::Settings),
         "set" => {
@@ -2567,6 +2706,7 @@ fn help_lines() -> Vec<Line<'static>> {
         (
             "Panes",
             &[
+                ("0", "Home: checks, audio meters, what is on air"),
                 ("1 2 3 4", "focus Chat, Inbox, Chapters, Event log"),
                 ("Tab", "next pane (Shift+Tab: previous)"),
                 ("j/k", "move or scroll; g/G first/newest"),
@@ -2609,6 +2749,10 @@ fn help_lines() -> Vec<Line<'static>> {
                     "hide a source in the program scene   :show <source>",
                 ),
                 (
+                    ":record start",
+                    "stop, pause, resume   :stream start|stop (stop asks first)",
+                ),
+                (
                     ":set <key> [v]",
                     "change a setting (no value flips a switch)   :reset <key>",
                 ),
@@ -2649,25 +2793,6 @@ fn help_lines() -> Vec<Line<'static>> {
         }
     }
     lines
-}
-
-fn check_line(c: &Check, spin: &'static str) -> Line<'static> {
-    let (mark, style) = match c.state {
-        CheckState::Ok => ("✔", Style::new().fg(OK)),
-        CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
-        CheckState::Pending => (spin, Style::new().fg(MUTED)),
-    };
-    let mut spans = vec![
-        Span::styled(format!(" {mark} "), style),
-        Span::styled(c.label.clone(), style),
-    ];
-    if !c.detail.is_empty() {
-        spans.push(Span::styled(
-            format!("  {}", c.detail),
-            Style::new().fg(FAINT),
-        ));
-    }
-    Line::from(spans)
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -2811,6 +2936,7 @@ mod tests {
             readme: "sessions/2026/2026-11-19_ep042/README.md".into(),
             config: Arc::default(),
             config_path: "aftercast.toml".into(),
+            levels: ac_core::obs::Levels::default(),
             obs: Arc::new(ac_core::obs::Media {
                 scenes: vec!["Code".into(), "BRB".into()],
                 audio: vec![ac_core::obs::Audio {
@@ -2911,7 +3037,11 @@ mod tests {
 
         // The pre-flight checklist opens first; any key closes it.
         let text = screen(&mut app, &view);
-        assert!(text.contains("Pre-flight"), "{text}");
+        assert!(
+            text.contains("Home") && text.contains("1 thing needs you"),
+            "{text}"
+        );
+        assert!(text.contains(" R  start recording"), "fix key: {text}");
         assert!(text.contains("✖ OBS recording"), "{text}");
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &view);
 
@@ -3463,6 +3593,40 @@ mod tests {
                 visible: Some(false)
             }
         );
+    }
+
+    #[test]
+    fn palette_history_is_saved_and_offered_first() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        let dir = tempfile::tempdir().unwrap();
+        view.config_path = dir.path().join("aftercast.toml");
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock.clone(), rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        for line in ["mute Mic/Aux", "sync", "mute Mic/Aux"] {
+            press(&mut app, KeyCode::Char(':'));
+            for c in line.chars() {
+                press(&mut app, KeyCode::Char(c));
+            }
+            press(&mut app, KeyCode::Enter);
+        }
+        let saved = std::fs::read_to_string(dir.path().join("state").join("history")).unwrap();
+        assert_eq!(
+            saved,
+            "sync
+mute Mic/Aux
+"
+        );
+        // A fresh TUI reads it back: the newest line is the first suggestion.
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE), &view);
+        assert_eq!(app.suggestions("", &view)[0].line, "mute Mic/Aux");
     }
 
     #[test]

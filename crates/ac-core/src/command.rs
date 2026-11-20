@@ -69,6 +69,18 @@ pub enum Command {
         scene: Option<String>,
         visible: Option<bool>,
     },
+    /// Start, stop, pause or resume the OBS recording (`:record`).
+    Record {
+        action: OutputAction,
+    },
+    /// Start or stop the OBS stream (`:stream`; stopping asks first in the TUI).
+    Stream {
+        on: bool,
+    },
+    /// Ask OBS for live audio levels (while a page showing meters is open) or stop.
+    Meters {
+        on: bool,
+    },
     /// Manual quest label (`:quest`).
     Quest {
         title: String,
@@ -108,6 +120,15 @@ pub enum Command {
     Reload,
     /// End the session without finalizing.
     Quit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputAction {
+    Start,
+    Stop,
+    Pause,
+    Resume,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -29,6 +29,8 @@ pub enum Arg {
     Setting,
     /// A setting key only.
     SettingKey,
+    /// One of these words.
+    Words(&'static [&'static str]),
 }
 
 pub struct Spec {
@@ -118,6 +120,20 @@ pub const SPECS: &[Spec] = &[
         "show a source in the program scene",
         Arg::Source,
     ),
+    spec(
+        "record",
+        &["rec"],
+        "<start|stop|pause|resume>",
+        "control the OBS recording",
+        Arg::Words(&["start", "stop", "pause", "resume"]),
+    ),
+    spec(
+        "stream",
+        &[],
+        "<start|stop>",
+        "start or stop the OBS stream (stop asks first)",
+        Arg::Words(&["start", "stop"]),
+    ),
     spec("brb", &["break", "b"], "", "BRB scene on", Arg::None),
     spec(
         "back",
@@ -184,7 +200,13 @@ pub const SPECS: &[Spec] = &[
         "the counter number seen on stream",
         Arg::Text,
     ),
-    spec("preflight", &[], "", "the pre-flight checklist", Arg::None),
+    spec(
+        "home",
+        &["preflight"],
+        "",
+        "Home: checks, audio meters, what is on air (also 0)",
+        Arg::None,
+    ),
     spec("reload", &[], "", "re-read config and templates", Arg::None),
     spec(
         "finalize",
@@ -223,12 +245,29 @@ pub struct World<'a> {
     pub obs: &'a Media,
     pub scene: Option<&'a str>,
     pub config: &'a Config,
+    /// Lines run before, oldest first: offered first while a command name is typed.
+    pub recent: &'a [String],
 }
 
 /// The command being typed (if its name is complete) and suggestions for the line.
 pub fn suggest(line: &str, world: &World) -> (Option<&'static Spec>, Vec<Suggestion>) {
     let Some((name, args)) = line.split_once(' ') else {
-        return (find(line), command_names(line));
+        // Recent lines that fit what is typed come first, newest first.
+        let typed = line.to_lowercase();
+        let mut out: Vec<Suggestion> = world
+            .recent
+            .iter()
+            .rev()
+            .filter(|r| r.to_lowercase().starts_with(&typed) && **r != line)
+            .take(5)
+            .map(|r| Suggestion {
+                line: r.clone(),
+                label: r.clone(),
+                detail: "recent".into(),
+            })
+            .collect();
+        out.extend(command_names(line));
+        return (find(line), out);
     };
     let Some(spec) = find(name) else {
         return (None, Vec::new());
@@ -237,6 +276,7 @@ pub fn suggest(line: &str, world: &World) -> (Option<&'static Spec>, Vec<Suggest
     let out = match spec.arg {
         Arg::None | Arg::Text => Vec::new(),
         Arg::OnOff => words(&head, args, &["on", "off"]),
+        Arg::Words(options) => words(&head, args, options),
         Arg::Scene => pick(
             &head,
             args,
@@ -477,10 +517,12 @@ mod tests {
     fn lines(line: &str) -> Vec<String> {
         let obs = world_media();
         let config = Config::default();
+        let recent = ["scene BRB".to_owned(), "mute Mic/Aux".to_owned()];
         let world = World {
             obs: &obs,
             scene: Some("Code"),
             config: &config,
+            recent: &recent,
         };
         suggest(line, &world)
             .1
@@ -491,8 +533,17 @@ mod tests {
 
     #[test]
     fn suggests_commands_then_their_arguments() {
-        assert_eq!(lines("mu")[0], "mute ");
-        assert!(lines("s").starts_with(&["scene ".into(), "show ".into(), "set ".into()]));
+        // Recent lines come first, newest first.
+        assert_eq!(
+            lines("")[..2],
+            ["mute Mic/Aux".to_owned(), "scene BRB".to_owned()]
+        );
+        assert_eq!(
+            lines("mu")[..2],
+            ["mute Mic/Aux".to_owned(), "mute ".to_owned()]
+        );
+        assert_eq!(lines("record s")[..2], ["record start", "record stop"]);
+        assert_eq!(lines("s")[..4], ["scene BRB", "scene ", "show ", "stream "]);
         // Contains-matches come after prefix matches.
         assert!(lines("ute").contains(&"mute ".to_owned()));
         assert_eq!(lines("scene ch"), ["scene Chatting"]);

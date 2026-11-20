@@ -137,6 +137,22 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
                 db,
             })
         }
+        "record" => Action::Do(Command::Record {
+            action: match args.as_str() {
+                "start" => ac_core::command::OutputAction::Start,
+                "stop" => ac_core::command::OutputAction::Stop,
+                "pause" => ac_core::command::OutputAction::Pause,
+                "resume" => ac_core::command::OutputAction::Resume,
+                _ => return Err("record start|stop|pause|resume".into()),
+            },
+        }),
+        "stream" => Action::Do(Command::Stream {
+            on: match args.as_str() {
+                "start" => true,
+                "stop" => false,
+                _ => return Err("stream start|stop".into()),
+            },
+        }),
         "hide" | "show" => Action::Do(Command::Source {
             source: required("a source")?,
             scene: None,

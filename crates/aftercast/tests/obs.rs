@@ -105,6 +105,37 @@ fn mute_volume_and_source_visibility_reach_obs_and_the_log() {
 }
 
 #[test]
+fn record_and_stream_controls_reach_obs_and_refuse_what_makes_no_sense() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, events) = run(
+        tmp.path(),
+        "+1s record start
++1s record start
++1s record pause
++1s record resume
+         +1s record stop
++1s record stop
++1s stream start
++1s stream stop
+quit
+",
+    );
+    let states = |ty: &str| -> Vec<String> {
+        events
+            .iter()
+            .filter(|e| e["type"] == ty)
+            .map(|e| e["data"]["state"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    // The second start and the second stop are refused.
+    assert_eq!(
+        states("obs.record"),
+        ["started", "paused", "resumed", "stopped"]
+    );
+    assert_eq!(states("obs.stream"), ["started", "stopped"]);
+}
+
+#[test]
 fn obs_restart_after_stop_makes_the_session_live_again() {
     let tmp = tempfile::tempdir().unwrap();
     let (dir, events) = run(

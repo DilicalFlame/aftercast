@@ -60,6 +60,8 @@ pub enum Update {
         id: i64,
         enabled: bool,
     },
+    /// Audio peaks in dBFS per input (only while meters are on).
+    Levels(Vec<(String, f32)>),
     Stream(OutputState),
     Record {
         state: OutputState,
@@ -90,6 +92,10 @@ pub enum Request {
         id: i64,
         enabled: bool,
     },
+    Record(ac_core::command::OutputAction),
+    Stream(bool),
+    /// Receive audio levels (a high-volume event OBS only sends on request).
+    Meters(bool),
 }
 
 /// Where OBS listens.
@@ -136,11 +142,13 @@ pub async fn run(
     send: impl Fn(Update),
 ) {
     let mut backoff = BACKOFF_MIN;
+    // Survives reconnects: meters stay on if a page still shows them.
+    let mut meters = false;
     loop {
         let error = match connect(&target).await {
             Ok(client) => {
                 backoff = BACKOFF_MIN;
-                match serve(&client, &mut requests, &send).await {
+                match serve(&client, &mut requests, &send, &mut meters).await {
                     Ok(()) => return,
                     Err(e) => e,
                 }
@@ -157,6 +165,7 @@ pub async fn run(
             tokio::select! {
                 () = &mut wait => break,
                 req = requests.recv() => match req {
+                    Some(Request::Meters(on)) => meters = on,
                     Some(_) => send(Update::Failed("OBS is not connected".into())),
                     None => return,
                 },
@@ -184,9 +193,17 @@ async fn serve(
     client: &obws::Client,
     requests: &mut mpsc::UnboundedReceiver<Request>,
     send: &impl Fn(Update),
+    meters: &mut bool,
 ) -> Result<(), String> {
     // Subscribe before reading the snapshot so no change falls in between.
     let mut events = client.events().map_err(|e| error_chain(&e))?;
+    if *meters {
+        subscribe_meters(client, true)
+            .await
+            .map_err(|e| error_chain(&e))?;
+    }
+    // Levels arrive about 20 times a second; pass on at most 10.
+    let mut last_levels = tokio::time::Instant::now();
     send(Update::Connected(
         snapshot(client).await.map_err(|e| error_chain(&e))?,
     ));
@@ -197,6 +214,19 @@ async fn serve(
                 // Something was added, removed or renamed: list everything again.
                 Some(event) if structural(&event) => {
                     send(Update::Media(media(client).await.map_err(|e| error_chain(&e))?));
+                }
+                Some(ObsEvent::InputVolumeMeters { inputs }) => {
+                    if last_levels.elapsed() >= Duration::from_millis(100) {
+                        last_levels = tokio::time::Instant::now();
+                        let levels = inputs
+                            .into_iter()
+                            .map(|i| {
+                                let peak = i.levels.iter().map(|c| c[1]).fold(0.0, f32::max);
+                                (i.name, ac_core::obs::db(peak))
+                            })
+                            .collect();
+                        send(Update::Levels(levels));
+                    }
                 }
                 Some(event) => if let Some(update) = translate(event) { send(update) },
                 None => return Err("connection to OBS lost".into()),
@@ -234,6 +264,35 @@ async fn serve(
                     };
                     if let Err(e) = client.scene_items().set_enabled(set).await {
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::Meters(on)) => {
+                    *meters = on;
+                    if let Err(e) = subscribe_meters(client, on).await {
+                        send(Update::Failed(format!("audio meters: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::Record(action)) => {
+                    use ac_core::command::OutputAction as A;
+                    let rec = client.recording();
+                    let result = match action {
+                        A::Start => rec.start().await,
+                        A::Stop => rec.stop().await.map(|_| ()),
+                        A::Pause => rec.pause().await,
+                        A::Resume => rec.resume().await,
+                    };
+                    if let Err(e) = result {
+                        send(Update::Failed(format!("recording: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::Stream(on)) => {
+                    let result = if on {
+                        client.streaming().start().await
+                    } else {
+                        client.streaming().stop().await
+                    };
+                    if let Err(e) = result {
+                        send(Update::Failed(format!("streaming: {}", error_chain(&e))));
                     }
                 }
                 Some(Request::RefreshBrowsers(prefixes)) => {
@@ -318,6 +377,17 @@ async fn media(client: &obws::Client) -> obws::error::Result<Media> {
         audio,
         items,
     })
+}
+
+/// Adds or removes the high-volume audio meters event from the default subscriptions.
+async fn subscribe_meters(client: &obws::Client, on: bool) -> obws::error::Result<()> {
+    use obws::requests::EventSubscription as E;
+    let events = if on {
+        E::ALL | E::INPUT_VOLUME_METERS
+    } else {
+        E::ALL
+    };
+    client.reidentify(events).await
 }
 
 /// Events after which the lists of scenes, inputs and sources must be read again.

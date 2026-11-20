@@ -1,6 +1,23 @@
 //! What aftercast knows about OBS's audio and sources, shared by the OBS service, the
 //! controller and the TUI.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+/// Live audio peaks in dBFS per input, written by the controller as OBS reports them
+/// (about 10 times a second, only while a page with meters asks) and read by the TUI each
+/// frame. Shared rather than published, so meters never rebuild the whole view.
+pub type Levels = Arc<Mutex<HashMap<String, f32>>>;
+
+/// dBFS of a linear amplitude, floored at -60.
+pub fn db(mul: f32) -> f32 {
+    if mul <= 0.001 {
+        -60.0
+    } else {
+        (20.0 * mul.log10()).max(-60.0)
+    }
+}
+
 /// An input with audio: a mic, desktop audio, a media source.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Audio {

@@ -164,6 +164,7 @@ again resumes the session where it left off.
 | `x` / `t` | Inbox: dismiss a question / thank a supporter (without showing them) |
 | `u` | Inbox: undo the last answer, thanks or dismissal (in Done: the selected one) |
 | `[` / `]` | Inbox: filter All, Questions, Super Chats, Members, Done |
+| `0` | Home (see below) |
 | `1` `2` `3` `4` | Focus Chat, Inbox, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
 | `:` | Command palette, with suggestions as you type (see Commands below) |
@@ -244,7 +245,24 @@ the suggestion while a name is half typed). Names match regardless of case.
 | `:settings` | The settings page |
 | `:sync`, `:finalize`, `:quest <title>`, `:say <text>` | Push the description, end, set the quest, chat as the channel |
 | `:overlay <overlay> on\|off`, `:latency`, `:lat <n>` | Overlays and latency measurement |
-| `:preflight`, `:reload`, `:help`, `:quit` | |
+| `:record start\|stop\|pause\|resume` | Control the OBS recording (refused when it makes no sense, e.g. a second start) |
+| `:stream start\|stop` | Start or stop the OBS stream; stopping asks first |
+| `:home`, `:reload`, `:help`, `:quit` | |
+
+An empty palette offers your recent lines first (newest on top), and so does a command name
+being typed; they are kept across sessions in `<home>\state\history` (last 100).
+
+### Home
+
+`0` opens Home, which is also what a session starts on: the episode and its link, what is
+live (stream, scene, recording), and whether you are ready: "Ready to go" or "1 thing needs
+you" with a gauge of the pre-flight checks. The checks are listed failing first; a failing
+one that aftercast can fix shows its key (`R` start recording, `S` start streaming). Next to
+them, a live level meter for every audio input (mics first; green, amber from -12 dB, red from
+-3 dB, "muted" when muted), so you can talk and watch your mic before going live, and the
+sources of the scene on air. `M` mutes or unmutes the mic, `,` opens settings, `:` the
+palette, `Enter`, `Esc` or `0` go to the dashboard. Levels are asked of OBS only while Home
+is open.
 
 Mutes and source changes are logged as `obs.mute` and `obs.source` events, whether made from
 aftercast or in OBS.

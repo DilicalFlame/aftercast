@@ -337,6 +337,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         obs,
         obs_scenes: None,
         obs_media: Arc::default(),
+        obs_levels: ac_core::obs::Levels::default(),
         pending_scenes: VecDeque::new(),
         recordings,
         privacy_return: None,
@@ -624,6 +625,8 @@ struct Controller {
     obs_scenes: Option<Vec<String>>,
     /// Audio inputs and scene sources as OBS last reported them (empty while down).
     obs_media: Arc<ac_core::obs::Media>,
+    /// Live audio peaks, shared with the TUI (not part of the published view).
+    obs_levels: ac_core::obs::Levels,
     /// Scene switches sent to OBS whose echo has not arrived yet.
     pending_scenes: VecDeque<String>,
     recordings: Recordings,
@@ -796,6 +799,9 @@ impl Controller {
                 scene,
                 visible,
             } => self.source_visible(&source, scene.as_deref(), visible),
+            Command::Record { action } => self.record(action),
+            Command::Stream { on } => self.stream(on),
+            Command::Meters { on } => self.meters(on),
             Command::Quest { title } => self.emit_render(
                 "tui",
                 EventKind::QuestSet {
@@ -1112,6 +1118,7 @@ impl Controller {
             config: self.config.clone(),
             config_path: self.config_path.clone(),
             obs: self.obs_media.clone(),
+            levels: self.obs_levels.clone(),
             meta: self.session.meta.clone(),
             state: self.state.clone(),
             chapters: self.chapters.clone(),
