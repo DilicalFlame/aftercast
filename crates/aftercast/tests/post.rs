@@ -323,7 +323,8 @@ fn post_pipeline_on_a_ten_minute_session() {
         frame_list.len()
     );
 
-    // The stream's own terms, from its shell command and commit; the transcriber got them.
+    // The stream's own terms, from its commit (repo todo-tui) and chapters; a shell word seen
+    // once (cargo) is not enough. The transcriber got them.
     let vocab = read(&derived.join("vocab.json"));
     let terms: Vec<&str> = vocab["terms"]
         .as_array()
@@ -331,9 +332,10 @@ fn post_pipeline_on_a_ten_minute_session() {
         .iter()
         .map(|t| t["term"].as_str().unwrap())
         .collect();
-    for want in ["cargo", "todo", "tui", "Parser"] {
+    for want in ["todo", "tui", "Parser"] {
         assert!(terms.contains(&want), "{want} missing: {terms:?}");
     }
+    assert!(!terms.contains(&"cargo"), "{terms:?}");
     assert!(
         !terms.contains(&"the") && !terms.contains(&"REDACTED"),
         "{terms:?}"
