@@ -110,7 +110,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
          +1s latency\n\
          +240s chat me owner !lat 2350\n\
          +20s latency\n\
-         +1s question show\n\
+         +1s question show 2\n\
          quit\n");
     drop(stdin);
     let out = child.wait_with_output().unwrap();
@@ -151,7 +151,8 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
         .map(|e| e["data"]["cmd"].as_str().unwrap())
         .collect();
     assert_eq!(toasts.iter().filter(|c| **c == "q").count(), 3);
-    // Shown, then answered by the second `question show`.
+    // Shown, then answered by the second `question show` (bob is 2nd in the Inbox, after
+    // the membership).
     assert_eq!(of("question.show").len(), 1);
     assert_eq!(of("question.answered").len(), 2);
 
