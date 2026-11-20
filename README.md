@@ -269,13 +269,16 @@ Quitting a draft while OBS records stops the recording first, then deletes the d
 
 Home fills the screen (the status bar would only repeat it): the episode, its link and what
 is live; the decision ("Enter Start the session", "q Quit, keep nothing") with a verdict
-("Everything is ready." or "2 things need you below."); every check, what needs you first,
-each with how to fix it, with a key where aftercast can do it (`R` start recording, `S` start
+("Everything is ready." or "2 things need you."); the checks that need you, each with how to
+fix it, with a key where aftercast can do it (`R` start recording, `S` start
 streaming, `M` unmute the mic) and the steps where it cannot (start OBS and turn on its
 WebSocket server, create a missing scene, turn on live chat, a taken overlay port, the quota
 reserve, the shell hook); a live level meter for every audio input (mics first; green, amber
 from -12 dB, red from -3 dB, "muted"), so you can talk and watch your mic before going live;
-and the sources of the scene on air.
+and the sources of the scene on air. Checks that are fine fold into one row of `✔ name`
+chips, and on a wide terminal checks, audio and the scene on air sit in three columns, so
+the page fits on one screen; a column that is still too long scrolls to keep the focus in
+view.
 
 Everything on Home can be reached and used from the keyboard: `j/k` (or arrows) move through
 the buttons, the checks aftercast can fix, every audio input and every source on air; `Tab`

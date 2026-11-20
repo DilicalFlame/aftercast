@@ -13,7 +13,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::theme::{ACCENT, FAINT, INFO, MUTED, OK, RAISED, SELECTED, TEXT, WARN};
 use crate::{Check, CheckState, View};
@@ -191,16 +191,15 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
     let inner = block.inner(outer).inner(Margin::new(2, 1));
     frame.render_widget(block, outer);
 
-    let [head, _, action, _, body] = Layout::vertical([
+    // Header: the logo beside the title, what is live, and the decision; one line on
+    // what starting means below.
+    let [head, about, _, body] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(1),
-        Constraint::Length(4),
         Constraint::Length(1),
         Constraint::Min(3),
     ])
     .areas(inner);
-
-    // The logo tile, the episode and what is live.
     let [logo, who] = Layout::horizontal([Constraint::Length(11), Constraint::Min(10)]).areas(head);
     let tile = Style::new().fg(Color::White).bg(ACCENT).bold();
     frame.render_widget(
@@ -216,6 +215,60 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         .title_at_start
         .clone()
         .unwrap_or_else(|| format!("Episode {}", view.meta.episode));
+
+    let (ok, failing, total) = counts(&view.preflight);
+    let ready = failing == 0 && ok == total;
+    let verdict = match failing {
+        0 if ready => Span::styled("Everything is ready.", Style::new().fg(OK).bold()),
+        0 => Span::styled("Still checking…", Style::new().fg(MUTED)),
+        1 => Span::styled("1 thing needs you.", Style::new().fg(ACCENT).bold()),
+        n => Span::styled(
+            format!("{n} things need you."),
+            Style::new().fg(ACCENT).bold(),
+        ),
+    };
+    // Buttons keep their width whatever is focused: focus is color only.
+    let button = |label: &str, item: Item, color: Color| {
+        let style = if focus.as_ref() == Some(&item) {
+            Style::new().fg(Color::Black).bg(color).bold()
+        } else {
+            Style::new().fg(TEXT).bg(RAISED)
+        };
+        Span::styled(format!("  {label}  "), style)
+    };
+    let go = if ready { OK } else { WARN };
+    let (mut decision, explain) = if draft {
+        let (start, quit) = if view.fresh {
+            ("Start the session", "Quit, keep nothing")
+        } else {
+            ("Resume the session", "Quit")
+        };
+        let explain = if view.fresh {
+            "Nothing is kept until you start (session folder, description push, key capture, \
+             bot)."
+        } else {
+            "This session already exists; resuming continues it where it stopped."
+        };
+        (
+            vec![
+                button(start, Item::Start, go),
+                Span::raw(" "),
+                button(quit, Item::Quit, ACCENT),
+            ],
+            explain,
+        )
+    } else {
+        (
+            vec![
+                Span::styled(" ● STARTED ", Style::new().fg(Color::Black).bg(OK).bold()),
+                Span::raw(" "),
+                button("Dashboard", Item::Dashboard, ACCENT),
+            ],
+            "0 brings you back here from the dashboard.",
+        )
+    };
+    decision.push(Span::raw("   "));
+    decision.push(verdict);
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(vec![
@@ -224,129 +277,95 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
                     Style::new().fg(ACCENT).bold(),
                 ),
                 Span::styled(title, Style::new().fg(TEXT).bold()),
+                Span::styled(
+                    format!("   youtu.be/{}", view.meta.video_id),
+                    Style::new().fg(INFO),
+                ),
             ]),
-            Line::from(Span::styled(
-                format!("youtu.be/{}", view.meta.video_id),
-                Style::new().fg(INFO).underlined(),
-            )),
             live,
+            Line::from(decision),
         ]),
         who,
     );
-
-    // The decision: buttons (the focused one lit), a verdict, and what starting means.
-    let (ok, failing, total) = counts(&view.preflight);
-    let ready = failing == 0 && ok == total;
-    let verdict = match failing {
-        0 if ready => Span::styled("Everything is ready.", Style::new().fg(OK).bold()),
-        0 => Span::styled("Still checking…", Style::new().fg(MUTED)),
-        1 => Span::styled("1 thing needs you below.", Style::new().fg(ACCENT).bold()),
-        n => Span::styled(
-            format!("{n} things need you below."),
-            Style::new().fg(ACCENT).bold(),
-        ),
-    };
-    let button = |label: &str, item: Item, color: Color| {
-        if focus.as_ref() == Some(&item) {
-            Span::styled(
-                format!(" ▶ {label} "),
-                Style::new().fg(Color::Black).bg(color).bold(),
-            )
-        } else {
-            Span::styled(format!("   {label} "), Style::new().fg(TEXT).bg(RAISED))
-        }
-    };
-    let go = if ready { OK } else { WARN };
-    let (buttons, about) = if draft {
-        let start = if view.fresh {
-            "Start the session"
-        } else {
-            "Resume the session"
-        };
-        let quit = if view.fresh {
-            "Quit, keep nothing"
-        } else {
-            "Quit"
-        };
-        let about = if view.fresh {
-            "Nothing is kept until you start. Starting creates the session, pushes the \
-             description (if set), and starts key capture and the bot."
-        } else {
-            "This session already exists; resuming continues it where it stopped."
-        };
-        (
-            vec![
-                button(start, Item::Start, go),
-                Span::raw("  "),
-                button(quit, Item::Quit, ACCENT),
-            ],
-            about,
-        )
-    } else {
-        (
-            vec![
-                Span::styled(" ● STARTED ", Style::new().fg(Color::Black).bg(OK).bold()),
-                Span::raw("  "),
-                button("Dashboard", Item::Dashboard, ACCENT),
-            ],
-            "0 brings you back here from the dashboard.",
-        )
-    };
-    let mut first = buttons;
-    first.push(Span::raw("   "));
-    first.push(verdict);
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(first),
-            Line::raw(""),
-            Line::styled(about, Style::new().fg(MUTED)),
-        ])
-        .wrap(Wrap { trim: true }),
-        action,
+        crate::truncate(
+            Line::styled(explain, Style::new().fg(MUTED)),
+            usize::from(about.width),
+        ),
+        about,
     );
 
-    let [left, right] =
-        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(body);
+    // Columns: checks, audio, the scene on air (audio and the scene share a column when
+    // the terminal is narrow).
+    let wide = body.width >= 120;
+    let (left, audio_area, scene_area) = if wide {
+        let [l, m, r] = Layout::horizontal([
+            Constraint::Percentage(44),
+            Constraint::Percentage(34),
+            Constraint::Percentage(22),
+        ])
+        .areas(body);
+        (l, m, Some(r))
+    } else {
+        let [l, r] = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)])
+            .areas(body);
+        (l, r, None)
+    };
     let lit = |line: Line<'static>, on: bool, width: u16| {
         if !on {
             return line;
         }
+        // The bar takes the first cell (a space); the rest of the indent stays.
         let mut spans = vec![Span::styled("▍", Style::new().fg(ACCENT))];
-        spans.extend(line.spans.into_iter().skip(1));
+        let mut rest = line.spans.into_iter();
+        if let Some(first) = rest.next() {
+            let tail: String = first.content.chars().skip(1).collect();
+            if !tail.is_empty() {
+                spans.push(Span::styled(tail, first.style));
+            }
+        }
+        spans.extend(rest);
         let used: usize = spans.iter().map(Span::width).sum();
         spans.push(Span::raw(" ".repeat((width as usize).saturating_sub(used))));
         Line::from(spans).style(Style::new().bg(SELECTED))
     };
 
-    // Checks: what needs you first, each with how to fix it; then the fine ones.
+    // Checks: what is not fine yet in full, with its fix; the fine ones as one row of chips.
     let mut focus_line = None;
-    let mut lines = vec![
-        section(&format!("Checks · {ok} of {total} fine")),
-        Line::raw(""),
-    ];
-    for c in sorted_checks(view) {
+    let checks = sorted_checks(view);
+    let open: Vec<&&Check> = checks
+        .iter()
+        .filter(|c| c.state != CheckState::Ok)
+        .collect();
+    let mut lines = vec![section(&format!("Needs you · {}", open.len()))];
+    if open.is_empty() {
+        lines.push(Line::styled(
+            " ✔ Nothing. Every check is fine.",
+            Style::new().fg(OK),
+        ));
+    }
+    let detail_room = usize::from(left.width).saturating_sub(4);
+    for c in open {
         let (mark, style) = match c.state {
-            CheckState::Ok => ("✔", Style::new().fg(OK)),
             CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
-            CheckState::Pending => (spin, Style::new().fg(MUTED)),
-        };
-        let label = if c.state == CheckState::Ok {
-            Style::new().fg(MUTED)
-        } else {
-            Style::new().fg(TEXT).bold()
+            _ => (spin, Style::new().fg(MUTED)),
         };
         let key = fix_key(c);
         let on = key.is_some() && focus == key.map(Item::Fix);
         let mut spans = vec![
             Span::raw(" "),
             Span::styled(format!("{mark} "), style),
-            Span::styled(c.label.clone(), label),
+            Span::styled(c.label.clone(), Style::new().fg(TEXT).bold()),
         ];
-        if !c.detail.is_empty() {
-            spans.push(Span::styled(
-                format!("  {}", c.detail),
-                Style::new().fg(FAINT),
-            ));
+        // Details stay on the check's line, cut to fit.
+        let room = detail_room.saturating_sub(c.label.chars().count() + 2);
+        if !c.detail.is_empty() && room > 3 {
+            let mut detail: String = c.detail.chars().take(room).collect();
+            if c.detail.chars().count() > room {
+                detail.pop();
+                detail.push('…');
+            }
+            spans.push(Span::styled(format!("  {detail}"), Style::new().fg(FAINT)));
         }
         if on {
             focus_line = Some(lines.len());
@@ -364,25 +383,53 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
                 }
                 None => fix.push(Span::styled("↳ ", Style::new().fg(WARN))),
             }
+            let indent = fix.iter().map(Span::width).sum();
             fix.push(Span::styled(c.fix.clone(), Style::new().fg(WARN)));
-            if on {
-                focus_line = Some(lines.len());
+            for row in crate::wrap(Line::from(fix), usize::from(left.width), indent) {
+                if on {
+                    focus_line = Some(lines.len());
+                }
+                lines.push(lit(row, on, left.width));
             }
-            lines.push(lit(Line::from(fix), on, left.width));
         }
     }
+    let fine: Vec<&&Check> = checks
+        .iter()
+        .filter(|c| c.state == CheckState::Ok)
+        .collect();
+    if !fine.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(section(&format!("Fine · {}", fine.len())));
+        // Chips fill rows whole: a check's name never breaks across lines.
+        let room = usize::from(left.width);
+        let mut row = vec![Span::raw(" ")];
+        let mut used = 1;
+        for c in fine {
+            let width = c.label.chars().count() + 2;
+            if used > 1 && used + 3 + width > room {
+                lines.push(Line::from(std::mem::replace(
+                    &mut row,
+                    vec![Span::raw(" ")],
+                )));
+                used = 1;
+            }
+            if used > 1 {
+                row.push(Span::raw("   "));
+                used += 3;
+            }
+            row.push(Span::styled("✔ ", Style::new().fg(OK)));
+            row.push(Span::styled(c.label.clone(), Style::new().fg(MUTED)));
+            used += width;
+        }
+        lines.push(Line::from(row));
+    }
     let scroll = scroll_to(&lines, focus_line, left.width, left.height);
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((scroll, 0)),
-        left,
-    );
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), left);
 
-    // Audio meters, mics first, then the scene on air.
+    // Audio meters, mics first.
     let mut focus_line = None;
-    let width = right.width as usize;
-    let mut lines = vec![section("Audio"), Line::raw("")];
+    let width = usize::from(audio_area.width);
+    let mut lines = vec![section("Audio")];
     let levels = view.levels.lock().map(|m| m.clone()).unwrap_or_default();
     let audio = sorted_audio(view);
     if audio.is_empty() {
@@ -396,8 +443,9 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         .map(|a| a.name.chars().count())
         .max()
         .unwrap_or(0)
-        .min(16);
-    let bar = width.saturating_sub(name_width + 26).clamp(6, 30);
+        .min(14);
+    // " name " + "▕bar▏" + " -38dB" + " -12"
+    let bar = width.saturating_sub(name_width + 16).clamp(6, 40);
     for a in audio {
         let level = levels.get(&a.name).copied();
         let mut spans = vec![
@@ -411,26 +459,29 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         spans.push(Span::styled(
             match (a.muted, level) {
                 (true, _) => " muted".to_owned(),
-                (false, Some(db)) if db > -60.0 => format!(" {db:>4.0} dB"),
+                (false, Some(db)) if db > -60.0 => format!(" {db:>4.0}dB"),
                 (false, _) => "  …   ".to_owned(),
             },
             Style::new().fg(if a.muted { ACCENT } else { MUTED }),
         ));
         spans.push(Span::styled(
-            format!("  vol {:+.0}", a.volume_db),
+            format!(" {:+.0}", a.volume_db),
             Style::new().fg(FAINT),
         ));
         let on = focus.as_ref() == Some(&Item::Audio(a.name.clone()));
         if on {
             focus_line = Some(lines.len());
         }
-        lines.push(lit(Line::from(spans), on, right.width));
+        lines.push(lit(Line::from(spans), on, audio_area.width));
     }
+
+    // The scene on air: its own column when wide, else under the audio.
     let scene = view.state.scene.clone().unwrap_or_default();
+    let scene_width = scene_area.unwrap_or(audio_area).width;
+    let mut scene_lines = Vec::new();
+    let mut scene_focus = None;
     if !scene.is_empty() {
-        lines.push(Line::raw(""));
-        lines.push(section(&format!("On air · {scene}")));
-        lines.push(Line::raw(""));
+        scene_lines.push(section(&format!("On air · {scene}")));
         for item in view.obs.sources_in(&scene) {
             let (mark, style) = if item.enabled {
                 ("━━●", Style::new().fg(OK))
@@ -447,13 +498,27 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
             ]);
             let on = focus.as_ref() == Some(&Item::Source(item.source.clone()));
             if on {
-                focus_line = Some(lines.len());
+                scene_focus = Some(scene_lines.len());
             }
-            lines.push(lit(line, on, right.width));
+            scene_lines.push(lit(line, on, scene_width));
         }
     }
-    let scroll = scroll_to(&lines, focus_line, right.width, right.height);
-    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), right);
+    match scene_area {
+        Some(area) => {
+            let scroll = scroll_to(&scene_lines, scene_focus, area.width, area.height);
+            frame.render_widget(Paragraph::new(scene_lines).scroll((scroll, 0)), area);
+        }
+        None => {
+            if !scene_lines.is_empty() {
+                lines.push(Line::raw(""));
+                let base = lines.len();
+                focus_line = scene_focus.map(|i| base + i).or(focus_line);
+                lines.extend(scene_lines);
+            }
+        }
+    }
+    let scroll = scroll_to(&lines, focus_line, audio_area.width, audio_area.height);
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), audio_area);
 }
 
 /// How far to scroll `lines` (wrapped at `width`) so the line `focus` ends inside `height`

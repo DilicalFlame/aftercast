@@ -3154,7 +3154,7 @@ mod tests {
             text.contains("STARTED") && text.contains("1 thing needs you"),
             "{text}"
         );
-        assert!(text.contains("▶ Dashboard"), "{text}");
+        assert!(text.contains("Enter go to the dashboard"), "{text}");
         assert!(text.contains("✖ OBS recording"), "{text}");
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &view);
 
@@ -3769,7 +3769,8 @@ mute Mic/Aux
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock.clone(), rx, cmd_tx);
         let text = screen(&mut app, &view);
-        assert!(text.contains("▶ Start the session"), "{text}");
+        assert!(text.contains("Start the session"), "{text}");
+        assert!(text.contains("Enter start the session"), "{text}");
         assert!(text.contains("Quit, keep nothing"), "{text}");
         // No status bar on Home: the page starts at the top.
         assert!(text.lines().next().unwrap().contains("aftercast"), "{text}");
@@ -3818,7 +3819,7 @@ mute Mic/Aux
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
         // Start, Quit, the recording fix, the mic, the camera.
         press(&mut app, KeyCode::Char('j'));
-        assert!(draw(&mut app).contains("▶ Quit, keep nothing"));
+        assert!(draw(&mut app).contains("Enter quit, keep nothing"));
         press(&mut app, KeyCode::Char('j'));
         let text = draw(&mut app);
         assert!(text.contains("Enter start recording"), "{text}");
