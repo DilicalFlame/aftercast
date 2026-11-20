@@ -17,7 +17,7 @@ use ac_core::obs::{Audio, Media};
 use ac_core::time::{Timestamp, hms};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
 
@@ -27,26 +27,18 @@ use crate::{Check, CheckState, KeysStatus, View};
 /// Something on Home that j/k can reach and Enter acts on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
-    /// Start (or resume) the session.
-    Start,
-    /// Quit; a new draft keeps nothing.
-    Quit,
-    Dashboard,
     /// A check aftercast can fix with this key (R, S, M).
     Fix(char),
     /// An audio input: Enter mutes or unmutes, h/l change the volume.
     Audio(String),
     /// A source in a scene: Enter shows or hides it.
-    Source {
-        scene: String,
-        source: String,
-    },
+    Source { scene: String, source: String },
 }
 
-/// A part of Home that takes the focus: the header buttons, Checks, Mixer, Sources.
+/// A part of Home that takes the focus: Checks, Mixer, Sources. (Start and Quit have keys
+/// of their own, so they never need the focus.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Card {
-    Buttons,
     Checks,
     Mixer,
     Sources,
@@ -65,7 +57,7 @@ pub struct Focus {
 impl Default for Focus {
     fn default() -> Self {
         Self {
-            card: Card::Buttons,
+            card: Card::Checks,
             pick: 0,
             tab: 0,
             scene: None,
@@ -78,14 +70,12 @@ pub const TABS: [&str; 3] = ["Checks", "Mixer", "Sources"];
 
 /// The cards Tab moves between, in order.
 pub fn cards(view: &View, tab: usize) -> Vec<Card> {
-    let mut cards = vec![Card::Buttons];
-    cards.extend(match (view.config.tui.home_layout, tab) {
+    match (view.config.tui.home_layout, tab) {
         (HomeLayout::Columns, _) => vec![Card::Checks, Card::Sources, Card::Mixer],
         (HomeLayout::Tabs, 0) => vec![Card::Checks],
         (HomeLayout::Tabs, 1) => vec![Card::Mixer],
         (HomeLayout::Tabs, _) => vec![Card::Sources],
-    });
-    cards
+    }
 }
 
 /// The number key that jumps to `card` (columns layout; tabs are numbered instead).
@@ -93,7 +83,7 @@ pub fn number(view: &View, card: Card) -> Option<usize> {
     cards(view, 0)
         .iter()
         .position(|c| *c == card)
-        .filter(|n| *n > 0)
+        .map(|n| n + 1)
 }
 
 /// The scene the Mixer and Sources show: the chosen one if OBS still has it, else the
@@ -111,8 +101,6 @@ pub fn scene(view: &View, chosen: Option<&str>) -> String {
 /// What j/k reach in `card`.
 pub fn items(view: &View, card: Card, scene: &str) -> Vec<Item> {
     match card {
-        Card::Buttons if view.begun => vec![Item::Dashboard],
-        Card::Buttons => vec![Item::Start, Item::Quit],
         Card::Checks => sorted_checks(view)
             .into_iter()
             .filter_map(|c| fix_key(c).map(Item::Fix))
@@ -152,12 +140,9 @@ pub fn scene_audio<'a>(view: &'a View, scene: &str) -> Vec<&'a Audio> {
     audio
 }
 
-/// What `Enter` on an item asks, as a command for the session (None: handled by the TUI).
+/// What `Enter` on an item asks, as a command for the session.
 pub fn command(item: &Item, view: &View) -> Option<Command> {
     Some(match item {
-        Item::Start => Command::Begin,
-        Item::Quit => Command::Quit,
-        Item::Dashboard => return None,
         Item::Fix('R') => Command::Record {
             action: OutputAction::Start,
         },
@@ -181,10 +166,6 @@ pub fn command(item: &Item, view: &View) -> Option<Command> {
 /// What Enter does on `item`, in as few words as possible.
 pub fn what(item: &Item, view: &View) -> String {
     match item {
-        Item::Start if view.fresh => "start".into(),
-        Item::Start => "resume".into(),
-        Item::Quit => "quit".into(),
-        Item::Dashboard => "dashboard".into(),
         Item::Fix('R') => "record".into(),
         Item::Fix('S') => "stream".into(),
         Item::Fix(_) => "unmute".into(),
@@ -460,6 +441,13 @@ impl Ctx<'_> {
             .title_at_start
             .clone()
             .unwrap_or_else(|| format!("Episode {}", view.meta.episode));
+        let tag = if view.begun {
+            Span::styled(" ● STARTED ", Style::new().fg(Color::Black).bg(OK).bold())
+        } else if view.fresh {
+            Span::styled(" DRAFT ", Style::new().fg(Color::Black).bg(WARN).bold())
+        } else {
+            Span::styled(" RESUME ", Style::new().fg(Color::Black).bg(WARN).bold())
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
@@ -474,60 +462,40 @@ impl Ctx<'_> {
                     Style::new().fg(INFO),
                 ),
                 Line::styled(view.session.clone(), Style::new().fg(FAINT)),
+                Line::from(tag),
             ]),
             who,
         );
 
-        let (ok, failing, total) = counts(&view.preflight);
-        let ready = failing == 0 && ok == total;
-        let lit = self.focused(Card::Buttons);
-        let button = |label: &str, item: Item, color: Color| {
-            let style = if lit.as_ref() == Some(&item) {
-                Style::new().fg(Color::Black).bg(color).bold()
-            } else {
-                Style::new().fg(TEXT).bg(RAISED)
-            };
-            Span::styled(format!("  {label}  "), style)
-        };
-        let go = if ready { OK } else { WARN };
-        let (buttons, state) = if view.begun {
-            (
-                vec![button("Dashboard", Item::Dashboard, ACCENT)],
-                Line::from(Span::styled(
-                    " ● STARTED ",
-                    Style::new().fg(Color::Black).bg(OK).bold(),
-                )),
-            )
+        // The buttons: as tall as the logo, each with its key under the label. Keys work
+        // from anywhere on Home, so the buttons never take the focus.
+        let buttons: Vec<(&str, &str, Style)> = if view.begun {
+            vec![("Dashboard", "esc", Style::new().fg(Color::Black).bg(ACCENT))]
         } else {
             let start = if view.fresh { "Start" } else { "Resume" };
-            let tag = if view.fresh { " DRAFT " } else { " RESUME " };
-            let note = if view.fresh {
-                "  nothing kept until you start"
-            } else {
-                "  continues where it stopped"
-            };
-            (
-                vec![
-                    button(start, Item::Start, go),
-                    Span::raw(" "),
-                    button("Quit", Item::Quit, ACCENT),
-                ],
-                Line::from(vec![
-                    Span::styled(tag, Style::new().fg(Color::Black).bg(WARN).bold()),
-                    Span::styled(note, Style::new().fg(FAINT)),
-                ]),
-            )
+            vec![
+                (start, "s", Style::new().fg(Color::Black).bg(ACCENT)),
+                ("Quit", "q", Style::new().fg(TEXT).bg(RAISED)),
+            ]
         };
-        let verdict = match failing {
-            0 if ready => Span::styled("✔ ready", Style::new().fg(OK).bold()),
-            0 => Span::styled(format!("{} checking", self.spin), Style::new().fg(MUTED)),
-            n => Span::styled(format!("✖ {n} need you"), Style::new().fg(ACCENT).bold()),
-        };
-        frame.render_widget(
-            Paragraph::new(vec![Line::from(buttons), state, Line::from(verdict)])
-                .alignment(Alignment::Right),
-            right,
-        );
+        let mut x = right.x + right.width;
+        for (label, key, style) in buttons.into_iter().rev() {
+            let width = (label.chars().count() as u16 + 8).max(12);
+            x = x.saturating_sub(width);
+            let area = Rect { x, width, ..right };
+            frame.render_widget(
+                Paragraph::new(vec![
+                    Line::raw(""),
+                    Line::styled(label.to_owned(), style.bold()),
+                    Line::styled(key.to_owned(), style.add_modifier(Modifier::DIM)),
+                    Line::raw(""),
+                ])
+                .alignment(Alignment::Center)
+                .style(style),
+                area,
+            );
+            x = x.saturating_sub(2);
+        }
     }
 
     /// Information that is only read: a small label and rows, no border.
@@ -560,7 +528,6 @@ impl Ctx<'_> {
                 Card::Checks => " Checks ",
                 Card::Mixer => " Mixer ",
                 Card::Sources => " Sources ",
-                Card::Buttons => "",
             },
             Style::new().fg(if lit { TEXT } else { MUTED }).bold(),
         ));
@@ -584,7 +551,6 @@ impl Ctx<'_> {
             Card::Checks => self.checks(inner.width, !scene_tabs),
             Card::Mixer => self.mixer(inner.width),
             Card::Sources => self.sources(inner.width),
-            Card::Buttons => (Vec::new(), None),
         };
         let scroll = scroll_to(&lines, focus, inner.width, inner.height);
         if let Some(item) = self.focused(card) {
@@ -1134,7 +1100,6 @@ pub fn hints() -> Vec<(String, String)> {
         ("⏎", "do"),
         ("^j/k", "scene"),
         ("v", "layout"),
-        ("q", "quit"),
         (",", "settings"),
         (":", "cmd"),
     ]

@@ -938,7 +938,7 @@ impl App {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let cards = home::cards(view, self.home.tab);
         if !cards.contains(&self.home.card) {
-            self.home.card = Card::Buttons;
+            self.home.card = cards[0];
             self.home.pick = 0;
         }
         let scene = home::scene(view, self.home.scene.as_deref());
@@ -1015,12 +1015,6 @@ impl App {
             KeyCode::Char(c @ ('h' | 'l')) => {
                 let up = c == 'l';
                 match focused {
-                    Some(Item::Start | Item::Quit) => {
-                        let to = if up { Item::Quit } else { Item::Start };
-                        if let Some(i) = items.iter().position(|i| *i == to) {
-                            self.home.pick = i;
-                        }
-                    }
                     Some(Item::Audio(name)) => {
                         if let Some(a) = view.obs.audio(&name) {
                             let db = (a.volume_db + if up { 1.0 } else { -1.0 }).round();
@@ -1041,8 +1035,8 @@ impl App {
                 if view.config.tui.home_layout == ac_core::config::HomeLayout::Tabs {
                     self.home.tab = n - 1;
                     let cards = home::cards(view, self.home.tab);
-                    self.home.card = cards.get(1).copied().unwrap_or(Card::Buttons);
-                } else if let Some(card) = cards.get(n) {
+                    self.home.card = cards[0];
+                } else if let Some(card) = cards.get(n - 1) {
                     self.home.card = *card;
                 }
                 self.home.pick = 0;
@@ -1054,7 +1048,7 @@ impl App {
                 let n = home::TABS.len();
                 self.home.tab = (self.home.tab + if c == ']' { 1 } else { n - 1 }) % n;
                 let cards = home::cards(view, self.home.tab);
-                self.home.card = cards.get(1).copied().unwrap_or(Card::Buttons);
+                self.home.card = cards[0];
                 self.home.pick = 0;
             }
             // v: the next layout, saved like any setting.
@@ -1083,28 +1077,20 @@ impl App {
             KeyCode::Esc | KeyCode::Char('0') if view.begun => self.mode = Mode::Normal,
             KeyCode::Char('q') if view.begun => self.mode = Mode::ConfirmQuit,
             KeyCode::Char('q') => self.finish(Command::Quit),
-            KeyCode::Char(c @ ('R' | 'r' | 'S' | 's' | 'M' | 'm' | ',' | ':')) => {
-                self.home_key(c, view)
+            // The Start (or Resume) button's key; started, on to the dashboard.
+            KeyCode::Char('s') if !view.begun => {
+                self.send(Command::Begin);
+                self.mode = Mode::Normal;
             }
+            KeyCode::Char(c @ ('R' | 'S' | 'M' | ',' | ':')) => self.home_key(c, view),
             _ => {}
         }
     }
 
     /// Enter on a Home item.
     fn home_act(&mut self, item: home::Item, view: &View) {
-        match item {
-            home::Item::Dashboard => self.mode = Mode::Normal,
-            home::Item::Quit => self.finish(Command::Quit),
-            // Started: on to the dashboard.
-            home::Item::Start => {
-                self.send(Command::Begin);
-                self.mode = Mode::Normal;
-            }
-            other => {
-                if let Some(cmd) = home::command(&other, view) {
-                    self.send(cmd);
-                }
-            }
+        if let Some(cmd) = home::command(&item, view) {
+            self.send(cmd);
         }
     }
 
@@ -3291,10 +3277,7 @@ mod tests {
 
         // Home opens first (this session has started); Esc goes to the dashboard.
         let text = screen(&mut app, &view);
-        assert!(
-            text.contains("STARTED") && text.contains("1 need you"),
-            "{text}"
-        );
+        assert!(text.contains("STARTED"), "{text}");
         assert!(text.contains("Dashboard"), "{text}");
         assert!(text.contains("✖ OBS recording"), "{text}");
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &view);
@@ -3936,7 +3919,7 @@ mute Mic/Aux
     }
 
     #[test]
-    fn a_draft_home_starts_on_enter_and_quits_keeping_nothing_on_q() {
+    fn a_draft_home_starts_on_s_and_quits_keeping_nothing_on_q() {
         let clock = Arc::new(Clock::new());
         let mut view = sample_view(&clock);
         view.begun = false;
@@ -3968,11 +3951,10 @@ mute Mic/Aux
             press(&mut app, KeyCode::Esc);
             assert_eq!(app.mode, Mode::Preflight, "back to Home after {open}");
         }
-        // l to Quit and h back to Start; Enter starts and leaves for the dashboard.
-        press(&mut app, KeyCode::Char('l'));
-        assert_eq!(app.home.pick, 1);
-        press(&mut app, KeyCode::Char('h'));
-        press(&mut app, KeyCode::Enter);
+        // The buttons' keys work whatever has the focus: s starts and leaves for the
+        // dashboard (uppercase S is the streaming fix).
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Char('s'));
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
         assert_eq!(app.mode, Mode::Normal);
         app.mode = Mode::Preflight;
@@ -3993,8 +3975,7 @@ mute Mic/Aux
         let key = |app: &mut App, code, mods| app.key(KeyEvent::new(code, mods), &view);
         let press = |app: &mut App, code| key(app, code, KeyModifiers::NONE);
         let ctrl = |app: &mut App, code| key(app, code, KeyModifiers::CONTROL);
-        // Columns: Buttons, Checks, Sources, Mixer.
-        press(&mut app, KeyCode::Tab);
+        // Columns: Checks (focused first), Sources, Mixer.
         assert_eq!(app.home.card, home::Card::Checks);
         let text = text_at(&mut app, &view, 110, 30);
         assert!(text.contains("⏎ record"), "{text}");
@@ -4042,14 +4023,14 @@ mute Mic/Aux
             }
         );
         // Ctrl+k back to Code; Shift+Tab back to Sources; Tab past the last card wraps to
-        // the buttons.
+        // the first.
         ctrl(&mut app, KeyCode::Up);
         assert_eq!(app.home.scene.as_deref(), Some("Code"));
         press(&mut app, KeyCode::BackTab);
         assert_eq!(app.home.card, home::Card::Sources);
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
-        assert_eq!(app.home.card, home::Card::Buttons);
+        assert_eq!(app.home.card, home::Card::Checks);
         // Numbers jump straight to a card.
         press(&mut app, KeyCode::Char('3'));
         assert_eq!(app.home.card, home::Card::Mixer);

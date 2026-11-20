@@ -273,8 +273,8 @@ Home fills the screen (the status bar would only repeat it). Each check that nee
 its fix, with a key where aftercast can do it (`R`, `S`, `M`); meters are green, amber from
 -12 dB, red from -3 dB, so you can talk and watch your mic before going live.
 
-Top right of Home: `Start` (or `Resume`) and `Quit`, a `DRAFT` tag and the verdict
-("✖ 2 need you", "✔ ready"). Below, cards you act on have rounded borders (**Checks**,
+Top right of Home: big `Start` (or `Resume`) and `Quit` buttons, pressed with `s` and `q`
+from anywhere on the page; a `DRAFT` tag sits under the episode. Below, cards you act on have rounded borders (**Checks**,
 **Mixer**, **Sources**); information you only read has none (**Status**, **Session**,
 **Devices**, in the tabs layout). A red play button sits top left. The Mixer and Sources show one scene at a time: the Mixer that scene's audio (its
 own sources with audio plus OBS's global devices) with level, volume and mute, Sources its
@@ -290,12 +290,13 @@ Choose one in Settings › Display › Home layout (`tui.home_layout`) or switch
 | Key | On Home |
 |---|---|
 | `1` `2` `3` | Straight to a card (columns) or a tab (tabs), as numbered on screen |
-| `Tab` / `Shift+Tab` | Next / previous card (the buttons are one) |
+| `s` / `q` | Start (or resume) / quit |
+| `Tab` / `Shift+Tab` | Next / previous card |
 | `j/k` | Move inside the card, wrapping |
 | `Ctrl+j/k`, `Ctrl`+arrows | Previous / next scene in the Mixer and Sources |
 | `Enter`, `Space` | Do it (start, quit, record, mute, hide…); the card's border says what |
-| `h/l` | Start / Quit; volume -1 / +1 dB; hide / show |
-| `R` `S` `M` | Start recording, start streaming, mute the mic |
+| `h/l` | Volume -1 / +1 dB; hide / show |
+| `R` `S` `M` (uppercase) | Start recording, start streaming, mute the mic |
 | `,` `:` | Settings, palette (both return to Home) |
 | `Esc`, `0` | Dashboard, once started |
 
