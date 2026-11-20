@@ -5,7 +5,6 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
 
-use ac_core::Home;
 use ac_core::config::Transcriber;
 use ac_core::time::hms;
 use serde::{Deserialize, Serialize};
@@ -16,8 +15,6 @@ use crate::{Ctx, Result, tool};
 
 /// Test hook: a ready `words.json` to use instead of running a transcriber.
 pub const FIXTURE_ENV: &str = "AFTERCAST_TRANSCRIBE_FIXTURE";
-
-const HELPER: &str = include_str!("../../../python/transcribe.py");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Words {
@@ -121,19 +118,9 @@ pub fn without(mut words: Words, ranges: &[(f64, f64)]) -> Words {
     words
 }
 
-/// Writes the bundled Python helper to `<home>/state/transcribe.py` and returns its path.
-pub fn write_helper(home: &Home) -> Result<PathBuf> {
-    let script = home.join("state/transcribe.py");
-    if let Some(dir) = script.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    fs::write(&script, HELPER).map_err(|e| format!("{}: {e}", script.display()))?;
-    Ok(script)
-}
-
 /// faster-whisper or whisperx through the bundled Python helper.
 fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
-    let script = write_helper(&ctx.home)?;
+    let script = tool::write_helpers(&ctx.home)?.join("transcribe.py");
     let out = ctx.derived("words.raw.json");
     let python = ctx.home.python(&ctx.config.paths.python);
     let models = ctx.home.models_dir();

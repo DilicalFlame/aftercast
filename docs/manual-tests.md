@@ -243,11 +243,11 @@ viewer, and ideally a third account you made a moderator.
 
 ### Setup (once)
 
-1. `aftercast setup`. Expect: `ok` lines for uv, the Python 3.12 venv, faster-whisper and the
-   model, then `done: 1 CUDA device(s) visible`; `<home>/tools` holds `python`, `whisper` and
-   `models`. Rerun: the venv step is skipped and the rest finishes quickly.
-2. `aftercast doctor`. Expect: `python` pointing at `tools\whisper`, `faster-whisper` and
-   `cuda` ok.
+1. `aftercast setup`. Expect: `ok` lines for uv, the Python 3.12 venv, faster-whisper, the
+   tesseract language data and the model, then `done: 1 CUDA device(s) visible`; `<home>/tools` holds `python`, `whisper`,
+   `tessdata` and `models`. Rerun: the venv step is skipped and the rest finishes quickly.
+2. `aftercast doctor`. Expect: `python` pointing at `tools\whisper`, `faster-whisper`,
+   `cuda` and `tesseract` ok.
 
 ### A short stream
 

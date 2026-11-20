@@ -67,12 +67,28 @@ pub fn run(home: &Home, config_path: Option<PathBuf>) -> u8 {
         &["--version"],
         config.post.use_vod,
     ));
-    checks.push(tool(
-        "tesseract",
-        &paths.tesseract,
-        &["--version"],
-        config.post.ocr,
-    ));
+    checks.push(
+        if paths.tesseract == Path::new("tesseract")
+            && home.tessdata_dir().join("eng.traineddata").exists()
+        {
+            tool(
+                "tesseract",
+                &home.python(&paths.python),
+                &[
+                    "-c",
+                    "import tesserocr; print(tesserocr.tesseract_version().split()[1])",
+                ],
+                config.post.ocr,
+            )
+        } else {
+            tool(
+                "tesseract",
+                &paths.tesseract,
+                &["--version"],
+                config.post.ocr,
+            )
+        },
+    );
     checks.extend(transcriber(home, &config));
     checks.push(clock());
     checks.push(keyring());

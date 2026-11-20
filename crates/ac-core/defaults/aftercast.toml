@@ -19,9 +19,9 @@ editor = "code"                # used by :open readme  (e.g. "nvim", "code")
 ffmpeg = "ffmpeg"
 ffprobe = "ffprobe"
 yt_dlp = "yt-dlp"
-python = "python"              # for the faster-whisper/whisperx backend
+python = "python"              # default: the venv from `aftercast setup` if installed
 whisper_cli = "whisper-cli"    # for the whisper.cpp backend
-tesseract = "tesseract"
+tesseract = "tesseract"        # default: the copy from `aftercast setup` if installed
 
 [youtube]
 client_secret_file = "state/client_secret.json"   # OAuth desktop client from Google Cloud

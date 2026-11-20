@@ -1,7 +1,9 @@
 //! Stage 8, frames (`derived/frames/*.jpg`, `derived/frames.json`), and stage 9, ocr.
 
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use image_hasher::{HashAlg, HasherConfig, ImageHash};
 use serde::{Deserialize, Serialize};
@@ -146,27 +148,85 @@ pub fn ocr(ctx: &mut Ctx) -> Result<()> {
     let mut frames: Frames = read_json(&path)?;
     let dir = ctx.derived("ocr");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    tool::note_version(ctx, "tesseract");
-    let total = frames.frames.len();
+    let images: Vec<PathBuf> = frames
+        .frames
+        .iter()
+        .map(|f| ctx.derived("frames").join(&f.file))
+        .collect();
+    let mut texts = if ctx.config.paths.tesseract == Path::new("tesseract")
+        && ctx.home.tessdata_dir().join("eng.traineddata").exists()
+    {
+        ocr_python(ctx, &images)?
+    } else {
+        ocr_cli(ctx, &images)?
+    };
     for (i, f) in frames.frames.iter_mut().enumerate() {
-        let image = ctx.derived("frames").join(&f.file);
-        let text = tool::run(
-            ctx,
-            "tesseract",
-            [
-                image.into_os_string(),
-                "-".into(),
-                "--psm".into(),
-                "6".into(),
-            ],
-        )?;
+        let text = texts
+            .remove(&*images[i].to_string_lossy())
+            .unwrap_or_default();
         let text: String = text.trim().chars().take(OCR_MAX).collect();
         let txt = dir.join(f.file.replace(".jpg", ".txt"));
         fs::write(&txt, &text).map_err(|e| format!("{}: {e}", txt.display()))?;
         f.ocr = Some(text).filter(|t| !t.is_empty());
-        ctx.set_progress((i + 1) as f64 / total.max(1) as f64);
     }
     write_json(&path, &frames)
+}
+
+/// Tesserocr in the `aftercast setup` venv, one process for all frames.
+fn ocr_python(ctx: &mut Ctx, images: &[PathBuf]) -> Result<HashMap<String, String>> {
+    let script = tool::write_helpers(&ctx.home)?.join("ocr.py");
+    let list = ctx.derived("ocr/frames.txt");
+    let out = ctx.derived("ocr/ocr.raw.json");
+    let lines: Vec<String> = images
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    fs::write(&list, lines.join("\n")).map_err(|e| format!("{}: {e}", list.display()))?;
+    let python = ctx.home.python(&ctx.config.paths.python);
+    let args: Vec<OsString> = vec![
+        script.into(),
+        "--tessdata".into(),
+        ctx.home.tessdata_dir().into(),
+        "--list".into(),
+        list.clone().into(),
+        "--out".into(),
+        out.clone().into(),
+    ];
+    ctx.note_tool("tesseract", "tesserocr (aftercast setup)".into());
+    tool::run_lines(ctx, &python.to_string_lossy(), args, |line| {
+        if let Some(f) = line
+            .strip_prefix("progress ")
+            .and_then(|f| f.trim().parse().ok())
+        {
+            ctx.set_progress(f);
+        }
+    })?;
+    let texts = read_json(&out)?;
+    let _ = fs::remove_file(&out);
+    let _ = fs::remove_file(&list);
+    Ok(texts)
+}
+
+/// The `tesseract` command line, one run per frame.
+fn ocr_cli(ctx: &mut Ctx, images: &[PathBuf]) -> Result<HashMap<String, String>> {
+    tool::note_version(ctx, "tesseract");
+    let program = ctx.config.paths.tesseract.to_string_lossy().into_owned();
+    let mut texts = HashMap::new();
+    for (i, image) in images.iter().enumerate() {
+        let text = tool::run(
+            ctx,
+            &program,
+            [
+                image.as_os_str(),
+                "-".as_ref(),
+                "--psm".as_ref(),
+                "6".as_ref(),
+            ],
+        )?;
+        texts.insert(image.to_string_lossy().into_owned(), text);
+        ctx.set_progress((i + 1) as f64 / images.len().max(1) as f64);
+    }
+    Ok(texts)
 }
 
 /// Interval candidates every `step` seconds plus scene changes. A burst of scene changes (an

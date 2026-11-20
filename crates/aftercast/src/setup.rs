@@ -1,4 +1,5 @@
-//! `aftercast setup`: installs the faster-whisper transcriber under `<home>/tools` with uv.
+//! `aftercast setup`: installs the faster-whisper transcriber and Tesseract OCR (tesserocr
+//! wheel plus `eng` data) under `<home>/tools` with uv.
 //! uv brings its own Python 3.12 (`tools/python`), so the system Python does not matter.
 //! Tool output goes to `<home>/logs/setup.log`.
 
@@ -55,22 +56,34 @@ pub fn run(home: &Home, config_path: &Path) -> Result<u8> {
     install
         .args(["pip", "install", "--upgrade", "--python"])
         .arg(&python)
-        .arg(package)
+        .args([package, "tesserocr"])
         // faster-whisper 1.2 passes av.open(metadata_errors=...), which PyAV 16 removed.
         .arg("av<16");
     if !cfg!(target_os = "macos") {
         // cuBLAS 12 and cuDNN 9 for ctranslate2; transcribe.py puts their DLLs on the path.
         install.args(["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]);
     }
-    step(&log, &format!("{package} + CUDA libraries"), &mut install)?;
+    step(
+        &log,
+        &format!("{package}, tesserocr, CUDA libraries"),
+        &mut install,
+    )?;
 
-    let helper = ac_post::write_helper(home).map_err(AppError::Usage)?;
+    let helpers = ac_post::write_helpers(home).map_err(AppError::Usage)?;
+    step(
+        &log,
+        "tesseract language data (eng)",
+        Command::new(&python)
+            .arg(helpers.join("ocr.py"))
+            .args(["--download", "--tessdata"])
+            .arg(home.tessdata_dir()),
+    )?;
     let model = &config.post.whisper_model;
     step(
         &log,
         &format!("model {model}"),
         Command::new(&python)
-            .arg(&helper)
+            .arg(helpers.join("transcribe.py"))
             .args(["--download", "--model", model, "--models"])
             .arg(home.models_dir()),
     )?;

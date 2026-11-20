@@ -231,9 +231,10 @@ Transcription runs locally on the GPU with faster-whisper. Install it once with
 aftercast setup
 ```
 
-This puts Python 3.12, faster-whisper, the CUDA 12 / cuDNN 9 libraries and the
-`post.whisper_model` model under `<home>/tools` (a few GB; log in `logs/setup.log`), and
-`aftercast post` uses them while `paths.python` is left at `python`. Rerun it after changing
+This puts Python 3.12, faster-whisper, the CUDA 12 / cuDNN 9 libraries, the
+`post.whisper_model` model and Tesseract OCR (the `tesserocr` wheel with English data, used
+when `post.ocr = true`) under `<home>/tools` (a few GB; log in `logs/setup.log`), and
+`aftercast post` uses them while `paths.python` and `paths.tesseract` keep their defaults. Rerun it after changing
 the model. Only the NVIDIA driver is needed from outside.
 
 Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. whisperx
@@ -245,7 +246,7 @@ Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. w
 ```text
 aftercast init               create the home folder
 aftercast doctor             check tools, config, clock, keyring, OBS
-aftercast setup              install the transcriber and model under <home>/tools
+aftercast setup              install the transcriber, model and OCR under <home>/tools
 aftercast auth login | status | logout | obs
 aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
 aftercast post [SESSION]     process a finished session (see above)

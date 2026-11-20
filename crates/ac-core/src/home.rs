@@ -103,6 +103,11 @@ impl Home {
         self.join("tools/models")
     }
 
+    /// Where `aftercast setup` puts Tesseract's language data.
+    pub fn tessdata_dir(&self) -> PathBuf {
+        self.join("tools/tessdata")
+    }
+
     /// `paths.python`, or the setup venv's Python when that is left at the default `python`.
     pub fn python(&self, configured: &Path) -> PathBuf {
         let venv = self.whisper_python();

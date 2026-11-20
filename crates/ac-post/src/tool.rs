@@ -4,10 +4,31 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use ac_core::Home;
 use std::process::{Command, Stdio};
 
 use crate::{Ctx, Result};
+
+const HELPERS: [(&str, &str); 2] = [
+    (
+        "transcribe.py",
+        include_str!("../../../python/transcribe.py"),
+    ),
+    ("ocr.py", include_str!("../../../python/ocr.py")),
+];
+
+/// Writes the bundled Python helpers to `<home>/state` and returns that folder.
+pub fn write_helpers(home: &Home) -> Result<PathBuf> {
+    let dir = home.join("state");
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for (name, text) in HELPERS {
+        let path = dir.join(name);
+        fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    Ok(dir)
+}
 
 /// Runs `program` and returns its stdout; stderr goes to the stage log.
 pub fn run<I, S>(ctx: &Ctx, program: &str, args: I) -> Result<String>
