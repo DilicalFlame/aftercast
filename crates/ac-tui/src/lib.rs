@@ -591,7 +591,27 @@ impl App {
         }
     }
 
-    fn key(&mut self, key: KeyEvent, view: &View) {
+    fn key(&mut self, mut key: KeyEvent, view: &View) {
+        // In the palette, Ctrl+J/K (and Ctrl+N/P) move through the suggestions like ↓/↑;
+        // plain letters type.
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl
+            && matches!(
+                self.mode,
+                Mode::Input {
+                    prompt: Prompt::Palette,
+                    ..
+                }
+            )
+        {
+            match key.code {
+                KeyCode::Char('j' | 'n') => key = KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+                KeyCode::Char('k' | 'p') => key = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+                // Other Ctrl+letters never type into the line.
+                KeyCode::Char(c) if c != 'c' => return,
+                _ => {}
+            }
+        }
         let ctrl_c =
             key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c');
         match std::mem::replace(&mut self.mode, Mode::Normal) {
@@ -1681,7 +1701,7 @@ impl App {
                 prompt: Prompt::Palette,
                 ..
             } => &[
-                ("↑↓", "choose"),
+                ("Ctrl+j/k", "choose"),
                 ("Tab", "complete"),
                 ("Enter", "run"),
                 ("Esc", "cancel"),
@@ -1775,7 +1795,7 @@ impl App {
                 Line::styled("unknown command (Esc, then :help)", Style::new().fg(ACCENT))
             }
             None => Line::styled(
-                "type a command; ↑↓ choose, Tab completes, Enter runs",
+                "type a command; Ctrl+j/k or ↑↓ choose, Tab completes, Enter runs",
                 Style::new().fg(FAINT),
             ),
         });
@@ -3580,6 +3600,23 @@ mod tests {
                 on: None
             }
         );
+        // Ctrl+J moves down the list (typing j would type); Tab takes the pick.
+        typed(&mut app, "s");
+        let ctrl = |app: &mut App, c| {
+            app.key(
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL),
+                &view,
+            )
+        };
+        ctrl(&mut app, 'j');
+        ctrl(&mut app, 'j');
+        ctrl(&mut app, 'k');
+        assert_eq!(app.pick, 1);
+        let Mode::Input { text, .. } = &app.mode else {
+            panic!("palette open")
+        };
+        assert_eq!(text, "s");
+        app.mode = Mode::Normal;
         // Enter on a half-typed name takes the suggestion first, then runs.
         typed(&mut app, "hide cam");
         press(&mut app, KeyCode::Enter);
