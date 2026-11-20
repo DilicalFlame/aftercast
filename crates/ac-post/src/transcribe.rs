@@ -148,7 +148,7 @@ fn squeezed_repeats(words: &mut Vec<Word>) -> usize {
     removed
 }
 
-/// Writes `words.json`, `transcript.srt` and `transcript.txt`.
+/// Writes `words.json` and, from the same short cues, `transcript.srt` and `transcript.txt`.
 pub fn write_outputs(ctx: &Ctx, words: &Words) -> Result<()> {
     write_json(&ctx.derived("words.json"), words)?;
     // Short cues from the word timings; a segment without words is one cue.
@@ -178,11 +178,12 @@ pub fn write_outputs(ctx: &Ctx, words: &Words) -> Result<()> {
             }
         })
         .collect();
-    let srt = crate::subtitles::srt(&crate::subtitles::cues(&timed));
-    let txt: String = words
-        .segments
+    // The same cues in both files: the .txt is the .srt as one line per cue.
+    let cues = crate::subtitles::cues(&timed);
+    let srt = crate::subtitles::srt(&cues);
+    let txt: String = cues
         .iter()
-        .map(|s| format!("[{}] {}\n", hms(s.start), s.text))
+        .map(|c| format!("[{}] {}\n", hms(c.start), c.text))
         .collect();
     for (name, text) in [("transcript.srt", srt), ("transcript.txt", txt)] {
         let path = ctx.derived(name);
