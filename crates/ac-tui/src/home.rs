@@ -1,8 +1,8 @@
 //! The Home page (`0`, and where a session starts).
 //!
 //! The header holds the episode and, top right, the decision (Start or Resume, Quit). Below
-//! it, cards you act on (rounded borders: Checks, Mixer, Sources) and information that is
-//! only read (no border: Status, Session, Mic). Tab moves between cards, j/k inside one,
+//! it, cards you act on (rounded borders: Checks, Mixer, Sources) and, in the tabs layout,
+//! information that is only read (no border: Status, Session, Mic). Tab moves between cards, j/k inside one,
 //! Ctrl+j/k (or Ctrl+arrows) between scenes.
 //!
 //! A new session is a draft here: nothing lasting or public happens until it is started,
@@ -242,7 +242,15 @@ pub fn short_names(scenes: &[String]) -> Vec<String> {
 }
 
 /// Draws the page over everything but the key hints.
-pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, focus: &Focus) {
+/// `glow` (0..1) breathes the record light.
+pub fn draw(
+    frame: &mut Frame,
+    view: &View,
+    now: Timestamp,
+    spin: &'static str,
+    glow: f64,
+    focus: &Focus,
+) {
     let area = frame.area();
     let page = Rect {
         x: area.x + 1,
@@ -263,6 +271,7 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
         view,
         focus,
         spin,
+        glow,
         now,
         scene,
     };
@@ -276,18 +285,16 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
 
     match view.config.tui.home_layout {
         HomeLayout::Columns => {
-            let [left, right] = halves(body);
-            let checks = ctx.checks(left.width.saturating_sub(4), false).0.len() as u16 + 2;
-            let status = ctx.status(right.width).len() as u16 + 1;
-            let top = checks.max(status).min(body.height / 2 + 1);
-            let [tl, bl] =
-                Layout::vertical([Constraint::Length(top), Constraint::Min(3)]).areas(left);
-            let [tr, br] =
-                Layout::vertical([Constraint::Length(top), Constraint::Min(3)]).areas(right);
-            ctx.card(frame, Card::Checks, tl, true);
-            ctx.info(frame, tr, "Status", ctx.status(tr.width));
-            ctx.card(frame, Card::Sources, bl, true);
-            ctx.card(frame, Card::Mixer, br, true);
+            let checks = ctx.checks(body.width.saturating_sub(4), false).0.len() as u16 + 2;
+            let [top, rest] = Layout::vertical([
+                Constraint::Length(checks.min(body.height / 2)),
+                Constraint::Min(3),
+            ])
+            .areas(body);
+            let [left, right] = halves(rest);
+            ctx.card(frame, Card::Checks, top, true);
+            ctx.card(frame, Card::Sources, left, true);
+            ctx.card(frame, Card::Mixer, right, true);
         }
         HomeLayout::Tabs => {
             let [bar, _, rest] = Layout::vertical([
@@ -385,6 +392,7 @@ struct Ctx<'a> {
     view: &'a View,
     focus: &'a Focus,
     spin: &'static str,
+    glow: f64,
     now: Timestamp,
     /// The scene the Mixer and Sources show.
     scene: String,
@@ -411,12 +419,13 @@ impl Ctx<'_> {
             Constraint::Length(44),
         ])
         .areas(area);
-        let tile = Style::new().fg(Color::White).bg(ACCENT).bold();
+        // A record light, breathing.
+        let dot = Style::new().fg(crate::theme::mix(RAISED, ACCENT, 0.35 + 0.65 * self.glow));
         frame.render_widget(
             Paragraph::new(vec![
-                Line::styled("  ▗▄▄▖   ", tile),
-                Line::styled(" ▐  ●    ", tile),
-                Line::styled("  ▝▀▀▘   ", tile),
+                Line::styled("  ▄███▄", dot),
+                Line::styled(" ███████", dot),
+                Line::styled("  ▀███▀", dot),
             ]),
             logo,
         );

@@ -276,13 +276,13 @@ its fix, with a key where aftercast can do it (`R`, `S`, `M`); meters are green,
 Top right of Home: `Start` (or `Resume`) and `Quit`, a `DRAFT` tag and the verdict
 ("✖ 2 need you", "✔ ready"). Below, cards you act on have rounded borders (**Checks**,
 **Mixer**, **Sources**); information you only read has none (**Status**, **Session**,
-**Mic**). The Mixer and Sources show one scene at a time: the Mixer that scene's audio (its
+**Mic**, in the tabs layout). A record light breathes top left. The Mixer and Sources show one scene at a time: the Mixer that scene's audio (its
 own sources with audio plus OBS's global devices) with level, volume and mute, Sources its
 sources with show/hide.
 
 | Layout | Arrangement |
 |---|---|
-| `columns` (default) | Checks (what needs you) beside Status; Sources beside the Mixer, each with the scenes as tabs in its top border (shortest unique names, `●` on air) |
+| `columns` (default) | Checks (what needs you) across the top; Sources beside the Mixer, each with the scenes as tabs in its top border (shortest unique names, `●` on air) |
 | `tabs` | Checks (failing, then passing) beside Status, Session and Mic · Mixer · Sources, the last two beside a list of every scene; `[` `]` switch tabs |
 
 Choose one in Settings › Display › Home layout (`tui.home_layout`) or switch with `v`.

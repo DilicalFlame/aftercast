@@ -1941,7 +1941,20 @@ impl App {
     }
 
     fn draw_home(&self, frame: &mut Frame, view: &View) {
-        home::draw(frame, view, self.clock.now_ts(), self.spin(), &self.home);
+        // The record light breathes; still and full with animations off.
+        let glow = if self.motion {
+            self.pulse(Duration::from_millis(1600))
+        } else {
+            1.0
+        };
+        home::draw(
+            frame,
+            view,
+            self.clock.now_ts(),
+            self.spin(),
+            glow,
+            &self.home,
+        );
     }
 
     /// The command palette: the line being typed, what the command does, and a list of
@@ -3931,12 +3944,13 @@ mute Mic/Aux
         // Esc does not leave a draft Home.
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Preflight);
-        // The palette and settings open over Home and come back to it.
+        // The palette opens over Home, settings as its own page; both come back to it.
         for open in [':', ','] {
             press(&mut app, KeyCode::Char(open));
             assert_ne!(app.mode, Mode::Preflight);
             let text = screen(&mut app, &view);
-            assert!(text.contains("#042"), "Home stays underneath: {text}");
+            let page = if open == ':' { "#042" } else { "Settings" };
+            assert!(text.contains(page), "{open}: {text}");
             press(&mut app, KeyCode::Esc);
             assert_eq!(app.mode, Mode::Preflight, "back to Home after {open}");
         }
@@ -4033,7 +4047,7 @@ mute Mic/Aux
         view.config_path = dir.path().join("aftercast.toml");
         std::fs::write(&view.config_path, "").unwrap();
 
-        // Columns: Checks counts what passes, Status is plain information, Sources and the
+        // Columns: Checks counts what passes (no Status: the tabs layout has it), Sources and the
         // Mixer carry the scenes as tabs (shortest unique names, the one on air marked).
         let (_tx, rx) = watch::channel(view.clone());
         let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
@@ -4041,10 +4055,7 @@ mute Mic/Aux
         let text = text_at(&mut app, &view, 110, 26);
         assert!(text.contains("✔ 1/2"), "{text}");
         assert!(!text.contains("OBS connected"), "{text}");
-        assert!(
-            text.contains("STATUS") && !text.contains("╭ Status"),
-            "{text}"
-        );
+        assert!(!text.contains("STATUS"), "{text}");
         assert!(text.contains("●Cod") && text.contains("BRB"), "{text}");
 
         // Tabs: Checks lists passing ones too, beside Status, Session and Mic.

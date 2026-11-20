@@ -11,7 +11,7 @@ use ac_core::config::{
 };
 use ac_core::obs::Media;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Margin};
+use ratatui::layout::{Alignment, Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph, Wrap};
@@ -38,6 +38,16 @@ pub enum When {
 }
 
 impl When {
+    /// One or two words, for the tags under a setting.
+    pub fn short(self) -> &'static str {
+        match self {
+            When::Now => "now",
+            When::Restart => "after restart",
+            When::NextSession => "next session",
+            When::NextPost => "next post",
+        }
+    }
+
     pub fn text(self) -> &'static str {
         match self {
             When::Now => "applies now",
@@ -104,7 +114,7 @@ pub fn all() -> Vec<Setting> {
             0,
             "tui.wrap_lines",
             "Wrap long lines",
-            "Wrap every chat message, Inbox item and log event over several lines instead of cutting it with …. Off keeps one line each; the line under the cursor always opens in full.",
+            "Wrap long lines instead of cutting them.",
             Bool,
             Now,
             |c| Value::Bool(c.tui.wrap_lines),
@@ -113,7 +123,7 @@ pub fn all() -> Vec<Setting> {
             0,
             "tui.animations",
             "Animations",
-            "Pulsing LIVE and REC dots, spinners, the blinking caret and panes that glide when focus moves. Off keeps the screen still.",
+            "Pulsing dots, spinners, gliding panes.",
             Bool,
             Now,
             |c| Value::Bool(c.tui.animations),
@@ -122,7 +132,7 @@ pub fn all() -> Vec<Setting> {
             0,
             "tui.name_colors",
             "Name colors",
-            "Give every chat author their own color, in chat and in the Inbox, so you can tell people apart at a glance. Off shows every name in one color.",
+            "A color per chat author.",
             Bool,
             Now,
             |c| Value::Bool(c.tui.name_colors),
@@ -131,7 +141,7 @@ pub fn all() -> Vec<Setting> {
             0,
             "tui.home_layout",
             "Home layout",
-            "How Home arranges its cards under Start and Quit. columns: a 2 by 2 grid (Checks and Status, On air and Audio). tabs: Checks (with Status), Audio and On air, switched with [ and ]. v on Home switches.",
+            "columns: a grid with scene tabs. tabs: Checks, Mixer, Sources.",
             Choice(&["columns", "tabs"]),
             Now,
             |c| text(c.tui.home_layout.name()),
@@ -141,7 +151,7 @@ pub fn all() -> Vec<Setting> {
             1,
             "stream.chapter_on_brb",
             "Chapter on BRB",
-            "Going BRB adds a \"Break\" chapter; coming back returns to the chapter you were in.",
+            "BRB adds a \"Break\" chapter.",
             Bool,
             Now,
             |c| Value::Bool(c.stream.chapter_on_brb),
@@ -150,7 +160,7 @@ pub fn all() -> Vec<Setting> {
             1,
             "stream.chapter_on_question",
             "Chapter on question",
-            "Showing a question on stream adds a \"Q: …\" chapter.",
+            "A question shown on stream adds a \"Q: …\" chapter.",
             Bool,
             Now,
             |c| Value::Bool(c.stream.chapter_on_question),
@@ -159,7 +169,7 @@ pub fn all() -> Vec<Setting> {
             1,
             "stream.chapter_on_quest_change",
             "Chapter on new quest",
-            "A new quest (from :quest or the quest file) starts a chapter.",
+            "A new quest starts a chapter.",
             Bool,
             Now,
             |c| Value::Bool(c.stream.chapter_on_quest_change),
@@ -168,7 +178,7 @@ pub fn all() -> Vec<Setting> {
             1,
             "stream.chapter_on_latency",
             "Chapter on latency check",
-            ":latency adds a \"Latency check\" chapter, then returns to the previous one.",
+            ":latency adds a \"Latency check\" chapter.",
             Bool,
             Now,
             |c| Value::Bool(c.stream.chapter_on_latency),
@@ -177,7 +187,7 @@ pub fn all() -> Vec<Setting> {
             1,
             "stream.default_latency_s",
             "Default latency (s)",
-            "Stream delay used until :latency measures it. A mod's !chapter and !mark are moved back by this much.",
+            "Stream delay until :latency measures it.",
             Float {
                 min: 0.0,
                 max: 600.0,
@@ -190,7 +200,7 @@ pub fn all() -> Vec<Setting> {
             1,
             "stream.first_chapter_title",
             "First chapter title",
-            "Title of the chapter at 0:00.",
+            "Title of the 0:00 chapter.",
             Text,
             Now,
             |c| text(&c.stream.first_chapter_title),
@@ -200,7 +210,7 @@ pub fn all() -> Vec<Setting> {
             2,
             "youtube.push_on_start",
             "Push description at start",
-            "Push the description to YouTube when a session starts (50 quota units).",
+            "Push the description at start (50 units).",
             Bool,
             NextSession,
             |c| Value::Bool(c.youtube.push_on_start),
@@ -209,7 +219,7 @@ pub fn all() -> Vec<Setting> {
             2,
             "youtube.push_on_end",
             "Push description at end",
-            "Push the final description when the stream ends or you finalize (50 quota units).",
+            "Push the final description at the end (50 units).",
             Bool,
             Now,
             |c| Value::Bool(c.youtube.push_on_end),
@@ -218,7 +228,7 @@ pub fn all() -> Vec<Setting> {
             2,
             "youtube.daily_quota_reserve",
             "Quota reserve",
-            "Units of the daily YouTube quota kept for manual actions; pre-flight warns below it.",
+            "Quota kept for manual actions.",
             Int {
                 min: 0,
                 max: 10_000,
@@ -232,7 +242,7 @@ pub fn all() -> Vec<Setting> {
             3,
             "bot.enabled",
             "Chat bot",
-            "Answer !commands in chat (!q, !links, !uptime, !chapter, …). Off ignores them; chat still shows here.",
+            "Answer !commands in chat.",
             Bool,
             Restart,
             |c| Value::Bool(c.bot.enabled),
@@ -250,7 +260,7 @@ pub fn all() -> Vec<Setting> {
             3,
             "bot.default_reply",
             "Replies go to",
-            "Where bot answers appear: the toast overlay, chat (20 quota units each) or both. A command can override it.",
+            "Where replies go; chat costs 20 units each.",
             Choice(&["overlay", "chat", "both"]),
             Restart,
             |c| {
@@ -265,7 +275,7 @@ pub fn all() -> Vec<Setting> {
             3,
             "bot.global_cooldown_s",
             "Global cooldown (s)",
-            "Minimum time between any two bot replies.",
+            "Least time between two replies.",
             Int {
                 min: 0,
                 max: 600,
@@ -278,7 +288,7 @@ pub fn all() -> Vec<Setting> {
             3,
             "bot.user_cooldown_s",
             "Per-viewer cooldown (s)",
-            "Minimum time between two commands from the same viewer.",
+            "Least time between one viewer's commands.",
             Int {
                 min: 0,
                 max: 3600,
@@ -291,7 +301,7 @@ pub fn all() -> Vec<Setting> {
             3,
             "bot.max_chat_replies_per_hour",
             "Chat replies per hour",
-            "Cap on replies sent into chat; beyond it they go to the overlay, saving quota.",
+            "Chat replies per hour; more go to the overlay.",
             Int {
                 min: 0,
                 max: 1000,
@@ -305,7 +315,7 @@ pub fn all() -> Vec<Setting> {
             4,
             "obs.require_recording",
             "Warn when not recording",
-            "Pre-flight and the status bar warn loudly while OBS is not recording: the local recording is the editing source.",
+            "Warn while OBS is not recording.",
             Bool,
             Now,
             |c| Value::Bool(c.obs.require_recording),
@@ -314,7 +324,7 @@ pub fn all() -> Vec<Setting> {
             4,
             "obs.record_into_session",
             "Record into the session folder",
-            "While aftercast runs, OBS records into the session's media folder, so the master lives with the session and quitting a draft keeps no recording. OBS's own folder is restored on exit.",
+            "Record into the session's media folder.",
             Bool,
             Restart,
             |c| Value::Bool(c.obs.record_into_session),
@@ -323,7 +333,7 @@ pub fn all() -> Vec<Setting> {
             4,
             "obs.scenes.main",
             "Main scene",
-            "The scene BRB and privacy return to.",
+            "Where BRB and privacy return to.",
             Text,
             Now,
             |c| text(&c.obs.scenes.main),
@@ -332,7 +342,7 @@ pub fn all() -> Vec<Setting> {
             4,
             "obs.scenes.brb",
             "BRB scene",
-            "The scene b switches to.",
+            "Where b switches to.",
             Text,
             Now,
             |c| text(&c.obs.scenes.brb),
@@ -341,7 +351,7 @@ pub fn all() -> Vec<Setting> {
             4,
             "obs.scenes.privacy",
             "Privacy scene",
-            "The scene p switches to (key capture pauses with it).",
+            "Where p switches to.",
             Text,
             Now,
             |c| text(&c.obs.scenes.privacy),
@@ -351,7 +361,7 @@ pub fn all() -> Vec<Setting> {
             6,
             "capture.keys",
             "Record key presses",
-            "Record typed keys and shortcuts for the keys overlay and post-processing. Privacy mode, denied apps and password boxes are always skipped.",
+            "Record typed keys (never in privacy or password boxes).",
             Bool,
             Restart,
             |c| Value::Bool(c.capture.keys),
@@ -360,7 +370,7 @@ pub fn all() -> Vec<Setting> {
             6,
             "capture.shell",
             "Record shell commands",
-            "Read commands from the shell hook (aftercast shell-hook) into the session.",
+            "Record shell commands (aftercast shell-hook).",
             Bool,
             Restart,
             |c| Value::Bool(c.capture.shell),
@@ -370,7 +380,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.use_vod",
             "Use the YouTube VOD",
-            "Download the VOD to post-process instead of the local recording.",
+            "Use the YouTube VOD, not the recording.",
             Bool,
             NextPost,
             |c| Value::Bool(c.post.use_vod),
@@ -379,7 +389,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.transcriber",
             "Transcriber",
-            "Speech to text engine. faster-whisper is installed by aftercast setup.",
+            "Speech to text engine.",
             Choice(&["faster-whisper", "whisperx", "whisper-cpp"]),
             NextPost,
             |c| {
@@ -394,7 +404,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.whisper_model",
             "Whisper model",
-            "Model name (large-v3-turbo did best on your speech) or, for whisper-cpp, a ggml .bin path.",
+            "Model name, or a ggml .bin for whisper-cpp.",
             Text,
             NextPost,
             |c| text(&c.post.whisper_model),
@@ -403,7 +413,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.language",
             "Language",
-            "auto, or a language code such as en or hi.",
+            "auto, or a code such as en or hi.",
             Text,
             NextPost,
             |c| text(&c.post.language),
@@ -412,7 +422,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.ocr",
             "Read screen text (OCR)",
-            "Read the text in sampled frames so clips and search know what was on screen.",
+            "Read the text on screen in sampled frames.",
             Bool,
             NextPost,
             |c| Value::Bool(c.post.ocr),
@@ -421,7 +431,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.ocr_engine",
             "OCR engine",
-            "glm-ocr: a small vision model on the GPU, far better on code and terminals. tesseract: CPU only.",
+            "glm-ocr (GPU, best on code) or tesseract (CPU).",
             Choice(&["glm-ocr", "tesseract"]),
             NextPost,
             |c| {
@@ -435,7 +445,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "post.correct",
             "Fix misheard terms",
-            "A small local model fixes words that sound like this stream's terms (\"rest\" to \"Rust\"); every change is listed in derived/corrections.json.",
+            "Fix misheard terms with a small local model.",
             Bool,
             NextPost,
             |c| Value::Bool(c.post.correct),
@@ -444,7 +454,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "render.encoder",
             "Video encoder",
-            "h264_nvenc uses the NVIDIA GPU; libx264 works everywhere, slower.",
+            "h264_nvenc (NVIDIA) or libx264.",
             Choice(&["h264_nvenc", "libx264"]),
             NextPost,
             |c| {
@@ -458,7 +468,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "render.captions",
             "Captions",
-            "Burn subtitles into clips, write an .srt next to them, or none.",
+            "Burn subtitles, write an .srt, or none.",
             Choice(&["burn", "srt", "none"]),
             NextPost,
             |c| {
@@ -473,7 +483,7 @@ pub fn all() -> Vec<Setting> {
             7,
             "render.keys_overlay",
             "Keys overlay in clips",
-            "Burn the key presses into clips, render them as a separate alpha layer, or none.",
+            "Burn key presses, an alpha layer, or none.",
             Choice(&["burn", "alpha", "none"]),
             NextPost,
             |c| {
@@ -818,6 +828,9 @@ impl Page {
         spans
     }
 
+    /// The page, in cards like Home: Sections on the left; the section's settings in a lit
+    /// card (keys act there); under it, the selected setting described in one line and a
+    /// row of tags (key, default, when it applies).
     pub fn draw(
         &self,
         frame: &mut Frame,
@@ -829,55 +842,57 @@ impl Page {
     ) {
         let all = all();
         let defaults = Config::default();
-        // A whole page between the status bar and the key hints.
         let area = frame.area();
-        let outer = ratatui::layout::Rect {
-            y: area.y + 1,
-            height: area.height.saturating_sub(2),
+        let full = ratatui::layout::Rect {
+            height: area.height.saturating_sub(1),
             ..area
         };
-        frame.render_widget(Clear, outer);
-        let file = Span::styled(format!(" {} ", path.display()), Style::new().fg(FAINT));
-        let block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(ACCENT))
-            .title(Line::from(vec![
-                Span::styled(" ◉ ", Style::new().fg(Color::Black).bg(ACCENT).bold()),
-                Span::styled(" Settings ", Style::new().fg(TEXT).bold()),
-            ]))
-            .title(file.into_right_aligned_line());
-        let inner = block.inner(outer);
-        frame.render_widget(block, outer);
-
-        let [top, body, status] = Layout::vertical([
-            Constraint::Length(2),
+        frame.render_widget(Clear, full);
+        let page = ratatui::layout::Rect {
+            x: full.x + 1,
+            width: full.width.saturating_sub(2),
+            ..full
+        };
+        let [head, _, body, status] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(4),
             Constraint::Length(1),
         ])
-        .areas(inner.inner(Margin::new(1, 0)));
-        let [side, main] =
-            Layout::horizontal([Constraint::Length(24), Constraint::Min(20)]).areas(body);
+        .areas(page);
 
-        // Search box.
+        // Header: the title and file; on the right, the search box.
+        let visible = self.visible(&all, obs);
         let search = if self.typing || !self.search.is_empty() {
             let caret = if self.typing { "▏" } else { "" };
-            Line::from(vec![
+            vec![
                 Span::styled(" / ", Style::new().fg(Color::Black).bg(INFO).bold()),
-                Span::styled(format!(" {}{caret}", self.search), Style::new().fg(TEXT)),
-                Span::styled(
-                    format!("   {} found", self.visible(&all, obs).len()),
-                    Style::new().fg(FAINT),
-                ),
-            ])
+                Span::styled(format!(" {}{caret} ", self.search), Style::new().fg(TEXT)),
+                Span::styled(format!("{} ", visible.len()), Style::new().fg(FAINT)),
+            ]
         } else {
-            Line::from(vec![
+            vec![
                 Span::styled(" / ", Style::new().fg(MUTED).bg(RAISED)),
-                Span::styled(" search all settings", Style::new().fg(FAINT)),
-            ])
+                Span::styled(" search ", Style::new().fg(FAINT)),
+            ]
         };
-        frame.render_widget(Paragraph::new(search), top);
+        let [title, find] =
+            Layout::horizontal([Constraint::Min(10), Constraint::Length(30)]).areas(head);
+        frame.render_widget(
+            Line::from(vec![
+                Span::styled(" ◉ ", Style::new().fg(Color::Black).bg(ACCENT).bold()),
+                Span::styled(" Settings  ", Style::new().fg(TEXT).bold()),
+                Span::styled(path.display().to_string(), Style::new().fg(FAINT)),
+            ]),
+            title,
+        );
+        frame.render_widget(Line::from(search).alignment(Alignment::Right), find);
 
-        // Sections, each with how many settings differ from the default.
+        let [side, main] = Layout::horizontal([Constraint::Length(26), Constraint::Min(20)])
+            .spacing(1)
+            .areas(body);
+
+        // Sections: number, name, and a dot with how many settings differ from the default.
         let mut lines = Vec::new();
         for (i, name) in SECTIONS.iter().enumerate() {
             let changed = all
@@ -897,38 +912,57 @@ impl Page {
                 Span::styled(format!(" {} ", i + 1), chip),
                 Span::styled(format!(" {name}"), label),
             ];
-            // OBS live: offline, or a muted mic.
             if i == OBS_LIVE {
                 if obs.scenes.is_empty() {
-                    spans.push(Span::styled("  offline", Style::new().fg(FAINT)));
+                    spans.push(Span::styled(" ○", Style::new().fg(FAINT)));
                 } else if obs.audio.iter().any(|a| a.is_mic() && a.muted) {
-                    spans.push(Span::styled("  mic off", Style::new().fg(ACCENT)));
+                    spans.push(Span::styled(" mic off", Style::new().fg(ACCENT)));
                 }
             }
             if changed > 0 {
                 spans.push(Span::styled(
-                    format!("  •{changed}"),
+                    format!(" •{changed}"),
                     Style::new().fg(ACCENT),
                 ));
             }
             lines.push(Line::from(spans));
             lines.push(Line::raw(""));
         }
-        frame.render_widget(Paragraph::new(lines), side);
+        let sections = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(RAISED))
+            .title(Span::styled(" Sections ", Style::new().fg(MUTED).bold()))
+            .title_bottom(Span::styled(" Tab 1-8 ", Style::new().fg(FAINT)))
+            .padding(Padding::new(1, 1, 1, 0));
+        frame.render_widget(Paragraph::new(lines).block(sections), side);
 
-        // Settings list and the selected one's description.
-        let [list, about] =
-            Layout::vertical([Constraint::Min(3), Constraint::Length(6)]).areas(main);
-        let visible = self.visible(&all, obs);
+        // The settings: the lit card.
+        let [list_area, _, about] = Layout::vertical([
+            Constraint::Min(3),
+            Constraint::Length(1),
+            Constraint::Length(3),
+        ])
+        .areas(main);
+        let heading = if self.search.is_empty() {
+            format!(" {} ", SECTIONS[self.section])
+        } else {
+            format!(" “{}” ", self.search)
+        };
+        let list_block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(ACCENT))
+            .title(Span::styled(heading, Style::new().fg(TEXT).bold()))
+            .padding(Padding::new(0, 1, 1, 0));
+        let list = list_block.inner(list_area);
         let width = list.width as usize;
         let mut rows = Vec::new();
         if visible.is_empty() {
             let empty = if self.search.is_empty() && self.section == OBS_LIVE {
-                "  OBS is not connected, or has no audio inputs or sources.".to_owned()
+                "  OBS not connected"
             } else {
-                format!("  Nothing matches {:?}.", self.search)
+                "  nothing matches"
             };
-            rows.push(Line::styled(empty, Style::new().fg(FAINT).italic()));
+            rows.push(Line::styled(empty, Style::new().fg(FAINT)));
         }
         for (r, &row) in visible.iter().enumerate() {
             let i = match row {
@@ -978,7 +1012,7 @@ impl Page {
             };
             let used: usize = left.iter().chain(&right).map(Span::width).sum();
             let mut spans = left;
-            spans.push(Span::raw(" ".repeat(width.saturating_sub(used + 1))));
+            spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
             spans.extend(right);
             let mut line = Line::from(spans);
             if selected {
@@ -986,42 +1020,38 @@ impl Page {
             }
             rows.push(line);
         }
-        // Keep the selected row in view.
-        let height = list.height as usize;
-        let skip = (self.row + 1).saturating_sub(height);
+        let skip = (self.row + 1).saturating_sub(list.height as usize);
         let rows: Vec<Line> = rows.into_iter().skip(skip).collect();
+        frame.render_widget(list_block, list_area);
         frame.render_widget(Paragraph::new(rows), list);
 
-        let about_block = Block::new()
-            .borders(ratatui::widgets::Borders::TOP)
-            .border_style(Style::new().fg(FAINT))
-            .padding(Padding::horizontal(1));
-        if let Some(text) = self.selected(&all, obs).and_then(|row| obs_about(row, obs)) {
-            frame.render_widget(
-                Paragraph::new(text)
-                    .wrap(Wrap { trim: true })
-                    .block(about_block.clone()),
-                about,
-            );
-        }
-        if let Some(s) = self.setting(&all, obs) {
-            let default = show(&(s.get)(&defaults));
-            let when_color = if s.when == When::Now { OK } else { WARN };
-            let text = vec![
-                Line::styled(s.label, Style::new().fg(TEXT).bold()),
-                Line::styled(s.help, Style::new().fg(MUTED)),
-                Line::from(vec![
-                    Span::styled(s.key, Style::new().fg(FAINT)),
-                    Span::styled(format!(" · default {default} · "), Style::new().fg(FAINT)),
-                    Span::styled(s.when.text(), Style::new().fg(when_color)),
-                ]),
-            ];
-            frame.render_widget(
-                Paragraph::new(text)
-                    .wrap(Wrap { trim: true })
-                    .block(about_block),
-                about,
-            );
+        // The selected one, described: its name and one line, then tags.
+        let tag = |text: String, color: Color| {
+            Span::styled(format!(" {text} "), Style::new().fg(color).bg(RAISED))
+        };
+        let described =
+            if let Some(text) = self.selected(&all, obs).and_then(|row| obs_about(row, obs)) {
+                Some(text)
+            } else {
+                self.setting(&all, obs).map(|s| {
+                    let default = show(&(s.get)(&defaults));
+                    let when = if s.when == When::Now { OK } else { WARN };
+                    vec![
+                        Line::styled(format!(" {}", s.help), Style::new().fg(TEXT)),
+                        Line::raw(""),
+                        Line::from(vec![
+                            Span::raw(" "),
+                            tag(s.key.to_owned(), FAINT),
+                            Span::raw(" "),
+                            tag(format!("default {default}"), MUTED),
+                            Span::raw(" "),
+                            tag(s.when.short().to_owned(), when),
+                        ]),
+                    ]
+                })
+            };
+        if let Some(text) = described {
+            frame.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), about);
         }
 
         // Result of the last change, fading after a few seconds.
@@ -1038,7 +1068,7 @@ impl Page {
             let mark = if *ok { "✔" } else { "✖" };
             frame.render_widget(
                 Paragraph::new(Line::styled(
-                    format!("{mark} {message}"),
+                    format!(" {mark} {message}"),
                     Style::new().fg(color),
                 )),
                 status,
@@ -1137,40 +1167,41 @@ fn obs_row(
     }
 }
 
-/// The description under the list for an OBS row.
+/// The description under the list for an OBS row: its name, what the keys do, tags.
 fn obs_about(row: Row, obs: &Media) -> Option<Vec<Line<'static>>> {
-    let (title, help, meta) = match row {
+    let (title, keys, tag) = match row {
         Row::Audio(i) => {
             let a = obs.audio.get(i)?;
             (
                 a.name.clone(),
-                format!(
-                    "Space mutes or unmutes; h/l change the volume by 1 dB; r sets 0 dB. Also :mute {} and :volume {} <dB>.",
-                    a.name, a.name
-                ),
-                format!("OBS audio input · {}", a.kind),
+                "Space mute · h/l volume · r 0 dB",
+                a.kind.clone(),
             )
         }
         Row::Item(i) => {
             let item = obs.items.get(i)?;
             (
-                format!("{} in {}", item.source, item.scene),
-                format!(
-                    "Space shows or hides it; l shows, h hides. In the program scene also :show {} and :hide {}.",
-                    item.source, item.source
-                ),
-                format!("OBS scene item {}", item.id),
+                format!("{} · {}", item.source, item.scene),
+                "Space show/hide · h hide · l show",
+                "scene item".to_owned(),
             )
         }
         Row::Setting(_) => return None,
     };
+    let chip = |text: String, color: Color| {
+        Span::styled(format!(" {text} "), Style::new().fg(color).bg(RAISED))
+    };
     Some(vec![
-        Line::styled(title, Style::new().fg(TEXT).bold()),
-        Line::styled(help, Style::new().fg(MUTED)),
         Line::from(vec![
-            Span::styled(meta, Style::new().fg(FAINT)),
-            Span::styled(" · ", Style::new().fg(FAINT)),
-            Span::styled("applies now, in OBS", Style::new().fg(OK)),
+            Span::styled(format!(" {title}  "), Style::new().fg(TEXT).bold()),
+            Span::styled(keys, Style::new().fg(MUTED)),
+        ]),
+        Line::raw(""),
+        Line::from(vec![
+            Span::raw(" "),
+            chip(tag, FAINT),
+            Span::raw(" "),
+            chip("now, in OBS".into(), OK),
         ]),
     ])
 }
