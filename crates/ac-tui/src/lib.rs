@@ -187,6 +187,47 @@ impl Pane {
     }
 }
 
+/// Inbox filter tabs (`[` / `]`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Filter {
+    All,
+    Questions,
+    Supers,
+    Members,
+}
+
+impl Filter {
+    const ORDER: [Filter; 4] = [
+        Filter::All,
+        Filter::Questions,
+        Filter::Supers,
+        Filter::Members,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Filter::All => "All",
+            Filter::Questions => "Questions",
+            Filter::Supers => "Super Chats",
+            Filter::Members => "Members",
+        }
+    }
+
+    fn keeps(self, q: &ac_core::session_state::Question) -> bool {
+        match (self, q.support.as_ref().map(|s| s.kind)) {
+            (Filter::All, _) | (Filter::Questions, None) => true,
+            (Filter::Supers, Some(kind)) => kind != ChatKind::Membership,
+            (Filter::Members, Some(kind)) => kind == ChatKind::Membership,
+            _ => false,
+        }
+    }
+
+    fn step(self, delta: isize) -> Self {
+        let i = Self::ORDER.iter().position(|f| *f == self).unwrap_or(0) as isize;
+        Self::ORDER[(i + delta).rem_euclid(Self::ORDER.len() as isize) as usize]
+    }
+}
+
 /// Left column width, then the top pane's share of the left and of the right column.
 type Split = [f64; 3];
 
@@ -268,6 +309,7 @@ struct App {
     users: UserColors,
     /// `w`: wrap every line in Chat, Questions and the log instead of cutting them.
     wrap_all: bool,
+    filter: Filter,
     /// Pane proportions as drawn: they glide towards `split_target`.
     split: Split,
     split_target: Split,
@@ -302,10 +344,19 @@ impl App {
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
             wrap_all: false,
+            filter: Filter::All,
             split: [0.45, 0.6, 0.5],
             split_target: [0.45, 0.6, 0.5],
             last_frame: Instant::now(),
         }
+    }
+
+    /// The Inbox as shown: [`queue`] through the current filter tab.
+    fn inbox<'v>(&self, state: &'v SessionState) -> Vec<&'v ac_core::session_state::Question> {
+        queue(state)
+            .into_iter()
+            .filter(|q| self.filter.keeps(q))
+            .collect()
     }
 
     /// Time since start, the input of every animation.
@@ -583,6 +634,13 @@ impl App {
             KeyCode::Char('x') if self.focus == Pane::Questions => {
                 self.question(view, QuestionAction::Dismiss)
             }
+            KeyCode::Char('t') if self.focus == Pane::Questions => {
+                self.question(view, QuestionAction::Answer)
+            }
+            KeyCode::Char(c @ ('[' | ']')) if self.focus == Pane::Questions => {
+                self.filter = self.filter.step(if c == ']' { 1 } else { -1 });
+                self.questions.select(None);
+            }
             KeyCode::Char('j') | KeyCode::Down => self.move_selection(1, view),
             KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1, view),
             KeyCode::Char('e') if self.focus == Pane::Chapters => {
@@ -617,7 +675,7 @@ impl App {
                 }
             }
             Pane::Questions => {
-                let len = queue(&view.state).len();
+                let len = self.inbox(&view.state).len();
                 if len > 0 {
                     let current = self.questions.selected().unwrap_or(0) as isize;
                     self.questions
@@ -639,7 +697,7 @@ impl App {
     /// Sends `action` for the selected question.
     fn question(&mut self, view: &View, action: QuestionAction) {
         let selected = self.questions.selected();
-        if let Some(q) = selected.and_then(|i| queue(&view.state).get(i).copied()) {
+        if let Some(q) = selected.and_then(|i| self.inbox(&view.state).get(i).copied()) {
             let qid = q.qid.clone();
             self.send(Command::Question { qid, action });
         }
@@ -709,7 +767,7 @@ impl App {
         let rows = |n: usize| (n.max(2) + 2).min(usize::from(u16::MAX)) as u16;
         let want = [
             rows(view.chat.len()),
-            rows(queue(&view.state).len()),
+            rows(self.inbox(&view.state).len()),
             rows(view.state.checkpoints.len()),
             rows(view.state.log.len()),
         ];
@@ -985,7 +1043,8 @@ impl App {
     }
 
     fn draw_questions(&mut self, frame: &mut Frame, area: Rect, view: &View) {
-        let queue = queue(&view.state);
+        let all = queue(&view.state);
+        let queue = self.inbox(&view.state);
         let live = mix(
             ACCENT,
             ACCENT_DIM,
@@ -1039,23 +1098,50 @@ impl App {
                 }
             })
             .collect();
-        let supporters = queue.iter().filter(|q| q.support.is_some()).count();
-        let mut extra = vec![Span::styled(
-            format!("{} questions ", queue.len() - supporters),
-            Style::new().fg(MUTED),
-        )];
-        if supporters > 0 {
+        // Focused: filter tabs with their counts, the active one underlined. Unfocused
+        // (narrow): the active tab and how many supporters wait.
+        let mut extra = Vec::new();
+        let tabs = if focused {
+            &Filter::ORDER[..]
+        } else {
+            std::slice::from_ref(&self.filter)
+        };
+        for (i, &f) in tabs.iter().enumerate() {
+            if i > 0 {
+                extra.push(Span::styled("· ", Style::new().fg(FAINT)));
+            }
+            let n = all.iter().filter(|q| f.keeps(q)).count();
+            let style = if f == self.filter {
+                Style::new().fg(TEXT).bold().underlined()
+            } else if n == 0 {
+                Style::new().fg(FAINT)
+            } else {
+                Style::new().fg(MUTED)
+            };
+            extra.push(Span::styled(format!("{} {n}", f.label()), style));
+            extra.push(Span::raw(" "));
+        }
+        let to_thank = all.iter().filter(|q| q.support.is_some()).count();
+        if !focused && to_thank > 0 {
             extra.push(Span::styled(
-                format!("· {supporters} to thank "),
+                format!("· {to_thank} to thank "),
                 Style::new().fg(WARN).bold(),
             ));
         }
         let block = pane_block(Pane::Questions, "Inbox", extra, focused);
         if items.is_empty() {
-            let hint = empty_state(&[
-                "Nothing waiting. Questions (!q), Super Chats and memberships land here",
-                "and leave once handled: Enter shows or thanks, x dismisses.",
-            ]);
+            let other = format!(
+                "Nothing under {}; ] shows the next filter.",
+                self.filter.label()
+            );
+            let hint = if all.is_empty() {
+                empty_state(&[
+                    "Nothing waiting. Questions (!q), Super Chats and memberships land here",
+                    "and leave once handled: Enter shows on stream, t done, x dismiss.",
+                ])
+            } else {
+                empty_state(&[&other])
+            };
             frame.render_widget(hint.block(block), area);
             return;
         }
@@ -1113,7 +1199,12 @@ impl App {
             Mode::Preview { .. } => &[("Enter", "push"), ("j/k", "scroll"), ("Esc", "close")],
             _ => {
                 let pane: &[(&str, &str)] = match self.focus {
-                    Pane::Questions => &[("Enter", "show/answer"), ("x", "dismiss")],
+                    Pane::Questions => &[
+                        ("Enter", "on stream/done"),
+                        ("t", "done"),
+                        ("x", "dismiss"),
+                        ("[ ]", "filter"),
+                    ],
                     Pane::Chapters => &[("e", "edit"), ("d", "delete")],
                     Pane::Chat | Pane::Log => &[("j/k", "read"), ("G", "newest")],
                 };
@@ -1974,11 +2065,10 @@ fn help_lines() -> Vec<Line<'static>> {
                 ("j/k", "move or scroll; g/G first/newest"),
                 ("w", "wrap every line / one line each (cursor line opens)"),
                 ("e / d", "edit / delete the selected chapter"),
-                (
-                    "Enter",
-                    "Inbox: question on stream, again done; supporter thanked",
-                ),
+                ("Enter", "Inbox: show on stream; again: done"),
+                ("t", "Inbox: done without showing (thanked, answered)"),
                 ("x", "Inbox: dismiss"),
+                ("[ ]", "Inbox: filter All, Questions, Super Chats, Members"),
             ],
         ),
         (
@@ -2437,7 +2527,7 @@ mod tests {
         let mut app = App::new(clock, rx, cmd_tx);
         app.mode = Mode::Normal;
         let text = screen(&mut app, &view);
-        assert!(text.contains("1 to thank"), "{text}");
+        assert!(text.contains(" 2  Inbox All 3 · 1 to thank"), "{text}");
         assert!(
             text.contains(" ₹100.00  eve: why rust?"),
             "pinned first: {text}"
@@ -2446,15 +2536,20 @@ mod tests {
             text.contains("bob: !q why rust over go?"),
             "chat pane: {text}"
         );
-        assert!(
-            text.contains(" 2  Inbox 2 questions"),
-            "numbered panes: {text}"
-        );
         assert!(text.contains("lat 4.2s"), "{text}");
 
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
-        press(&mut app, KeyCode::BackTab); // Chapters -> Questions
-        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('2'));
+        app.last_frame -= Duration::from_secs(1); // let the pane finish growing
+        let text = screen(&mut app, &view);
+        assert!(
+            text.contains("All 3 · Questions 2 · Super Chats 1 · Members 0"),
+            "tabs when focused: {text}"
+        );
+        // `]` filters to questions: the Super Chat is hidden, q1 is first.
+        press(&mut app, KeyCode::Char(']'));
+        let text = screen(&mut app, &view);
+        assert!(!text.contains("₹100.00  eve"), "{text}");
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(
@@ -2470,6 +2565,17 @@ mod tests {
             Command::Question {
                 qid: "q2".into(),
                 action: QuestionAction::Dismiss
+            }
+        );
+        // `]` again: Super Chats only; `t` thanks without showing.
+        press(&mut app, KeyCode::Char(']'));
+        screen(&mut app, &view);
+        press(&mut app, KeyCode::Char('t'));
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Question {
+                qid: "s1".into(),
+                action: QuestionAction::Answer
             }
         );
 

@@ -106,7 +106,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
          +5s chat eve !links\n\
          +1s chat fay super:₹100.00 keep it up!\n\
          +1s chat gus joined Welcome to the channel!\n\
-         +1s question show 1\n\
+         +1s question answer 1\n\
          +1s latency\n\
          +240s chat me owner !lat 2350\n\
          +20s latency\n\
@@ -138,7 +138,7 @@ async fn chat_questions_overlay_chapter_cap_and_latency() {
     assert_eq!(added[1]["data"]["text"], "keep it up!");
     assert_eq!(added[2]["data"]["support"]["kind"], "membership");
     assert!(added[0]["data"].get("support").is_none());
-    // Enter on a supporter thanks them: answered at once, no question card.
+    // `t` on a supporter thanks them quietly: answered, never on stream.
     let fay = added[1]["data"]["qid"].as_str().unwrap();
     let answered: Vec<&str> = of("question.answered")
         .iter()

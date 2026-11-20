@@ -368,11 +368,6 @@ impl Controller {
             return;
         };
         let kind = match (action, q.state) {
-            // Supporters are thanked in person (their alert overlay plays on arrival):
-            // Enter marks them done without a question card.
-            (QuestionAction::Show, QuestionState::Open) if q.support.is_some() => {
-                EventKind::QuestionAnswered { qid }
-            }
             (QuestionAction::Show, QuestionState::Open) => EventKind::QuestionShow { qid },
             (QuestionAction::Show | QuestionAction::Answer, QuestionState::Shown) => {
                 EventKind::QuestionAnswered { qid }
@@ -570,7 +565,8 @@ impl Controller {
             .filter(|q| q.state == QuestionState::Shown)
             .max_by_key(|q| q.shown_at)
             .map_or_else(hide, |q| {
-                (Action::Show, json!({ "author": q.author, "text": q.text }))
+                let data = json!({ "author": q.author, "text": q.text, "support": q.support });
+                (Action::Show, data)
             });
         let brb = if self.state.brb {
             let since = self.state.brb_starts.last().map(|t| t.unix_ms());

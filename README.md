@@ -160,7 +160,8 @@ again resumes the session where it left off.
 | `r` | Edit the session README in Neovim (`nvim --clean`, none of your config) inside the terminal; `:wq` returns to aftercast. Saving re-renders the description, nothing is pushed |
 | `s` | Preview the description; `Enter` pushes it to YouTube |
 | `e` / `d` | Edit / delete the selected chapter |
-| `Enter` / `x` | Inbox: show on stream (again: done) / dismiss |
+| `Enter` / `t` / `x` | Inbox: show on stream (again: done) / done without showing / dismiss |
+| `[` / `]` | Inbox: filter All, Questions, Super Chats, Members |
 | `1` `2` `3` `4` | Focus Chat, Inbox, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
 | `:` | Command palette (`:sync`, `:finalize`, `:scene <name>`, `:say <text>`, `:latency`, `:help`, ...); `Tab` completes the command name |
@@ -176,9 +177,11 @@ the newest again. The selected Inbox item opens the same way.
 The Inbox (pane 2) is a to-do list, not a second chat: only what needs you lands there, and
 everything leaves once handled. Super Chats, Super Stickers and memberships (joins,
 milestones, gifts) are pinned on top with their amount or a "member" chip, and stay, across
-restarts, until you thank them (`Enter`, nothing goes on stream) or dismiss them (`x`).
-Questions (`!q`) follow: `Enter` shows one on stream, `Enter` again marks it answered.
-Messages members write in chat stay in chat.
+restarts, until handled; questions (`!q`) follow. Any item can go on stream: `Enter` shows it
+on the question overlay and `Enter` again marks it done. `t` marks it done without showing
+(a quiet thank-you or answer) and `x` dismisses it. `[` and `]` switch the filter tabs in the
+pane title (All, Questions, Super Chats, Members, each with its count); unfocused, the title
+just says how many supporters wait. Messages members write in chat stay in chat.
 
 Panes with little in them shrink to fit, so the busy ones get the room.
 
