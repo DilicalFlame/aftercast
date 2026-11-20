@@ -94,6 +94,53 @@ impl Session {
         Ok(session)
     }
 
+    /// A draft of a new session: the folder exists so the session can be tried, but no
+    /// episode number is used up and it is not the last session until [`Session::commit`].
+    /// Quitting before that deletes the folder and leaves everything as it was. An episode
+    /// whose folder is still there (a draft left by a crash) is skipped.
+    pub fn create_draft(
+        home: &Home,
+        config: &Config,
+        new: NewSession,
+        now: Timestamp,
+    ) -> Result<Self> {
+        let state = State::load(&home.state_file())?;
+        let mut episode = state.next_episode;
+        while Self::name_taken(home, config, now, episode) {
+            episode += 1;
+        }
+        Self::create_at(home, config, new, now, episode).map(|(s, _)| s)
+    }
+
+    fn name_taken(home: &Home, config: &Config, now: Timestamp, episode: u32) -> bool {
+        let local = now.datetime().with_timezone(&chrono::Local);
+        let name = format!(
+            "{}_{}{:0pad$}",
+            local.format("%Y-%m-%d"),
+            config.channel.episode_prefix,
+            episode,
+            pad = config.channel.episode_pad
+        );
+        sessions_dir(home, config)
+            .join(local.format("%Y").to_string())
+            .join(name)
+            .join("session.toml")
+            .exists()
+    }
+
+    /// Makes a draft (or a resumed session) count: its episode number is used up and it
+    /// becomes the last session.
+    pub fn commit(&self, home: &Home, config: &Config) -> Result<()> {
+        let state_path = home.state_file();
+        let mut state = State::load(&state_path)?;
+        state.next_episode = state.next_episode.max(self.meta.episode + 1);
+        let root = sessions_dir(home, config);
+        if let Ok(rel) = self.dir.strip_prefix(&root) {
+            state.last_session = Some(config.paths.sessions.join(rel));
+        }
+        state.save(&state_path)
+    }
+
     /// The rehearsal session: episode 0 next to the real ones. It never uses up an episode
     /// number and never becomes the last session.
     pub fn create_rehearsal(

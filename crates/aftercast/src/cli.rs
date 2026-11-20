@@ -42,6 +42,11 @@ pub struct Cli {
     #[arg(long)]
     pub allow_ended: bool,
 
+    /// With --no-tui, keep a new session a draft until a `begin` script line, as the TUI
+    /// does until Enter on Home (for tests)
+    #[arg(long, hide = true, requires = "no_tui")]
+    pub draft: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }

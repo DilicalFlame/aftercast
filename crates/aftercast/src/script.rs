@@ -109,6 +109,7 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
         "sync" => Action::Sync,
         "finalize" => Action::Finalize,
         "quit" => Action::Quit,
+        "begin" => Action::Do(Command::Begin),
         "brb" => Action::Brb(Some(true)),
         "back" => Action::Brb(Some(false)),
         "privacy" => Action::Privacy(match args.as_str() {

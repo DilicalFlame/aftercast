@@ -1,6 +1,9 @@
-//! The Home page (`0`, opened when a session starts): who and what is live, whether
-//! everything is ready (the pre-flight checks, each failing one with the key that fixes
-//! it), live audio meters and the sources of the scene on air.
+//! The Home page (`0`, and where a session starts): what this session is, whether
+//! everything is ready (every check, with how to fix what is not), live audio meters and
+//! the scene on air.
+//!
+//! A new session is a draft here: nothing lasting or public happens until Enter starts
+//! it, and `q` before that quits keeping nothing.
 
 use std::time::Duration;
 
@@ -9,19 +12,20 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
 use crate::theme::{ACCENT, FAINT, INFO, MUTED, OK, RAISED, TEXT, WARN};
 use crate::{Check, CheckState, View};
 
-/// The key that fixes a failing check, if there is one.
-pub fn fix(check: &Check) -> Option<(char, &'static str)> {
-    if check.state != CheckState::Fail {
+/// The key Home offers for a check that is not fine, if aftercast can fix it.
+pub fn fix_key(check: &Check) -> Option<char> {
+    if check.state == CheckState::Ok || check.fix.is_empty() {
         return None;
     }
     match check.label.as_str() {
-        "OBS recording" => Some(('R', "start recording")),
-        "OBS streaming" => Some(('S', "start streaming")),
+        "OBS recording" => Some('R'),
+        "OBS streaming" => Some('S'),
+        "Mic live" if check.state == CheckState::Fail => Some('M'),
         _ => None,
     }
 }
@@ -31,22 +35,22 @@ pub fn mic(obs: &Media) -> Option<&Audio> {
     obs.audio.iter().find(|a| a.is_mic())
 }
 
-/// Draws the page over everything between the status bar and the key hints.
-/// `status` is the live line from the status bar; `spin` a spinner frame.
-pub fn draw(frame: &mut Frame, view: &View, status: Line<'static>, spin: &'static str) {
+/// Draws the page over everything but the key hints (the status bar would repeat it).
+/// `live` is the status bar's live part; `spin` a spinner frame.
+pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static str) {
     let area = frame.area();
     let outer = Rect {
-        y: area.y + 1,
-        height: area.height.saturating_sub(2),
+        height: area.height.saturating_sub(1),
         ..area
     };
     frame.render_widget(Clear, outer);
+    let draft = !view.begun;
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(ACCENT))
+        .border_style(Style::new().fg(if draft { WARN } else { ACCENT }))
         .title(Line::from(vec![
             Span::styled(" ◉ ", Style::new().fg(Color::Black).bg(ACCENT).bold()),
-            Span::styled(" Home ", Style::new().fg(TEXT).bold()),
+            Span::styled(" aftercast ", Style::new().fg(TEXT).bold()),
         ]))
         .title(
             Span::styled(format!(" {} ", view.session), Style::new().fg(FAINT))
@@ -55,17 +59,17 @@ pub fn draw(frame: &mut Frame, view: &View, status: Line<'static>, spin: &'stati
     let inner = block.inner(outer).inner(Margin::new(2, 1));
     frame.render_widget(block, outer);
 
-    let [head, _, ready, _, body] = Layout::vertical([
+    let [head, _, action, _, body] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(1),
-        Constraint::Length(2),
+        Constraint::Length(4),
         Constraint::Length(1),
         Constraint::Min(3),
     ])
     .areas(inner);
 
-    // The logo tile and who is live.
-    let [logo, who] = Layout::horizontal([Constraint::Length(10), Constraint::Min(10)]).areas(head);
+    // The logo tile, the episode and what is live.
+    let [logo, who] = Layout::horizontal([Constraint::Length(11), Constraint::Min(10)]).areas(head);
     let tile = Style::new().fg(Color::White).bg(ACCENT).bold();
     frame.render_widget(
         Paragraph::new(vec![
@@ -83,105 +87,130 @@ pub fn draw(frame: &mut Frame, view: &View, status: Line<'static>, spin: &'stati
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(vec![
-                Span::styled("aftercast  ", Style::new().fg(ACCENT).bold()),
+                Span::styled(
+                    format!("#{:03}  ", view.meta.episode),
+                    Style::new().fg(ACCENT).bold(),
+                ),
                 Span::styled(title, Style::new().fg(TEXT).bold()),
             ]),
-            Line::from(vec![
-                Span::styled(
-                    format!("#{:03} · ", view.meta.episode),
-                    Style::new().fg(MUTED),
-                ),
-                Span::styled(
-                    format!("youtu.be/{}", view.meta.video_id),
-                    Style::new().fg(INFO).underlined(),
-                ),
-            ]),
-            status,
+            Line::from(Span::styled(
+                format!("youtu.be/{}", view.meta.video_id),
+                Style::new().fg(INFO).underlined(),
+            )),
+            live,
         ]),
         who,
     );
 
-    // Readiness: how many checks pass, and a gauge.
-    let total = view.preflight.len();
-    let ok = view
-        .preflight
-        .iter()
-        .filter(|c| c.state == CheckState::Ok)
-        .count();
-    let failing = view
-        .preflight
-        .iter()
-        .filter(|c| c.state == CheckState::Fail)
-        .count();
-    let (headline, color) = match failing {
-        0 if ok == total => ("Ready to go".to_owned(), OK),
-        0 => ("Checking…".to_owned(), MUTED),
-        1 => ("1 thing needs you".to_owned(), ACCENT),
-        n => (format!("{n} things need you"), ACCENT),
+    // The one decision on this page.
+    let (ok, failing, total) = counts(&view.preflight);
+    let ready = failing == 0 && ok == total;
+    let verdict = match failing {
+        0 if ready => Span::styled("Everything is ready.", Style::new().fg(OK).bold()),
+        0 => Span::styled("Still checking…", Style::new().fg(MUTED)),
+        1 => Span::styled("1 thing needs you below.", Style::new().fg(ACCENT).bold()),
+        n => Span::styled(
+            format!("{n} things need you below."),
+            Style::new().fg(ACCENT).bold(),
+        ),
     };
-    let cells = 24;
-    let filled = (ok * cells).checked_div(total).unwrap_or(0);
-    frame.render_widget(
-        Paragraph::new(vec![
+    let lines = if draft {
+        let what = if view.fresh {
+            "Nothing is kept until you start. Starting creates the session, pushes the \
+             description (if set), and starts key capture and the bot."
+        } else {
+            "This session already exists; Resume continues it where it stopped."
+        };
+        let (start, quit) = if view.fresh {
+            (" Enter  Start the session ", " q  Quit, keep nothing ")
+        } else {
+            (" Enter  Resume the session ", " q  Quit ")
+        };
+        vec![
             Line::from(vec![
-                Span::styled(headline, Style::new().fg(color).bold()),
                 Span::styled(
-                    format!("   {ok} of {total} checks pass"),
-                    Style::new().fg(MUTED),
+                    start,
+                    Style::new()
+                        .fg(Color::Black)
+                        .bg(if ready { OK } else { WARN })
+                        .bold(),
                 ),
+                Span::raw("   "),
+                Span::styled(quit, Style::new().fg(TEXT).bg(RAISED)),
+                Span::raw("   "),
+                verdict,
             ]),
+            Line::raw(""),
+            Line::styled(what, Style::new().fg(MUTED)),
+        ]
+    } else {
+        vec![
             Line::from(vec![
-                Span::styled("▰".repeat(filled), Style::new().fg(color)),
-                Span::styled("▱".repeat(cells - filled), Style::new().fg(RAISED)),
+                Span::styled(" ● STARTED ", Style::new().fg(Color::Black).bg(OK).bold()),
+                Span::raw("   "),
+                verdict,
             ]),
-        ]),
-        ready,
-    );
+            Line::raw(""),
+            Line::styled(
+                "Enter, Esc or 0 go to the dashboard; 0 brings you back here.",
+                Style::new().fg(MUTED),
+            ),
+        ]
+    };
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), action);
 
     let [left, right] =
-        Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(body);
+        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).areas(body);
 
-    // Checks, the failing ones first, each with its fix key.
+    // Checks: what needs you first, each with how to fix it; then the fine ones.
     let mut checks: Vec<&Check> = view.preflight.iter().collect();
     checks.sort_by_key(|c| match c.state {
         CheckState::Fail => 0,
         CheckState::Pending => 1,
         CheckState::Ok => 2,
     });
-    let mut lines = vec![section("Checks"), Line::raw("")];
+    let mut lines = vec![
+        section(&format!("Checks · {ok} of {total} fine")),
+        Line::raw(""),
+    ];
     for c in checks {
         let (mark, style) = match c.state {
             CheckState::Ok => ("✔", Style::new().fg(OK)),
             CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
             CheckState::Pending => (spin, Style::new().fg(MUTED)),
         };
+        let label = if c.state == CheckState::Ok {
+            Style::new().fg(MUTED)
+        } else {
+            Style::new().fg(TEXT).bold()
+        };
         let mut spans = vec![
             Span::styled(format!("{mark} "), style),
-            Span::styled(
-                c.label.clone(),
-                if c.state == CheckState::Fail {
-                    Style::new().fg(TEXT).bold()
-                } else {
-                    Style::new().fg(TEXT)
-                },
-            ),
+            Span::styled(c.label.clone(), label),
         ];
-        if let Some((key, what)) = fix(c) {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(
-                format!(" {key} "),
-                Style::new().fg(Color::Black).bg(WARN).bold(),
-            ));
-            spans.push(Span::styled(format!(" {what}"), Style::new().fg(WARN)));
-        } else if !c.detail.is_empty() {
+        if !c.detail.is_empty() {
             spans.push(Span::styled(
                 format!("  {}", c.detail),
                 Style::new().fg(FAINT),
             ));
         }
         lines.push(Line::from(spans));
+        if !c.fix.is_empty() {
+            let mut fix = vec![Span::raw("  ")];
+            if let Some(key) = fix_key(c) {
+                fix.push(Span::styled(
+                    format!(" {key} "),
+                    Style::new().fg(Color::Black).bg(WARN).bold(),
+                ));
+                fix.push(Span::raw(" "));
+            } else {
+                fix.push(Span::styled("↳ ", Style::new().fg(WARN)));
+            }
+            fix.push(Span::styled(c.fix.clone(), Style::new().fg(WARN)));
+            lines.push(Line::from(fix));
+        }
     }
-    frame.render_widget(Paragraph::new(lines), left);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), left);
 
     // Audio meters, mics first, then the scene on air.
     let width = right.width as usize;
@@ -220,14 +249,11 @@ pub fn draw(frame: &mut Frame, view: &View, status: Line<'static>, spin: &'stati
         lines.push(Line::from(spans));
     }
     let scene = view.state.scene.clone().unwrap_or_default();
-    let sources: Vec<_> = view.obs.sources_in(&scene).collect();
     if !scene.is_empty() {
         lines.push(Line::raw(""));
-        lines.push(Line::from(vec![
-            Span::styled("On air  ", Style::new().fg(ACCENT).bold()),
-            Span::styled(scene.clone(), Style::new().fg(TEXT).bold()),
-        ]));
-        for item in sources {
+        lines.push(section(&format!("On air · {scene}")));
+        lines.push(Line::raw(""));
+        for item in view.obs.sources_in(&scene) {
             let (mark, style) = if item.enabled {
                 ("━━●", Style::new().fg(OK))
             } else {
@@ -243,6 +269,12 @@ pub fn draw(frame: &mut Frame, view: &View, status: Line<'static>, spin: &'stati
         }
     }
     frame.render_widget(Paragraph::new(lines), right);
+}
+
+/// Checks that are fine, failing, and all.
+fn counts(checks: &[Check]) -> (usize, usize, usize) {
+    let of = |s| checks.iter().filter(|c| c.state == s).count();
+    (of(CheckState::Ok), of(CheckState::Fail), checks.len())
 }
 
 fn section(name: &str) -> Line<'static> {
@@ -274,20 +306,35 @@ pub fn meter(level: Option<f32>, muted: bool, cells: usize) -> Vec<Span<'static>
     spans
 }
 
-/// Key hints for the page.
-pub fn hints(view: &View) -> Vec<(&'static str, String)> {
-    let mut pairs = vec![("Enter", "dashboard".to_owned())];
+/// Key hints for the page: the decision first, then the fixes on offer.
+pub fn hints(view: &View) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = if view.begun {
+        vec![("Enter".into(), "dashboard".into())]
+    } else if view.fresh {
+        vec![
+            ("Enter".into(), "start".into()),
+            ("q".into(), "quit, keep nothing".into()),
+        ]
+    } else {
+        vec![
+            ("Enter".into(), "resume".into()),
+            ("q".into(), "quit".into()),
+        ]
+    };
+    let mut mic_fixed = false;
     for c in &view.preflight {
-        if let Some((key, what)) = fix(c) {
-            pairs.push((if key == 'R' { "R" } else { "S" }, what.to_owned()));
+        if let Some(key) = fix_key(c) {
+            mic_fixed |= key == 'M';
+            let what = c.fix.split(" (").next().unwrap_or_default();
+            pairs.push((key.to_string(), what.to_owned()));
         }
     }
-    if let Some(m) = mic(&view.obs) {
+    if !mic_fixed && let Some(m) = mic(&view.obs) {
         let what = if m.muted { "unmute mic" } else { "mute mic" };
-        pairs.push(("M", what.to_owned()));
+        pairs.push(("M".into(), what.into()));
     }
-    pairs.push((",", "settings".into()));
-    pairs.push((":", "command".into()));
+    pairs.push((",".into(), "settings".into()));
+    pairs.push((":".into(), "command".into()));
     pairs
 }
 
@@ -318,17 +365,19 @@ mod tests {
     }
 
     #[test]
-    fn failing_recording_and_streaming_have_fix_keys() {
+    fn checks_aftercast_can_fix_have_keys() {
         let check = |label: &str, state| Check {
             label: label.into(),
             state,
             detail: String::new(),
+            fix: "do it".into(),
         };
         assert_eq!(
-            fix(&check("OBS recording", CheckState::Fail)),
-            Some(('R', "start recording"))
+            fix_key(&check("OBS recording", CheckState::Fail)),
+            Some('R')
         );
-        assert_eq!(fix(&check("OBS recording", CheckState::Ok)), None);
-        assert_eq!(fix(&check("Config valid", CheckState::Fail)), None);
+        assert_eq!(fix_key(&check("OBS recording", CheckState::Ok)), None);
+        assert_eq!(fix_key(&check("Mic live", CheckState::Fail)), Some('M'));
+        assert_eq!(fix_key(&check("Config valid", CheckState::Fail)), None);
     }
 }

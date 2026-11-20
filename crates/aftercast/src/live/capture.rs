@@ -107,7 +107,8 @@ impl Controller {
     }
 
     pub(super) fn on_key(&mut self, raw: RawKey) {
-        if !self.config.capture.keys {
+        // Nothing typed is recorded before the session starts.
+        if !self.config.capture.keys || !self.begun {
             return;
         }
         let Some(rec) = self.capture.filter.check(&raw, self.state.privacy) else {

@@ -254,15 +254,25 @@ being typed; they are kept across sessions in `<home>\state\history` (last 100).
 
 ### Home
 
-`0` opens Home, which is also what a session starts on: the episode and its link, what is
-live (stream, scene, recording), and whether you are ready: "Ready to go" or "1 thing needs
-you" with a gauge of the pre-flight checks. The checks are listed failing first; a failing
-one that aftercast can fix shows its key (`R` start recording, `S` start streaming). Next to
-them, a live level meter for every audio input (mics first; green, amber from -12 dB, red from
--3 dB, "muted" when muted), so you can talk and watch your mic before going live, and the
-sources of the scene on air. `M` mutes or unmutes the mic, `,` opens settings, `:` the
-palette, `Enter`, `Esc` or `0` go to the dashboard. Levels are asked of OBS only while Home
-is open.
+Running `aftercast <link>` opens Home first, and nothing lasting or public happens until you
+start: a new session is a draft. Its folder exists so everything can be tried, but no episode
+number is used up, it is not the "last session", the description is not pushed, keys are not
+recorded and the bot does not answer (chat is read and shown). `Enter` starts it (or resumes
+an existing one); `q` before that quits and a new draft is deleted, leaving everything as it
+was. OBS changes you make from Home (recording, mute) are real, because you asked for them.
+Headless runs (`--no-tui`) start at once, as before.
+
+Home fills the screen (the status bar would only repeat it): the episode, its link and what
+is live; the decision ("Enter Start the session", "q Quit, keep nothing") with a verdict
+("Everything is ready." or "2 things need you below."); every check, what needs you first,
+each with how to fix it, with a key where aftercast can do it (`R` start recording, `S` start
+streaming, `M` unmute the mic) and the steps where it cannot (start OBS and turn on its
+WebSocket server, create a missing scene, turn on live chat, a taken overlay port, the quota
+reserve, the shell hook); a live level meter for every audio input (mics first; green, amber
+from -12 dB, red from -3 dB, "muted"), so you can talk and watch your mic before going live;
+and the sources of the scene on air. `,` opens settings and `:` the palette from Home too.
+Once started, `0` brings Home back and `Enter`, `Esc` or `0` go to the dashboard. Levels are
+asked of OBS only while Home is open.
 
 Mutes and source changes are logged as `obs.mute` and `obs.source` events, whether made from
 aftercast or in OBS.

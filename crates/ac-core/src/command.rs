@@ -77,6 +77,8 @@ pub enum Command {
     Stream {
         on: bool,
     },
+    /// Start the session prepared on Home: until then nothing lasting or public happens.
+    Begin,
     /// Ask OBS for live audio levels (while a page showing meters is open) or stop.
     Meters {
         on: bool,

@@ -131,6 +131,8 @@ async fn live_session(
             mock: cli.mock.as_deref(),
             allow_ended: cli.allow_ended,
             rehearsal,
+            // Headless runs start at once; the TUI starts the session from Home.
+            begin: cli.no_tui && !cli.draft,
         },
     )
     .await?;
@@ -189,6 +191,10 @@ async fn live_session(
         .await
         .map_err(|e| error::AppError::Usage(format!("session task failed: {e}")))?;
     let last = view.borrow_and_update().clone();
+    if !last.begun && last.fresh {
+        println!("Quit before starting: nothing was kept.");
+        return Ok(exit::OK);
+    }
     println!("Session {} saved.", last.session);
     if let Some(notice) = last.notice {
         println!("{notice}");

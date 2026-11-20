@@ -25,6 +25,82 @@ fn assert_valid(v: &jsonschema::Validator, json: &Value) {
     assert!(errors.is_empty(), "{json}: {errors:?}");
 }
 
+/// Runs a headless mock session as a draft (as the TUI does until Enter on Home).
+fn run_draft(home: &Path, script: &Path) -> std::process::Output {
+    let fixture: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/basic");
+    Command::new(env!("CARGO_BIN_EXE_aftercast"))
+        .arg("--home")
+        .arg(home)
+        .arg("--mock")
+        .arg(&fixture)
+        .args(["abcdefghijk", "--no-tui", "--draft", "--script"])
+        .arg(script)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn quitting_a_draft_keeps_nothing_and_starting_it_keeps_everything() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("Streams");
+    let bin = env!("CARGO_BIN_EXE_aftercast");
+    let init = Command::new(bin)
+        .arg("--home")
+        .arg(&home)
+        .arg("init")
+        .output();
+    assert!(init.unwrap().status.success());
+    let state = || fs::read_to_string(home.join("state/state.toml")).unwrap_or_default();
+    let before = state();
+    let sessions = || {
+        fs::read_dir(home.join("sessions"))
+            .map(|years| {
+                years
+                    .flatten()
+                    .flat_map(|y| fs::read_dir(y.path()).unwrap())
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+
+    // Draft, then quit: the folder is gone and state.toml is as it was.
+    let script = tmp.path().join("quit.txt");
+    fs::write(
+        &script,
+        "+1s mute Mic/Aux
+quit
+",
+    )
+    .unwrap();
+    let out = run_draft(&home, &script);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(sessions(), 0, "the draft was removed");
+    assert_eq!(state(), before, "no episode used, no last session");
+
+    // Draft, begin, quit: the session stays and counts.
+    fs::write(
+        &script,
+        "begin
+quit
+",
+    )
+    .unwrap();
+    let out = run_draft(&home, &script);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(sessions(), 1);
+    let after = state();
+    assert!(after.contains("last_session"), "{after}");
+    assert_ne!(after, before);
+}
+
 /// Runs a headless mock session with `script`; returns the session folder and its
 /// events, each validated against the schema.
 fn run(tmp: &Path, script: &str) -> (PathBuf, Vec<Value>) {

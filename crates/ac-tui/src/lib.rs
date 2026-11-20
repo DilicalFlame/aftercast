@@ -58,6 +58,10 @@ pub struct View {
     pub config: Arc<ac_core::config::Config>,
     /// `aftercast.toml`, written by the settings page, then reloaded.
     pub config_path: std::path::PathBuf,
+    /// The session was started from Home. Before that nothing lasting or public happens.
+    pub begun: bool,
+    /// A new session (a draft until started; quitting before that keeps nothing).
+    pub fresh: bool,
     /// OBS scenes, audio inputs and scene sources (empty while OBS is down).
     pub obs: Arc<ac_core::obs::Media>,
     /// Live audio peaks per input, filled while a page with meters is open.
@@ -101,6 +105,8 @@ pub struct Check {
     pub label: String,
     pub state: CheckState,
     pub detail: String,
+    /// How to fix it, while it is not fine (Home shows it under the check).
+    pub fix: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -479,6 +485,10 @@ impl App {
         while !self.exit {
             let view = self.view.borrow_and_update().clone();
             self.poll_external(&view);
+            // Until the session starts, Home is where everything returns to.
+            if !view.begun && self.mode == Mode::Normal {
+                self.mode = Mode::Preflight;
+            }
             if view.state.ended && !self.end_prompted && self.mode == Mode::Normal {
                 self.end_prompted = true;
                 self.mode = Mode::Ended;
@@ -715,35 +725,23 @@ impl App {
             },
             Mode::Help => {}
             // Home: Enter, Esc or 0 go to the dashboard; R, S and M fix what they say.
+            // Before the session starts: Enter starts it, q quits (keeping nothing for a
+            // new one); other keys stay here.
+            Mode::Preflight if !view.begun => match key.code {
+                KeyCode::Enter => self.send(Command::Begin),
+                KeyCode::Char('q') => self.finish(Command::Quit),
+                KeyCode::Char(c @ ('R' | 'r' | 'S' | 's' | 'M' | 'm' | ',' | ':')) => {
+                    self.mode = Mode::Preflight;
+                    self.home_key(c, view);
+                }
+                _ => self.mode = Mode::Preflight,
+            },
             Mode::Preflight => match key.code {
-                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('0' | 'q') => {}
-                KeyCode::Char('R' | 'r') => {
-                    self.send(Command::Record {
-                        action: ac_core::command::OutputAction::Start,
-                    });
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('0') => {}
+                KeyCode::Char('q') => self.mode = Mode::ConfirmQuit,
+                KeyCode::Char(c @ ('R' | 'r' | 'S' | 's' | 'M' | 'm' | ',' | ':')) => {
                     self.mode = Mode::Preflight;
-                }
-                KeyCode::Char('S' | 's') => {
-                    self.send(Command::Stream { on: true });
-                    self.mode = Mode::Preflight;
-                }
-                KeyCode::Char('M' | 'm') => {
-                    if let Some(mic) = home::mic(&view.obs) {
-                        let input = mic.name.clone();
-                        self.send(Command::Mute { input, on: None });
-                    }
-                    self.mode = Mode::Preflight;
-                }
-                KeyCode::Char(',') => self.mode = Mode::Settings(settings::Page::default()),
-                KeyCode::Char(':') => {
-                    self.pick = 0;
-                    self.picked = false;
-                    self.history(view);
-                    self.mode = Mode::Input {
-                        prompt: Prompt::Palette,
-                        text: String::new(),
-                        pressed_at: self.clock.now_ts(),
-                    };
+                    self.home_key(c, view);
                 }
                 _ => self.mode = Mode::Preflight,
             },
@@ -924,6 +922,34 @@ impl App {
                 let ids: Vec<&str> = view.chat.iter().map(|m| m.id.as_str()).collect();
                 self.chat_feed.step(delta, &ids)
             }
+        }
+    }
+
+    /// Home's fix keys (R, S, M) and its way out to settings (,) and the palette (:).
+    fn home_key(&mut self, c: char, view: &View) {
+        match c.to_ascii_uppercase() {
+            'R' => self.send(Command::Record {
+                action: ac_core::command::OutputAction::Start,
+            }),
+            'S' => self.send(Command::Stream { on: true }),
+            'M' => {
+                if let Some(mic) = home::mic(&view.obs) {
+                    let input = mic.name.clone();
+                    self.send(Command::Mute { input, on: None });
+                }
+            }
+            ',' => self.mode = Mode::Settings(settings::Page::default()),
+            ':' => {
+                self.pick = 0;
+                self.picked = false;
+                self.history(view);
+                self.mode = Mode::Input {
+                    prompt: Prompt::Palette,
+                    text: String::new(),
+                    pressed_at: self.clock.now_ts(),
+                };
+            }
+            _ => {}
         }
     }
 
@@ -1691,7 +1717,7 @@ impl App {
         if self.mode == Mode::Preflight {
             let mut spans = vec![Span::raw(" ")];
             for (k, label) in home::hints(view) {
-                spans.extend(hint(k, &label));
+                spans.extend(hint(&k, &label));
             }
             return spans;
         }
@@ -2956,6 +2982,8 @@ mod tests {
             readme: "sessions/2026/2026-11-19_ep042/README.md".into(),
             config: Arc::default(),
             config_path: "aftercast.toml".into(),
+            begun: true,
+            fresh: false,
             levels: ac_core::obs::Levels::default(),
             obs: Arc::new(ac_core::obs::Media {
                 scenes: vec!["Code".into(), "BRB".into()],
@@ -3019,11 +3047,13 @@ mod tests {
                     label: "OBS connected".into(),
                     state: CheckState::Ok,
                     detail: "ws://127.0.0.1:4455".into(),
+                    fix: String::new(),
                 },
                 Check {
                     label: "OBS recording".into(),
                     state: CheckState::Fail,
                     detail: "the local recording is the editing source".into(),
+                    fix: "start recording in OBS (also :record start)".into(),
                 },
             ],
         }
@@ -3055,10 +3085,10 @@ mod tests {
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock.clone(), rx, cmd_tx);
 
-        // The pre-flight checklist opens first; any key closes it.
+        // Home opens first (this session has started); Esc goes to the dashboard.
         let text = screen(&mut app, &view);
         assert!(
-            text.contains("Home") && text.contains("1 thing needs you"),
+            text.contains("STARTED") && text.contains("1 thing needs you"),
             "{text}"
         );
         assert!(text.contains(" R  start recording"), "fix key: {text}");
@@ -3664,6 +3694,35 @@ mute Mic/Aux
         app.mode = Mode::Normal;
         app.key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE), &view);
         assert_eq!(app.suggestions("", &view)[0].line, "mute Mic/Aux");
+    }
+
+    #[test]
+    fn a_draft_home_starts_on_enter_and_quits_keeping_nothing_on_q() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.begun = false;
+        view.fresh = true;
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock.clone(), rx, cmd_tx);
+        let text = screen(&mut app, &view);
+        assert!(text.contains("Enter  Start the session"), "{text}");
+        assert!(text.contains("q  Quit, keep nothing"), "{text}");
+        // No status bar on Home: the page starts at the top.
+        assert!(text.lines().next().unwrap().contains("aftercast"), "{text}");
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        // Esc does not leave a draft Home.
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Preflight);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
+        // Enter leaves for the dashboard (the run loop keeps Home until the session says it
+        // started); back on the draft Home, q quits.
+        assert_eq!(app.mode, Mode::Normal);
+        app.mode = Mode::Preflight;
+        press(&mut app, KeyCode::Char('q'));
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Quit);
+        assert!(app.exit);
     }
 
     #[test]

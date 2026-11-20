@@ -115,7 +115,8 @@ impl Controller {
         if fresh && let Some(support) = msg.support() {
             return self.support_add(support, &msg);
         }
-        if msg.kind != ChatKind::Text || !fresh {
+        // The bot answers (on stream, in chat) only once the session has started.
+        if msg.kind != ChatKind::Text || !fresh || !self.begun {
             return;
         }
         // Cooldowns count from when each message arrived, not when it is handled.

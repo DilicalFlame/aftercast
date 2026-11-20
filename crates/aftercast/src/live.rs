@@ -85,6 +85,9 @@ pub struct Options<'a> {
     /// `aftercast rehearse`: real OBS and overlays; simulated YouTube and chat; a throwaway
     /// session under `<home>/rehearsal/`; overlay files reload in OBS when saved.
     pub rehearsal: bool,
+    /// Start the session at once (headless, scripts). Otherwise the TUI's Home starts it;
+    /// until then a new session is a draft that quitting deletes.
+    pub begin: bool,
 }
 
 /// Video id of the simulated broadcast in a rehearsal.
@@ -207,22 +210,15 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
                 live_chat_id: broadcast.chat_id.clone(),
                 title: Some(broadcast.title.clone()),
             };
+            // A draft until the session starts: no episode number used, not the last session.
             let session = if opts.rehearsal {
                 Session::create_rehearsal(home, &config, new, clock.now_ts())?
             } else {
-                Session::create(home, &config, new, clock.now_ts())?
+                Session::create_draft(home, &config, new, clock.now_ts())?
             };
             (session, false)
         }
     };
-    let mut state = State::load(&home.state_file())?;
-    // A rehearsal is never the "last session" that post, render and resume default to.
-    if !opts.rehearsal
-        && let Ok(rel) = session.dir.strip_prefix(home.root())
-    {
-        state.last_session = Some(rel.to_path_buf());
-        state.save(&home.state_file())?;
-    }
     yt.quota_mut().set_session(Some(session.name()));
 
     let (session_state, log) = session.replay()?;
@@ -357,28 +353,31 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         overlays_off: BTreeSet::new(),
         overlay_sent: BTreeMap::new(),
         capture,
+        begun: false,
+        resumed,
+        rehearsal: opts.rehearsal,
+        discard: false,
     };
     let (view_tx, view_rx) = watch::channel(controller.snapshot());
     controller.view = Some(view_tx);
 
-    controller.emit(
-        "core",
-        EventKind::SessionStart {
-            episode: controller.session.meta.episode,
-            video_id,
-            resumed,
-        },
-    );
-    controller.capture_start();
     controller.on_broadcast(Ok(broadcast));
     controller.render();
+    let begin = opts.begin;
     let handle = tokio::spawn(async move {
         // Dropping a watcher stops it.
-        let _watchers = (watcher, quest_watcher, overlay_watcher);
-        if controller.config.youtube.push_on_start {
-            controller.push(PushTrigger::Start, false).await;
+        let watchers = (watcher, quest_watcher, overlay_watcher);
+        if begin {
+            controller.begin().await;
         }
-        controller.run(cmd_rx, msg_rx).await;
+        let discard = controller.run(cmd_rx, msg_rx).await;
+        // A draft quit before it started: remove it once every file in it is closed.
+        drop(watchers);
+        if let Some(dir) = discard
+            && let Err(e) = fs::remove_dir_all(&dir)
+        {
+            tracing::warn!("removing the unstarted session {}: {e}", dir.display());
+        }
     });
 
     Ok(Handles {
@@ -660,14 +659,57 @@ struct Controller {
     /// Last message sent per stateful overlay.
     overlay_sent: BTreeMap<&'static str, ac_server::OverlayMsg>,
     capture: capture::Capture,
+    /// The session was started from Home (or at once, headless).
+    begun: bool,
+    /// The session existed before this run.
+    resumed: bool,
+    rehearsal: bool,
+    /// Quit before a new session started: its folder is deleted.
+    discard: bool,
 }
 
 impl Controller {
+    /// Starts the session prepared on Home: the episode number is used up and it becomes
+    /// the last session, `session.start` is logged, key capture starts, the bot answers and
+    /// the description is pushed if `push_on_start`.
+    async fn begin(&mut self) {
+        if self.begun {
+            return;
+        }
+        self.begun = true;
+        if !self.rehearsal
+            && let Err(e) = self.session.commit(&self.home, &self.config)
+        {
+            tracing::error!("saving state.toml: {e}");
+        }
+        self.emit(
+            "core",
+            EventKind::SessionStart {
+                episode: self.session.meta.episode,
+                video_id: self.session.meta.video_id.clone(),
+                resumed: self.resumed,
+            },
+        );
+        self.capture_start();
+        if self.config.youtube.push_on_start {
+            self.push(PushTrigger::Start, false).await;
+        }
+        self.notice = Some(format!(
+            "session {} started",
+            if self.resumed {
+                "resumed and"
+            } else {
+                "created and"
+            }
+        ));
+    }
+
+    /// Runs until quit; returns the folder to delete when a new session was never started.
     async fn run(
         mut self,
         mut commands: mpsc::UnboundedReceiver<Command>,
         mut msgs: mpsc::UnboundedReceiver<Msg>,
-    ) {
+    ) -> Option<PathBuf> {
         let mut flush = interval(FLUSH_EVERY);
         let mut render_at: Option<Instant> = None;
         let mut refresh_at: Option<Instant> = None;
@@ -729,6 +771,7 @@ impl Controller {
         }
         self.write_keys(true);
         self.flush();
+        self.discard.then(|| self.session.dir.clone())
     }
 
     async fn command(&mut self, cmd: Command) {
@@ -817,6 +860,11 @@ impl Controller {
             Command::Sync => self.push(PushTrigger::Manual, false).await,
             Command::Finalize => self.finalize().await,
             Command::Reload => self.reload(),
+            // Quitting a draft that never started keeps nothing.
+            Command::Quit if !self.begun && !self.resumed => {
+                self.discard = true;
+                self.done = true;
+            }
             Command::Quit => {
                 self.emit(
                     "core",
@@ -826,6 +874,7 @@ impl Controller {
                 );
                 self.done = true;
             }
+            Command::Begin => self.begin().await,
             Command::Question { qid, action } => self.question(qid, action),
             Command::Say { text } => {
                 self.send_chat(text.clone());
@@ -1117,6 +1166,8 @@ impl Controller {
             readme: self.session.readme(),
             config: self.config.clone(),
             config_path: self.config_path.clone(),
+            begun: self.begun,
+            fresh: !self.resumed,
             obs: self.obs_media.clone(),
             levels: self.obs_levels.clone(),
             meta: self.session.meta.clone(),
@@ -1147,6 +1198,7 @@ impl Controller {
             label: label.into(),
             state,
             detail,
+            fix: String::new(),
         };
         let ok_if = |ok: bool| if ok { CheckState::Ok } else { CheckState::Fail };
         let meta = &self.session.meta;
@@ -1216,12 +1268,22 @@ impl Controller {
         list.push(check(
             "OBS recording",
             output(recording, obs.require_recording),
-            if recording {
-                String::new()
-            } else {
-                "the local recording is the editing source".into()
-            },
+            String::new(),
         ));
+        // The mic OBS hears: muted is the classic silent stream.
+        let mic = self.obs_media.audio.iter().find(|a| a.is_mic());
+        list.push(match (connected, mic) {
+            (true, Some(m)) if m.muted => {
+                check("Mic live", CheckState::Fail, format!("{} is muted", m.name))
+            }
+            (true, Some(m)) => check("Mic live", CheckState::Ok, m.name.clone()),
+            (true, None) => check(
+                "Mic live",
+                CheckState::Pending,
+                "no mic input in OBS".into(),
+            ),
+            (false, _) => check("Mic live", CheckState::Pending, String::new()),
+        });
         let remaining = self.yt.quota().remaining(self.clock.now_ts());
         let reserve = self.config.youtube.daily_quota_reserve;
         list.push(check(
@@ -1264,9 +1326,49 @@ impl Controller {
                 check(
                     "Shell hook seen in last 24 h",
                     CheckState::Pending,
-                    "optional: aftercast shell-hook pwsh".into(),
+                    "optional".into(),
                 )
             });
+        }
+        // How to fix what is not fine yet. A check the TUI fixes with a key (R, S, M)
+        // says what the key does.
+        let port = self.config.overlay.port;
+        for c in list.iter_mut().filter(|c| c.state != CheckState::Ok) {
+            c.fix = match (c.label.as_str(), connected) {
+                ("Templates found", _) => {
+                    "fix the README or the templates; r opens the README".into()
+                }
+                ("liveChatId present", _) => {
+                    "turn on live chat for this stream in YouTube Studio, then restart".into()
+                }
+                ("OBS connected", _) => "start OBS and turn on Tools › WebSocket Server \
+                    Settings; aftercast connects by itself"
+                    .into(),
+                ("OBS scenes exist", true) => {
+                    "create them in OBS, or set the names in Settings › OBS".into()
+                }
+                ("OBS streaming", true) => "start streaming in OBS (also :stream start)".into(),
+                ("OBS recording", true) => {
+                    "start recording in OBS: clips are cut from it (also :record start)".into()
+                }
+                ("Mic live", true) if mic.is_some() => "unmute the mic (also :unmute)".into(),
+                ("Mic live", true) => "add your mic as an audio input in OBS".into(),
+                ("Quota remaining >= reserve", _) => {
+                    "wait for the daily reset (midnight Pacific) or lower the reserve in \
+                     Settings › YouTube"
+                        .into()
+                }
+                ("Overlay server listening", _) => {
+                    format!("port {port} is taken: change overlay.port in aftercast.toml, restart")
+                }
+                ("Key capture running", _) if c.state == CheckState::Fail => {
+                    "turn it off in Settings › Capture, or restart aftercast".into()
+                }
+                ("Shell hook seen in last 24 h", _) => {
+                    "run aftercast shell-hook pwsh and add it to your profile".into()
+                }
+                _ => String::new(),
+            };
         }
         list
     }
