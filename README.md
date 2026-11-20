@@ -161,7 +161,7 @@ again resumes the session where it left off.
 | `s` | Preview the description; `Enter` pushes it to YouTube |
 | `e` / `d` | Edit / delete the selected chapter |
 | `Enter` / `x` | Questions pane: show on stream (again: answered) / dismiss |
-| `1` `2` `3` `4` | Focus Chat, Questions, Chapters, Event log (the number is on each pane) |
+| `1` `2` `3` `4` | Focus Chat, Questions, Chapters, Event log (the number is on each pane). The focused pane grows to take most of the screen; the others shrink but stay visible |
 | `Tab`, `j/k`, `g/G` | Next pane, move, jump to first / newest |
 | `:` | Command palette (`:sync`, `:finalize`, `:scene <name>`, `:say <text>`, `:latency`, `:help`, ...); `Tab` completes the command name |
 | `?` | Help |

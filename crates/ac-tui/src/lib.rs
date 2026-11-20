@@ -181,10 +181,44 @@ impl Pane {
         Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) + 1
     }
 
+    /// Lazygit-style layout: the focused pane's column widens and the pane takes most
+    /// of its column; the other panes shrink but stay visible.
+    fn split(self) -> Split {
+        match self {
+            Pane::Chat => [0.58, 0.72, 0.5],
+            Pane::Questions => [0.58, 0.28, 0.5],
+            Pane::Chapters => [0.40, 0.6, 0.72],
+            Pane::Log => [0.40, 0.6, 0.28],
+        }
+    }
+
     fn from_key(c: char) -> Option<Self> {
         let n = c.to_digit(10)? as usize;
         Self::ORDER.get(n.checked_sub(1)?).copied()
     }
+}
+
+/// Left column width, then the top pane's share of the left and of the right column.
+type Split = [f64; 3];
+
+/// Chat, Questions, Chapters and Log areas for `split`; every pane keeps at least one
+/// line of content.
+fn pane_areas(body: Rect, split: Split) -> [Rect; 4] {
+    const MIN_W: u16 = 20;
+    const MIN_H: u16 = 3;
+    let share = |total: u16, frac: f64, min: u16| {
+        let n = (total as f64 * frac).round() as u16;
+        n.clamp(min.min(total / 2), total.saturating_sub(min).max(total / 2))
+    };
+    let w = share(body.width, split[0], MIN_W);
+    let [left, right] = Layout::horizontal([Constraint::Length(w), Constraint::Min(0)]).areas(body);
+    let column = |area: Rect, frac: f64| -> [Rect; 2] {
+        let h = share(area.height, frac, MIN_H);
+        Layout::vertical([Constraint::Length(h), Constraint::Min(0)]).areas(area)
+    };
+    let [chat, questions] = column(left, split[1]);
+    let [chapters, log] = column(right, split[2]);
+    [chat, questions, chapters, log]
 }
 
 struct App {
@@ -214,6 +248,9 @@ struct App {
     /// The notice on screen and when it appeared, so it can fade.
     notice: (String, Instant),
     users: UserColors,
+    /// Pane proportions as drawn: they glide towards [`Pane::split`] of the focus.
+    split: Split,
+    last_frame: Instant,
 }
 
 impl App {
@@ -243,12 +280,33 @@ impl App {
             flash_until: None,
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
+            split: Pane::Chapters.split(),
+            last_frame: Instant::now(),
         }
     }
 
     /// Time since start, the input of every animation.
     fn tick(&self) -> Duration {
         self.started.elapsed()
+    }
+
+    /// Moves the drawn split a step towards the focused pane's split (eases out in
+    /// about 150 ms, whatever the frame rate).
+    fn animate_split(&mut self) {
+        let dt = self.last_frame.elapsed().as_secs_f64();
+        self.last_frame = Instant::now();
+        let k = (dt * 20.0).min(1.0);
+        let target = self.focus.split();
+        for (cur, goal) in self.split.iter_mut().zip(target) {
+            *cur += (goal - *cur) * k;
+            if (goal - *cur).abs() < 0.002 {
+                *cur = goal;
+            }
+        }
+    }
+
+    fn resizing(&self) -> bool {
+        self.split != self.focus.split()
     }
 
     fn run(mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
@@ -277,7 +335,9 @@ impl App {
             terminal.draw(|frame| self.draw(frame, &view))?;
             // 10 frames a second keeps the spinners and pulses smooth; ratatui only
             // writes the cells that changed.
-            if event::poll(Duration::from_millis(100))?
+            // While panes resize, draw at 60 frames a second.
+            let frame = if self.resizing() { 16 } else { 100 };
+            if event::poll(Duration::from_millis(frame))?
                 && let event::Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
@@ -613,13 +673,8 @@ impl App {
             Constraint::Length(1),
         ])
         .areas(frame.area());
-        let [left, right] =
-            Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)])
-                .areas(body);
-        let [chat, questions] =
-            Layout::vertical([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(left);
-        let [chapters, log] =
-            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(right);
+        self.animate_split();
+        let [chat, questions, chapters, log] = pane_areas(body, self.split);
 
         // Left side wins when the status bar is too narrow; the session name gives way.
         let status_left = self.status_line(view);
@@ -2139,6 +2194,38 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Sync);
+    }
+
+    #[test]
+    fn focused_pane_grows_and_others_stay_visible() {
+        let body = Rect::new(0, 0, 120, 30);
+        for pane in Pane::ORDER {
+            let areas = pane_areas(body, pane.split());
+            let focused = areas[pane.number() - 1];
+            for (i, a) in areas.iter().enumerate() {
+                assert!(a.height >= 3 && a.width >= 20, "{pane:?} pane {i}: {a:?}");
+                assert!(focused.area() >= a.area(), "{pane:?} is the largest");
+            }
+        }
+        // Tiny terminals still split instead of panicking.
+        let tiny = pane_areas(Rect::new(0, 0, 10, 4), Pane::Chat.split());
+        assert!(tiny.iter().all(|a| a.width > 0));
+    }
+
+    #[test]
+    fn split_glides_to_the_focused_pane() {
+        let clock = Arc::new(Clock::new());
+        let view = sample_view(&clock);
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        assert!(!app.resizing());
+        app.key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE), &view);
+        assert!(app.resizing());
+        app.last_frame -= Duration::from_secs(1); // one long frame finishes the move
+        app.animate_split();
+        assert_eq!(app.split, Pane::Chat.split());
     }
 
     #[test]
