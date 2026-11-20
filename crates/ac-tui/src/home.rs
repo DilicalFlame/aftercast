@@ -424,35 +424,32 @@ impl Ctx<'_> {
             Constraint::Length(44),
         ])
         .areas(area);
-        // A red play button: a rectangle with rounded corners, a white triangle inside
-        // (half blocks, so no glyph of uncertain width).
+        // A red play button. Wedges from Unicode's Legacy Computing block give the slopes:
+        // corners cut on a diagonal, and a triangle whose edges fall a third of a row per
+        // column. Corners are red on the page; the triangle white on red.
         let red = Style::new().fg(ACCENT);
         let fill = Style::new().bg(ACCENT);
         let tri = Style::new().fg(Color::White).bg(ACCENT);
+        let edge = |corner: &'static str, cells: &'static str, other: &'static str| {
+            Line::from(vec![
+                Span::raw(" "),
+                Span::styled(corner, red),
+                Span::styled("    ", fill),
+                Span::styled(cells, tri),
+                Span::styled("    ", fill),
+                Span::styled(other, red),
+            ])
+        };
         frame.render_widget(
             Paragraph::new(vec![
+                edge("\u{1FB41}", "\u{1FB51}\u{1FB3D}", "\u{1FB4C}"),
                 Line::from(vec![
                     Span::raw(" "),
-                    Span::styled("▗", red),
-                    Span::styled("   ", fill),
-                    Span::styled("▄", tri),
                     Span::styled("     ", fill),
-                    Span::styled("▖", red),
-                ]),
-                Line::from(vec![
-                    Span::raw(" "),
+                    Span::styled("██\u{1FB6C}", tri),
                     Span::styled("    ", fill),
-                    Span::styled("█▌", tri),
-                    Span::styled("     ", fill),
                 ]),
-                Line::from(vec![
-                    Span::raw(" "),
-                    Span::styled("▝", red),
-                    Span::styled("   ", fill),
-                    Span::styled("▀", tri),
-                    Span::styled("     ", fill),
-                    Span::styled("▘", red),
-                ]),
+                edge("\u{1FB52}", "\u{1FB5C}\u{1FB58}", "\u{1FB5D}"),
             ]),
             logo,
         );
