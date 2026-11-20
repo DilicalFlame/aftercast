@@ -281,7 +281,7 @@ Settings › Display › Home layout (`tui.home_layout`) or cycled with `v` on H
 
 | Layout | Arrangement |
 |---|---|
-| `columns` (default) | What needs you on the left; audio meters and the scene on air (a row of switches) on the right |
+| `columns` (default) | What needs you, with the scene on air under it, on the left; audio meters on the right |
 | `page` | One full-width page: what needs you, audio, the scene on air |
 | `classic` | Checks on the left; audio and the scene's sources, one per line, on the right |
 | `tabs` | Two tabs, Checks and Studio (audio and the scene on air), each with the whole page; `[` and `]` switch |

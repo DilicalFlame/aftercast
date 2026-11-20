@@ -81,17 +81,23 @@ pub fn items(view: &View, tab: usize) -> Vec<Item> {
         );
     }
     if !tabs || tab == 1 {
-        items.extend(
-            sorted_audio(view)
-                .into_iter()
-                .map(|a| Item::Audio(a.name.clone())),
-        );
+        let audio = sorted_audio(view)
+            .into_iter()
+            .map(|a| Item::Audio(a.name.clone()));
         let scene = view.state.scene.as_deref().unwrap_or_default();
-        items.extend(
-            view.obs
-                .sources_in(scene)
-                .map(|i| Item::Source(i.source.clone())),
-        );
+        let sources = view
+            .obs
+            .sources_in(scene)
+            .map(|i| Item::Source(i.source.clone()));
+        // j/k follow the reading order: in `columns` the sources sit under the checks,
+        // left, before the audio on the right.
+        if view.config.tui.home_layout == HomeLayout::Columns {
+            items.extend(sources);
+            items.extend(audio);
+        } else {
+            items.extend(audio);
+            items.extend(sources);
+        }
     }
     items
 }
@@ -255,12 +261,13 @@ pub fn draw(
         ),
         HomeLayout::Columns => {
             let [l, r] = columns(body, 50);
-            let left = page(frame, ctx.needs_you(l.width), l);
-            let right = page(
+            // The scene on air fills the room under what needs you; audio has the right.
+            let left = page(
                 frame,
-                join(vec![ctx.audio(r.width), ctx.on_air(r.width)]),
-                r,
+                join(vec![ctx.needs_you(l.width), ctx.on_air_list(l.width)]),
+                l,
             );
+            let right = page(frame, ctx.audio(r.width), r);
             (left.0 || right.0, left.1 || right.1)
         }
         HomeLayout::Classic => {

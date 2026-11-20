@@ -3831,6 +3831,10 @@ mute Mic/Aux
     fn home_is_navigated_with_j_k_and_enter_acts_on_the_focused_item() {
         let clock = Arc::new(Clock::new());
         let mut view = sample_view(&clock);
+        // The page layout: fixes, then audio, then the scene's sources.
+        let mut config = ac_core::config::Config::default();
+        config.tui.home_layout = ac_core::config::HomeLayout::Page;
+        view.config = Arc::new(config);
         view.begun = false;
         view.fresh = true;
         view.state.scene = Some("Code".into());
@@ -3964,6 +3968,19 @@ mute Mic/Aux
                 );
             }
         }
+        // In columns, j/k read down the left (fixes, then the scene's sources) before the
+        // audio on the right.
+        let mut config = ac_core::config::Config::default();
+        config.tui.home_layout = HomeLayout::Columns;
+        view.config = Arc::new(config);
+        assert_eq!(
+            home::items(&view, 0)[1..],
+            [
+                home::Item::Fix('R'),
+                home::Item::Source("Camera".into()),
+                home::Item::Audio("Mic/Aux".into())
+            ]
+        );
         // v writes the next layout and asks for a reload.
         let (_tx, rx) = watch::channel(view.clone());
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
@@ -3971,7 +3988,7 @@ mute Mic/Aux
         app.key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &view);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Reload);
         let file = std::fs::read_to_string(&view.config_path).unwrap();
-        assert!(file.contains("home_layout = \"columns\""), "{file}");
+        assert!(file.contains("home_layout = \"page\""), "{file}");
     }
 
     #[test]
