@@ -186,7 +186,8 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
         .title(
             Span::styled(format!(" {} ", view.session), Style::new().fg(FAINT))
                 .into_right_aligned_line(),
-        );
+        )
+        .title_bottom(focus_hint(focus.as_ref(), view));
     let inner = block.inner(outer).inner(Margin::new(2, 1));
     frame.render_widget(block, outer);
 
@@ -318,6 +319,7 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
     };
 
     // Checks: what needs you first, each with how to fix it; then the fine ones.
+    let mut focus_line = None;
     let mut lines = vec![
         section(&format!("Checks · {ok} of {total} fine")),
         Line::raw(""),
@@ -346,6 +348,9 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
                 Style::new().fg(FAINT),
             ));
         }
+        if on {
+            focus_line = Some(lines.len());
+        }
         lines.push(lit(Line::from(spans), on, left.width));
         if !c.fix.is_empty() {
             let mut fix = vec![Span::raw(" "), Span::raw("  ")];
@@ -360,12 +365,22 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
                 None => fix.push(Span::styled("↳ ", Style::new().fg(WARN))),
             }
             fix.push(Span::styled(c.fix.clone(), Style::new().fg(WARN)));
+            if on {
+                focus_line = Some(lines.len());
+            }
             lines.push(lit(Line::from(fix), on, left.width));
         }
     }
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), left);
+    let scroll = scroll_to(&lines, focus_line, left.width, left.height);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0)),
+        left,
+    );
 
     // Audio meters, mics first, then the scene on air.
+    let mut focus_line = None;
     let width = right.width as usize;
     let mut lines = vec![section("Audio"), Line::raw("")];
     let levels = view.levels.lock().map(|m| m.clone()).unwrap_or_default();
@@ -406,6 +421,9 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
             Style::new().fg(FAINT),
         ));
         let on = focus.as_ref() == Some(&Item::Audio(a.name.clone()));
+        if on {
+            focus_line = Some(lines.len());
+        }
         lines.push(lit(Line::from(spans), on, right.width));
     }
     let scene = view.state.scene.clone().unwrap_or_default();
@@ -428,10 +446,48 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
                 ),
             ]);
             let on = focus.as_ref() == Some(&Item::Source(item.source.clone()));
+            if on {
+                focus_line = Some(lines.len());
+            }
             lines.push(lit(line, on, right.width));
         }
     }
-    frame.render_widget(Paragraph::new(lines), right);
+    let scroll = scroll_to(&lines, focus_line, right.width, right.height);
+    frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), right);
+}
+
+/// How far to scroll `lines` (wrapped at `width`) so the line `focus` ends inside `height`
+/// rows; 0 when nothing in the column is focused.
+fn scroll_to(lines: &[Line], focus: Option<usize>, width: u16, height: u16) -> u16 {
+    let Some(focus) = focus else {
+        return 0;
+    };
+    let rows = |l: &Line| l.width().div_ceil(usize::from(width.max(1))).max(1);
+    let end: usize = lines.iter().take(focus + 1).map(rows).sum();
+    end.saturating_sub(usize::from(height)) as u16
+}
+
+/// What the focused item offers, faded in the page's bottom border.
+fn focus_hint(focus: Option<&Item>, view: &View) -> Line<'static> {
+    let Some(item) = focus else {
+        return Line::default();
+    };
+    let mut pairs = vec![("Enter".to_owned(), what(item, view))];
+    match item {
+        Item::Audio(_) => pairs.push(("h/l".into(), "volume".into())),
+        Item::Source(_) => pairs.push(("h/l".into(), "hide/show".into())),
+        _ => {}
+    }
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (k, label)) in pairs.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", Style::new().fg(FAINT)));
+        }
+        spans.push(Span::styled(k, Style::new().fg(MUTED)));
+        spans.push(Span::styled(format!(" {label}"), Style::new().fg(FAINT)));
+    }
+    spans.push(Span::raw(" "));
+    Line::from(spans)
 }
 
 /// Checks that are fine, failing, and all.
@@ -472,28 +528,24 @@ pub fn meter(level: Option<f32>, muted: bool, cells: usize) -> Vec<Span<'static>
     spans
 }
 
-/// Key hints: what Enter does on the focused item first, then the rest.
-pub fn hints(view: &View, pick: usize) -> Vec<(String, String)> {
-    let items = items(view);
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    if let Some(item) = items.get(pick) {
-        pairs.push(("Enter".into(), what(item, view)));
-        if matches!(item, Item::Audio(_)) {
-            pairs.push(("h/l".into(), "volume".into()));
-        }
-    }
-    pairs.push(("j/k".into(), "move".into()));
-    pairs.push(("Tab".into(), "next group".into()));
-    pairs.push(if view.begun {
-        ("q".into(), "quit".into())
-    } else if view.fresh {
-        ("q".into(), "quit, keep nothing".into())
-    } else {
-        ("q".into(), "quit".into())
-    });
-    pairs.push((",".into(), "settings".into()));
-    pairs.push((":".into(), "command".into()));
-    pairs
+/// Footer hints: the same keys whatever is focused, so the line never shifts (what Enter
+/// does on the focused item is in the page's bottom border).
+pub fn hints(view: &View) -> Vec<(String, String)> {
+    let quit = match (view.begun, view.fresh) {
+        (false, true) => "quit, keep nothing",
+        _ => "quit",
+    };
+    [
+        ("j/k", "move"),
+        ("Tab", "next group"),
+        ("Enter", "do it"),
+        ("q", quit),
+        (",", "settings"),
+        (":", "command"),
+    ]
+    .into_iter()
+    .map(|(k, l)| (k.to_owned(), l.to_owned()))
+    .collect()
 }
 
 /// How often the page redraws to keep meters fluid.
@@ -537,6 +589,18 @@ mod tests {
         assert_eq!(fix_key(&check("OBS recording", CheckState::Ok)), None);
         assert_eq!(fix_key(&check("Mic live", CheckState::Fail)), Some('M'));
         assert_eq!(fix_key(&check("Config valid", CheckState::Fail)), None);
+    }
+
+    #[test]
+    fn scrolls_just_enough_to_show_the_focused_line() {
+        let lines: Vec<Line> = (0..10).map(|i| Line::raw(format!("line {i}"))).collect();
+        assert_eq!(scroll_to(&lines, None, 20, 4), 0);
+        assert_eq!(scroll_to(&lines, Some(2), 20, 4), 0);
+        assert_eq!(scroll_to(&lines, Some(9), 20, 4), 6);
+        // A line that wraps over two rows counts as two.
+        let mut wide = lines.clone();
+        wide[0] = Line::raw("x".repeat(30));
+        assert_eq!(scroll_to(&wide, Some(3), 20, 4), 1);
     }
 
     #[test]

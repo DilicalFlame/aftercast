@@ -919,8 +919,21 @@ impl App {
         self.home_pick = self.home_pick.min(last);
         let focused = items.get(self.home_pick).cloned();
         match code {
-            KeyCode::Char('j') | KeyCode::Down => self.home_pick = (self.home_pick + 1).min(last),
-            KeyCode::Char('k') | KeyCode::Up => self.home_pick = self.home_pick.saturating_sub(1),
+            // j/k wrap around: past the last item to the first, and back.
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.home_pick = if self.home_pick >= last {
+                    0
+                } else {
+                    self.home_pick + 1
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.home_pick = if self.home_pick == 0 {
+                    last
+                } else {
+                    self.home_pick - 1
+                }
+            }
             KeyCode::Char('g') | KeyCode::Home => self.home_pick = 0,
             KeyCode::Char('G') | KeyCode::End => self.home_pick = last,
             KeyCode::Tab => self.home_pick = home::next_group(&items, self.home_pick),
@@ -1766,7 +1779,7 @@ impl App {
     fn keys_line(&self, view: &View) -> Vec<Span<'static>> {
         if self.mode == Mode::Preflight {
             let mut spans = vec![Span::raw(" ")];
-            for (k, label) in home::hints(view, self.home_pick) {
+            for (k, label) in home::hints(view) {
                 spans.extend(hint(&k, &label));
             }
             return spans;
@@ -3808,7 +3821,7 @@ mute Mic/Aux
         assert!(draw(&mut app).contains("▶ Quit, keep nothing"));
         press(&mut app, KeyCode::Char('j'));
         let text = draw(&mut app);
-        assert!(text.contains("Enter  start recording"), "{text}");
+        assert!(text.contains("Enter start recording"), "{text}");
         assert!(text.contains(" R  start recording in OBS"), "{text}");
         press(&mut app, KeyCode::Enter);
         assert_eq!(
@@ -3819,7 +3832,7 @@ mute Mic/Aux
         );
         // Tab: on to audio; Enter mutes, l raises the volume by 1 dB.
         press(&mut app, KeyCode::Tab);
-        assert!(draw(&mut app).contains("Enter  mute Mic/Aux"));
+        assert!(draw(&mut app).contains("Enter mute Mic/Aux"));
         press(&mut app, KeyCode::Enter);
         assert_eq!(
             cmd_rx.try_recv().unwrap(),
@@ -3847,8 +3860,12 @@ mute Mic/Aux
                 visible: None
             }
         );
-        // Tab wraps to Start; Enter starts.
-        press(&mut app, KeyCode::Tab);
+        // j past the last item wraps to Start, k from Start to the last; Enter starts.
+        press(&mut app, KeyCode::Char('j'));
+        assert!(draw(&mut app).contains("Enter start the session"));
+        press(&mut app, KeyCode::Char('k'));
+        assert!(draw(&mut app).contains("Enter hide Camera"));
+        press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
     }
