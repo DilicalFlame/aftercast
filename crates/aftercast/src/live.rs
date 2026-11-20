@@ -252,13 +252,23 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let watcher = watch_readme(&session.dir, msg_tx.clone())
         .inspect_err(|e| tracing::warn!("README watcher unavailable: {e}"))
         .ok();
+    // A rehearsal goes "live" only when the session starts: until then its simulated
+    // broadcast is upcoming and its demo chat waits. A real stream is watched at once.
+    let mut broadcast = broadcast;
+    let rehearsal_live = opts.rehearsal.then(|| broadcast.clone());
+    if opts.rehearsal {
+        broadcast.content = LiveContent::Upcoming;
+        broadcast.actual_start = None;
+    }
+    let mut on_air: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
     if broadcast.actual_end.is_none() {
-        tokio::spawn(poll(
-            yt.clone(),
-            video_id.clone(),
-            broadcast.content,
-            msg_tx.clone(),
-        ));
+        let (yt, id, tx) = (yt.clone(), video_id.clone(), msg_tx.clone());
+        let content = rehearsal_live
+            .as_ref()
+            .map_or(broadcast.content, |b| b.content);
+        on_air.push(Box::new(move || {
+            tokio::spawn(poll(yt, id, content, tx));
+        }));
     }
 
     let (obs, obs_task) = connect_obs(&config, opts.mock.is_some(), &msg_tx);
@@ -286,12 +296,17 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     if let Some(chat_id) = chat_id.filter(|_| broadcast.actual_end.is_none()) {
         let (yt, tx) = (yt.clone(), msg_tx.clone());
         let idle_max = std::time::Duration::from_secs(config.youtube.chat_idle_max_s);
-        tokio::spawn(async move {
-            yt.run_chat(&chat_id, idle_max, chat_fast_rx, |u| {
-                let _ = tx.send(Msg::Chat(u));
-            })
-            .await;
-        });
+        on_air.push(Box::new(move || {
+            tokio::spawn(async move {
+                yt.run_chat(&chat_id, idle_max, chat_fast_rx, |u| {
+                    let _ = tx.send(Msg::Chat(u));
+                })
+                .await;
+            });
+        }));
+    }
+    if !opts.rehearsal {
+        on_air.drain(..).for_each(|start| start());
     }
     let quest_watcher = watch_quest_file(home, &config, msg_tx.clone());
     let overlay_watcher = opts
@@ -360,6 +375,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         latency_run: None,
         chat_fast,
         rehearsal_feed: feed_tx,
+        on_air,
+        rehearsal_live,
         title: broadcast.title.clone(),
         pushed_text,
         pending_title: None,
@@ -703,6 +720,11 @@ struct Controller {
     capture: capture::Capture,
     /// The session was started from Home (or at once, headless).
     begun: bool,
+    /// What starts when the session does: in a rehearsal, the broadcast poll and the demo
+    /// chat (a real stream's run from the first moment).
+    on_air: Vec<Box<dyn FnOnce() + Send>>,
+    /// The rehearsal's simulated broadcast, reported live when the session starts.
+    rehearsal_live: Option<ac_youtube::Broadcast>,
     /// Quitting is waiting (until then) for OBS to stop recording.
     quit_by: Option<Instant>,
     /// Where OBS records, once it confirmed the session's media folder.
@@ -723,6 +745,14 @@ impl Controller {
             return;
         }
         self.begun = true;
+        // A rehearsal goes live now: its broadcast starts and its demo chat plays.
+        for start in self.on_air.drain(..) {
+            start();
+        }
+        if let Some(mut live) = self.rehearsal_live.take() {
+            live.actual_start = Some(self.clock.now_ts());
+            self.on_broadcast(Ok(live));
+        }
         if !self.rehearsal
             && let Err(e) = self.session.commit(&self.home, &self.config)
         {

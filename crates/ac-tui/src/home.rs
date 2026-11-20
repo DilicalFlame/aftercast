@@ -49,6 +49,10 @@ pub enum Card {
     Status,
     Audio,
     Scene,
+    /// The mics alone, with their meters (the `tabs` layout's Checks tab).
+    Mics,
+    /// The description, chapters, last push and overlay address.
+    Session,
 }
 
 impl Item {
@@ -97,7 +101,7 @@ fn cards(view: &View, tab: usize) -> Vec<Card> {
         // Top row Checks, Status; bottom row On air, Audio.
         HomeLayout::Columns => vec![Card::Checks, Card::Status, Card::Scene, Card::Audio],
         HomeLayout::Tabs => match tab {
-            0 => vec![Card::Checks, Card::Status],
+            0 => vec![Card::Checks, Card::Mics, Card::Status, Card::Session],
             1 => vec![Card::Audio],
             _ => vec![Card::Scene],
         },
@@ -132,7 +136,7 @@ pub fn items(view: &View, tab: usize) -> Vec<Item> {
                         .map(|i| Item::Source(i.source.clone())),
                 );
             }
-            Card::Primary | Card::Status => {}
+            Card::Primary | Card::Status | Card::Mics | Card::Session => {}
         }
     }
     items
@@ -275,11 +279,24 @@ pub fn draw(
                 Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).areas(body);
             frame.render_widget(tab_bar(view, tab), bar);
             let order = cards(view, tab);
-            if order.len() == 2 {
-                // Checks beside Status.
+            if tab == 0 {
+                // An overview: Checks over the mics, Status over the session.
                 let [l, r] = halves(rest);
-                place(frame, order[0], l);
-                place(frame, order[1], r);
+                let half = rest.height / 2 + 2;
+                let [lt, lb] = Layout::vertical([
+                    Constraint::Length(rows(Card::Checks, l.width).min(half)),
+                    Constraint::Min(3),
+                ])
+                .areas(l);
+                let [rt, rb] = Layout::vertical([
+                    Constraint::Length(rows(Card::Status, r.width).min(half)),
+                    Constraint::Min(3),
+                ])
+                .areas(r);
+                place(frame, Card::Checks, lt);
+                place(frame, Card::Mics, lb);
+                place(frame, Card::Status, rt);
+                place(frame, Card::Session, rb);
             } else {
                 place(frame, order[0], rest);
             }
@@ -518,6 +535,14 @@ impl Ctx<'_> {
                     None,
                 )
             }
+            Card::Mics => (
+                " Mic ".into(),
+                Some(Span::styled(
+                    " Audio tab for every input ",
+                    Style::new().fg(FAINT),
+                )),
+            ),
+            Card::Session => (" Session ".into(), None),
             Card::Primary => (String::new(), None),
         };
         let mut block = Block::bordered()
@@ -558,8 +583,10 @@ impl Ctx<'_> {
         match card {
             Card::Checks => self.checks(width),
             Card::Status => (self.status(width), None),
-            Card::Audio => self.audio(width),
+            Card::Audio => self.audio(width, false),
+            Card::Mics => (self.audio(width, true).0, None),
             Card::Scene => self.scene(width),
+            Card::Session => (self.session(width), None),
             Card::Primary => (Vec::new(), None),
         }
     }
@@ -728,18 +755,90 @@ impl Ctx<'_> {
     }
 
     /// A meter per audio input, mics first, with level, volume and mute.
-    fn audio(&self, width: u16) -> Section {
+    /// What the session will publish and where: description size, chapters, last push,
+    /// the overlay address.
+    fn session(&self, width: u16) -> Vec<Line<'static>> {
+        let view = self.view;
+        let row = |label: &str, value: Vec<Span<'static>>| {
+            let mut spans = vec![Span::styled(format!("{label:<12}"), Style::new().fg(MUTED))];
+            spans.extend(value);
+            crate::truncate(Line::from(spans), usize::from(width))
+        };
+        let readme = match (&view.render_error, &view.description) {
+            (Some(e), _) => vec![Span::styled(format!("✖ {e}"), Style::new().fg(ACCENT))],
+            (None, Some(d)) => {
+                let (bar, color) = crate::gauge(d.chars(), crate::DESCRIPTION_LIMIT, 10);
+                vec![
+                    Span::styled(bar, Style::new().fg(color)),
+                    Span::styled(
+                        format!(
+                            " {} / {}",
+                            crate::thousands(d.chars() as i64),
+                            crate::thousands(crate::DESCRIPTION_LIMIT as i64)
+                        ),
+                        Style::new().fg(TEXT),
+                    ),
+                ]
+            }
+            (None, None) => vec![Span::styled("not rendered", Style::new().fg(FAINT))],
+        };
+        let published = if ac_template::chapters::block(&view.chapters).is_empty() {
+            0
+        } else {
+            view.chapters.len()
+        };
+        let push = match view.state.last_push {
+            Some((t, trigger)) => {
+                let at = t.datetime().with_timezone(&chrono::Local).format("%H:%M");
+                format!("{at} ({trigger:?})").to_lowercase()
+            }
+            None => "not yet".into(),
+        };
+        let overlays = view
+            .preflight
+            .iter()
+            .find(|c| c.label == "Overlay server listening" && c.state == CheckState::Ok)
+            .map_or("not listening".to_owned(), |c| c.detail.clone());
+        vec![
+            row("Description", readme),
+            row(
+                "Chapters",
+                vec![
+                    Span::styled(
+                        format!("{} marked", view.state.checkpoints.len()),
+                        Style::new().fg(TEXT),
+                    ),
+                    Span::styled(format!(" · {published} published"), Style::new().fg(MUTED)),
+                ],
+            ),
+            row("Last push", vec![Span::styled(push, Style::new().fg(TEXT))]),
+            row(
+                "Overlays",
+                vec![Span::styled(overlays, Style::new().fg(INFO))],
+            ),
+        ]
+    }
+
+    /// A meter per audio input (only the mics with `mics_only`), mics first.
+    fn audio(&self, width: u16, mics_only: bool) -> Section {
         let levels = self
             .view
             .levels
             .lock()
             .map(|m| m.clone())
             .unwrap_or_default();
-        let audio = sorted_audio(self.view);
+        let mut audio = sorted_audio(self.view);
+        if mics_only {
+            audio.retain(|a| a.is_mic());
+        }
         if audio.is_empty() {
             return (
                 vec![Line::styled(
-                    "OBS is not connected, or has no audio inputs.",
+                    if mics_only {
+                        "No mic input in OBS (or OBS is not connected)."
+                    } else {
+                        "OBS is not connected, or has no audio inputs."
+                    },
                     Style::new().fg(FAINT).italic(),
                 )],
                 None,

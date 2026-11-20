@@ -343,6 +343,8 @@ struct App {
     picked: bool,
     /// Audio meters were asked of OBS (a page showing them is open).
     meters: bool,
+    /// The palette or settings were opened from Home (and go back there).
+    from_home: bool,
     /// The focused item on Home, and its open tab (`tabs` layout).
     home_pick: usize,
     home_tab: usize,
@@ -386,6 +388,7 @@ impl App {
             pick: 0,
             picked: false,
             meters: false,
+            from_home: false,
             home_pick: 0,
             home_tab: 0,
             history: None,
@@ -606,7 +609,22 @@ impl App {
         }
     }
 
-    fn key(&mut self, mut key: KeyEvent, view: &View) {
+    fn key(&mut self, key: KeyEvent, view: &View) {
+        self.key_here(key, view);
+        // The palette or settings opened from Home return there when they close.
+        if self.from_home {
+            match self.mode {
+                Mode::Normal => {
+                    self.mode = Mode::Preflight;
+                    self.from_home = false;
+                }
+                Mode::Preflight => self.from_home = false,
+                _ => {}
+            }
+        }
+    }
+
+    fn key_here(&mut self, mut key: KeyEvent, view: &View) {
         // In the palette, Ctrl+J/K (and Ctrl+N/P) move through the suggestions like ↓/↑;
         // plain letters type.
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -1043,8 +1061,12 @@ impl App {
                     self.send(Command::Mute { input, on: None });
                 }
             }
-            ',' => self.mode = Mode::Settings(settings::Page::default()),
+            ',' => {
+                self.from_home = true;
+                self.mode = Mode::Settings(settings::Page::default());
+            }
             ':' => {
+                self.from_home = true;
                 self.pick = 0;
                 self.picked = false;
                 self.history(view);
@@ -1870,6 +1892,17 @@ impl App {
         spans
     }
 
+    fn draw_home(&self, frame: &mut Frame, view: &View) {
+        home::draw(
+            frame,
+            view,
+            self.clock.now_ts(),
+            self.spin(),
+            self.home_pick,
+            self.home_tab,
+        );
+    }
+
     /// The command palette: the line being typed, what the command does, and a list of
     /// suggestions (command names, then OBS scenes, inputs, sources, settings and values).
     fn draw_palette(&self, frame: &mut Frame, text: &str, view: &View) {
@@ -1981,6 +2014,10 @@ impl App {
                 text,
                 ..
             } => {
+                // Opened from Home: Home stays underneath, not the dashboard.
+                if self.from_home {
+                    self.draw_home(frame, view);
+                }
                 self.draw_palette(frame, text, view);
                 return;
             }
@@ -2075,14 +2112,7 @@ impl App {
                 (" Help · any key closes ".into(), lines, 84, height)
             }
             Mode::Preflight => {
-                home::draw(
-                    frame,
-                    view,
-                    self.clock.now_ts(),
-                    self.spin(),
-                    self.home_pick,
-                    self.home_tab,
-                );
+                self.draw_home(frame, view);
                 return;
             }
             Mode::ConfirmStreamStop => (
@@ -3824,6 +3854,15 @@ mute Mic/Aux
         // Esc does not leave a draft Home.
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.mode, Mode::Preflight);
+        // The palette and settings open over Home and come back to it.
+        for open in [':', ','] {
+            press(&mut app, KeyCode::Char(open));
+            assert_ne!(app.mode, Mode::Preflight);
+            let text = screen(&mut app, &view);
+            assert!(text.contains("#042"), "Home stays underneath: {text}");
+            press(&mut app, KeyCode::Esc);
+            assert_eq!(app.mode, Mode::Preflight, "back to Home after {open}");
+        }
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
         // Enter leaves for the dashboard (the run loop keeps Home until the session says it
@@ -3962,7 +4001,13 @@ mute Mic/Aux
                     text.contains("Checks · 1 need you") && text.contains("Status"),
                     "{text}"
                 );
-                assert!(!text.contains("Mic/Aux"), "{text}");
+                // An overview: the Mic card and the Session card; sources wait for On air.
+                assert!(
+                    text.contains("Mic/Aux")
+                        && text.contains("Session")
+                        && !text.contains("Camera"),
+                    "{text}"
+                );
                 let next = |app: &mut App| {
                     app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view)
                 };

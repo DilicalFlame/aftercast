@@ -260,7 +260,9 @@ number is used up, it is not the "last session", the description is not pushed, 
 recorded and the bot does not answer (chat is read and shown). `Enter` starts it (or resumes
 an existing one); `q` before that quits and a new draft is deleted, leaving everything as it
 was. OBS changes you make from Home (recording, mute) are real, because you asked for them.
-Headless runs (`--no-tui`) start at once, as before.
+Headless runs (`--no-tui`) start at once, as before. In a rehearsal the simulated broadcast
+stays "upcoming" and the demo chat waits until you start, so Home is the moment before going
+live there too. The palette (`:`) and settings (`,`) open over Home and return to it.
 
 With `obs.record_into_session` (on by default, Settings › OBS), OBS records into the session's
 `media` folder while aftercast runs, so the master lives with the session instead of your
@@ -290,7 +292,7 @@ Two layouts, chosen in Settings › Display › Home layout (`tui.home_layout`) 
 | Layout | Arrangement |
 |---|---|
 | `columns` (default) | A 2 by 2 grid: Checks and Status on top, On air and Audio below |
-| `tabs` | Three tabs: Checks (with Status), Audio, On air; `[` and `]` switch |
+| `tabs` | Three tabs, `[` and `]` switch: Checks (an overview: Checks over a Mic meter card, Status over a Session card with the description size, chapters, last push and overlay address), Audio (every input), On air |
 
 Everything on Home can be reached and used from the keyboard: `j/k` (or arrows) move through
 the buttons, the checks aftercast can fix, every audio input and every source on air; `Tab`
