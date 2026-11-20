@@ -181,17 +181,6 @@ impl Pane {
         Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) + 1
     }
 
-    /// Lazygit-style layout: the focused pane's column widens and the pane takes most
-    /// of its column; the other panes shrink but stay visible.
-    fn split(self) -> Split {
-        match self {
-            Pane::Chat => [0.58, 0.72, 0.5],
-            Pane::Questions => [0.58, 0.28, 0.5],
-            Pane::Chapters => [0.40, 0.6, 0.72],
-            Pane::Log => [0.40, 0.6, 0.28],
-        }
-    }
-
     fn from_key(c: char) -> Option<Self> {
         let n = c.to_digit(10)? as usize;
         Self::ORDER.get(n.checked_sub(1)?).copied()
@@ -200,6 +189,35 @@ impl Pane {
 
 /// Left column width, then the top pane's share of the left and of the right column.
 type Split = [f64; 3];
+
+/// Lazygit-style layout. The focused pane's column widens and the pane takes what its
+/// neighbour does not need: the neighbour shrinks to its content, at most 28 % of the
+/// column. In the other column the pane with less content gets just enough rows (at most
+/// half) and the busier one the rest. `want` is each pane's content height with borders.
+fn target_split(focus: Pane, body: Rect, want: [u16; 4]) -> Split {
+    let width = match focus {
+        Pane::Chat | Pane::Questions => 0.58,
+        Pane::Chapters | Pane::Log => 0.40,
+    };
+    let h = f64::from(body.height.max(1));
+    let need = |p: Pane| f64::from(want[p.number() - 1]) / h;
+    let column = |top: Pane, bottom: Pane| {
+        if focus == top {
+            1.0 - need(bottom).min(0.28)
+        } else if focus == bottom {
+            need(top).min(0.28)
+        } else if need(top) <= need(bottom) {
+            need(top).min(0.5)
+        } else {
+            1.0 - need(bottom).min(0.5)
+        }
+    };
+    [
+        width,
+        column(Pane::Chat, Pane::Questions),
+        column(Pane::Chapters, Pane::Log),
+    ]
+}
 
 /// Chat, Questions, Chapters and Log areas for `split`; every pane keeps at least one
 /// line of content.
@@ -248,8 +266,9 @@ struct App {
     /// The notice on screen and when it appeared, so it can fade.
     notice: (String, Instant),
     users: UserColors,
-    /// Pane proportions as drawn: they glide towards [`Pane::split`] of the focus.
+    /// Pane proportions as drawn: they glide towards `split_target`.
     split: Split,
+    split_target: Split,
     last_frame: Instant,
 }
 
@@ -280,7 +299,8 @@ impl App {
             flash_until: None,
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
-            split: Pane::Chapters.split(),
+            split: [0.45, 0.6, 0.5],
+            split_target: [0.45, 0.6, 0.5],
             last_frame: Instant::now(),
         }
     }
@@ -290,14 +310,13 @@ impl App {
         self.started.elapsed()
     }
 
-    /// Moves the drawn split a step towards the focused pane's split (eases out in
-    /// about 150 ms, whatever the frame rate).
+    /// Moves the drawn split a step towards the target (eases out in about 150 ms,
+    /// whatever the frame rate).
     fn animate_split(&mut self) {
         let dt = self.last_frame.elapsed().as_secs_f64();
         self.last_frame = Instant::now();
         let k = (dt * 20.0).min(1.0);
-        let target = self.focus.split();
-        for (cur, goal) in self.split.iter_mut().zip(target) {
+        for (cur, goal) in self.split.iter_mut().zip(self.split_target) {
             *cur += (goal - *cur) * k;
             if (goal - *cur).abs() < 0.002 {
                 *cur = goal;
@@ -306,7 +325,7 @@ impl App {
     }
 
     fn resizing(&self) -> bool {
-        self.split != self.focus.split()
+        self.split != self.split_target
     }
 
     fn run(mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
@@ -673,6 +692,14 @@ impl App {
             Constraint::Length(1),
         ])
         .areas(frame.area());
+        let rows = |n: usize| (n.max(2) + 2).min(usize::from(u16::MAX)) as u16;
+        let want = [
+            rows(view.chat.len()),
+            rows(queue(&view.state).len()),
+            rows(view.state.checkpoints.len()),
+            rows(view.state.log.len()),
+        ];
+        self.split_target = target_split(self.focus, body, want);
         self.animate_split();
         let [chat, questions, chapters, log] = pane_areas(body, self.split);
 
@@ -912,29 +939,26 @@ impl App {
         for m in view.chat.iter() {
             self.users.get(&m.author_channel_id);
         }
-        let height = area.height.saturating_sub(2) as usize;
+        let (width, height) = inner(area);
         let len = view.chat.len();
         let scroll = self.chat_scroll.min(len);
         let end = len - scroll;
         let now = self.clock.now_ts();
-        let lines: Vec<Line> = view
+        let entries: Vec<(Line, usize)> = view
             .chat
             .range(end.saturating_sub(height)..end)
             .map(|m| {
                 let fresh = now.secs_since(m.t_received) < FRESH_S;
-                chat_line(m, self.users.get(&m.author_channel_id), fresh)
+                let line = chat_line(m, self.users.get(&m.author_channel_id), fresh);
+                let indent = line
+                    .width()
+                    .saturating_sub(Span::raw(m.text.as_str()).width());
+                (line, indent)
             })
             .collect();
-        let extra = if scroll > 0 {
-            vec![Span::styled(
-                format!("↓ {scroll} newer · G jumps back "),
-                Style::new().fg(WARN),
-            )]
-        } else {
-            Vec::new()
-        };
-        let block = pane_block(Pane::Chat, "Chat", extra, self.focus == Pane::Chat);
-        if lines.is_empty() {
+        let focused = self.focus == Pane::Chat;
+        let block = pane_block(Pane::Chat, "Chat", scrolled_hint(scroll), focused);
+        if entries.is_empty() {
             let connected = view.state.services.get("chat") == Some(&ServiceStatus::Ok);
             let text = if connected {
                 "No messages yet.".to_owned()
@@ -944,7 +968,9 @@ impl App {
             frame.render_widget(empty_state(&[&text]).block(block), area);
             return;
         }
-        frame.render_widget(Paragraph::new(lines).block(block), area);
+        let open = focused.then(|| entries.len() - 1);
+        let rows = feed_rows(entries, open, width, height);
+        frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
     fn draw_questions(&mut self, frame: &mut Frame, area: Rect, view: &View) {
@@ -954,7 +980,7 @@ impl App {
             ACCENT_DIM,
             pulse(self.tick(), Duration::from_secs(2)),
         );
-        let items: Vec<ListItem> = queue
+        let items: Vec<Line> = queue
             .iter()
             .map(|q| {
                 let shown = q.state == ac_core::session_state::QuestionState::Shown;
@@ -964,15 +990,30 @@ impl App {
                     Span::raw("  ")
                 };
                 let color = self.users.get(&q.author_id);
-                ListItem::new(Line::from(vec![
+                Line::from(vec![
                     mark,
                     Span::styled(q.author.clone(), Style::new().fg(color).bold()),
                     Span::styled(": ", Style::new().fg(FAINT)),
                     Span::styled(q.text.clone(), Style::new().fg(TEXT)),
-                ]))
+                ])
             })
             .collect();
         let focused = self.focus == Pane::Questions;
+        // The selected question opens in full while the pane has focus; the rest stay
+        // on one line (the highlight symbol takes a cell).
+        let width = inner(area).0.saturating_sub(1);
+        let items: Vec<ListItem> = items
+            .into_iter()
+            .enumerate()
+            .map(|(i, line)| {
+                if focused && self.questions.selected() == Some(i) {
+                    let indent = line.width() - line.spans[3].width();
+                    ListItem::new(wrap(line, width, indent))
+                } else {
+                    ListItem::new(truncate(line, width))
+                }
+            })
+            .collect();
         let extra = vec![Span::styled(
             format!("({}) ", queue.len()),
             Style::new().fg(MUTED),
@@ -998,12 +1039,12 @@ impl App {
     }
 
     fn draw_log(&self, frame: &mut Frame, area: Rect, view: &View) {
-        let height = area.height.saturating_sub(2) as usize;
+        let (width, height) = inner(area);
         let events: Vec<&Event> = view.state.log.iter().collect();
         let scroll = self.log_scroll.min(events.len());
         let end = events.len() - scroll;
         let start = end.saturating_sub(height);
-        let lines: Vec<Line> = events[start..end]
+        let entries: Vec<(Line, usize)> = events[start..end]
             .iter()
             .map(|e| {
                 let time =
@@ -1014,23 +1055,19 @@ impl App {
                 let (text, dim) = summary(e);
                 let (icon, color) = event_icon(e);
                 let style = Style::new().fg(if dim { MUTED } else { TEXT });
-                Line::from(vec![
+                let line = Line::from(vec![
                     Span::styled(format!("{time} "), Style::new().fg(FAINT)),
                     Span::styled(format!("{icon} "), Style::new().fg(color)),
                     Span::styled(text, style),
-                ])
+                ]);
+                (line, 11)
             })
             .collect();
-        let extra = if scroll > 0 {
-            vec![Span::styled(
-                format!("↓ {scroll} newer · G jumps back "),
-                Style::new().fg(WARN),
-            )]
-        } else {
-            Vec::new()
-        };
-        let block = pane_block(Pane::Log, "Event log", extra, self.focus == Pane::Log);
-        frame.render_widget(Paragraph::new(lines).block(block), area);
+        let focused = self.focus == Pane::Log;
+        let block = pane_block(Pane::Log, "Event log", scrolled_hint(scroll), focused);
+        let open = focused.then(|| entries.len().checked_sub(1)).flatten();
+        let rows = feed_rows(entries, open, width, height);
+        frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
     /// Hints for the current mode and pane, most useful first (cut at the right edge).
@@ -1046,7 +1083,7 @@ impl App {
                 let pane: &[(&str, &str)] = match self.focus {
                     Pane::Questions => &[("Enter", "show/answer"), ("x", "dismiss")],
                     Pane::Chapters => &[("e", "edit"), ("d", "delete")],
-                    Pane::Chat | Pane::Log => &[("j/k", "scroll"), ("G", "newest")],
+                    Pane::Chat | Pane::Log => &[("j/k", "read"), ("G", "newest")],
                 };
                 let global: &[(&str, &str)] = &[
                     ("c", "checkpoint"),
@@ -1356,7 +1393,7 @@ fn queue(state: &SessionState) -> Vec<&ac_core::session_state::Question> {
         .collect()
 }
 
-fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'_> {
+fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'static> {
     use ac_core::chat::ChatKind;
     // A colored bar marks lines that just arrived.
     let mut spans = vec![Span::styled(
@@ -1377,7 +1414,7 @@ fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'_> {
     }
     let name = if m.is_owner { ACCENT } else { color };
     spans.push(Span::styled(
-        m.author_name.as_str(),
+        m.author_name.clone(),
         Style::new().fg(name).bold(),
     ));
     spans.push(Span::styled(": ", Style::new().fg(FAINT)));
@@ -1393,7 +1430,7 @@ fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'_> {
         ChatKind::Text | ChatKind::Superchat | ChatKind::Supersticker => Style::new().fg(TEXT),
         _ => Style::new().fg(MUTED).italic(),
     };
-    spans.push(Span::styled(m.text.as_str(), text_style));
+    spans.push(Span::styled(m.text.clone(), text_style));
     Line::from(spans)
 }
 
@@ -1443,6 +1480,140 @@ fn selected_style(focused: bool) -> Style {
     } else {
         Style::new().bg(RAISED)
     }
+}
+
+/// Content width and height inside a pane's border.
+fn inner(area: Rect) -> (usize, usize) {
+    (
+        area.width.saturating_sub(2) as usize,
+        area.height.saturating_sub(2) as usize,
+    )
+}
+
+/// `↓ 5 newer` in a pane title while it is scrolled back.
+fn scrolled_hint(scroll: usize) -> Vec<Span<'static>> {
+    if scroll == 0 {
+        return Vec::new();
+    }
+    vec![Span::styled(
+        format!("↓ {scroll} newer · G jumps back "),
+        Style::new().fg(WARN),
+    )]
+}
+
+/// Rows for a feed that grows at the bottom (chat, event log). Every entry keeps to one
+/// line, ending in `…` when cut, except `open`, the reading cursor: it is highlighted and
+/// wrapped in full, continuation rows indented to where its text starts, so a long
+/// message reads as a block under its author.
+fn feed_rows(
+    entries: Vec<(Line<'static>, usize)>,
+    open: Option<usize>,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let mut rows = VecDeque::new();
+    for (i, (line, indent)) in entries.into_iter().enumerate().rev() {
+        if rows.len() >= height {
+            break;
+        }
+        if Some(i) == open {
+            for mut row in wrap(line, width, indent).into_iter().rev() {
+                let pad = width.saturating_sub(row.width());
+                row.spans.push(Span::raw(" ".repeat(pad)));
+                rows.push_front(row.style(Style::new().bg(SELECTED)));
+            }
+        } else {
+            rows.push_front(truncate(line, width));
+        }
+    }
+    let excess = rows.len().saturating_sub(height);
+    rows.into_iter().skip(excess).collect()
+}
+
+/// A line as one styled cell per character.
+fn cells(line: Line<'static>) -> Vec<(char, Style)> {
+    let base = line.style;
+    line.spans
+        .into_iter()
+        .flat_map(|s| {
+            let style = base.patch(s.style);
+            s.content
+                .chars()
+                .map(move |c| (c, style))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+fn line_of(cells: &[(char, Style)]) -> Line<'static> {
+    let mut spans: Vec<Span> = Vec::new();
+    for &(c, style) in cells {
+        match spans.last_mut() {
+            Some(last) if last.style == style => last.content.to_mut().push(c),
+            _ => spans.push(Span::styled(c.to_string(), style)),
+        }
+    }
+    Line::from(spans)
+}
+
+fn char_width(c: char) -> usize {
+    unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)
+}
+
+/// `line` cut to `width` cells, ending in `…` when anything was cut.
+fn truncate(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width || width == 0 {
+        return line;
+    }
+    let mut kept = Vec::new();
+    let mut used = 0;
+    for cell in cells(line) {
+        let w = char_width(cell.0);
+        if used + w > width - 1 {
+            break;
+        }
+        used += w;
+        kept.push(cell);
+    }
+    let style = kept.last().map_or(Style::new(), |c| c.1);
+    kept.push(('…', style.fg(MUTED)));
+    line_of(&kept)
+}
+
+/// `line` wrapped into rows of `width` cells, breaking after a space where one is in
+/// reach; continuation rows start with `indent` spaces.
+fn wrap(line: Line<'static>, width: usize, indent: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return vec![line];
+    }
+    // A hanging indent wider than half the row would leave too little room for text.
+    let indent = if indent * 2 > width { 0 } else { indent };
+    let mut rows = Vec::new();
+    let mut row: Vec<(char, Style)> = Vec::new();
+    let mut used = 0;
+    let mut start = 0; // where this row's text begins (after the indent)
+    for cell in cells(line) {
+        let w = char_width(cell.0);
+        if used + w > width && row.len() > start {
+            // Break at the space that overflows, else after the last space in the row.
+            let carry = match row[start..].iter().rposition(|c| c.0 == ' ') {
+                Some(i) if i > 0 && cell.0 != ' ' => row.split_off(start + i + 1),
+                _ => Vec::new(),
+            };
+            rows.push(line_of(&row));
+            row = vec![(' ', Style::new()); indent];
+            start = indent;
+            used = indent + carry.iter().map(|c| char_width(c.0)).sum::<usize>();
+            row.extend(carry);
+        }
+        if cell.0 == ' ' && row.len() == start && !rows.is_empty() {
+            continue; // no leading space on a continuation row
+        }
+        used += w;
+        row.push(cell);
+    }
+    rows.push(line_of(&row));
+    rows
 }
 
 /// Gray hint text for a pane with nothing in it yet.
@@ -2197,19 +2368,25 @@ mod tests {
     }
 
     #[test]
-    fn focused_pane_grows_and_others_stay_visible() {
-        let body = Rect::new(0, 0, 120, 30);
+    fn focused_pane_grows_and_quiet_panes_shrink_to_their_content() {
+        let body = Rect::new(0, 0, 120, 40);
+        let busy = [40, 40, 40, 40];
         for pane in Pane::ORDER {
-            let areas = pane_areas(body, pane.split());
+            let areas = pane_areas(body, target_split(pane, body, busy));
             let focused = areas[pane.number() - 1];
             for (i, a) in areas.iter().enumerate() {
                 assert!(a.height >= 3 && a.width >= 20, "{pane:?} pane {i}: {a:?}");
                 assert!(focused.area() >= a.area(), "{pane:?} is the largest");
             }
         }
+        // One chapter needs 4 rows (2 for content, 2 border): the log gets the rest.
+        let split = target_split(Pane::Chat, body, [40, 4, 4, 40]);
+        let [_, _, chapters, log] = pane_areas(body, split);
+        assert_eq!((chapters.height, log.height), (4, 36));
         // Tiny terminals still split instead of panicking.
-        let tiny = pane_areas(Rect::new(0, 0, 10, 4), Pane::Chat.split());
-        assert!(tiny.iter().all(|a| a.width > 0));
+        let tiny = Rect::new(0, 0, 10, 4);
+        let areas = pane_areas(tiny, target_split(Pane::Chat, tiny, busy));
+        assert!(areas.iter().all(|a| a.width > 0));
     }
 
     #[test]
@@ -2220,12 +2397,55 @@ mod tests {
         let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock, rx, cmd_tx);
         app.mode = Mode::Normal;
+        screen(&mut app, &view);
+        app.last_frame -= Duration::from_secs(1); // one long frame finishes a move
+        screen(&mut app, &view);
         assert!(!app.resizing());
         app.key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE), &view);
+        screen(&mut app, &view);
         assert!(app.resizing());
-        app.last_frame -= Duration::from_secs(1); // one long frame finishes the move
-        app.animate_split();
-        assert_eq!(app.split, Pane::Chat.split());
+        app.last_frame -= Duration::from_secs(1);
+        screen(&mut app, &view);
+        assert!(!app.resizing());
+    }
+
+    #[test]
+    fn long_lines_end_in_an_ellipsis_and_the_cursor_line_wraps_in_full() {
+        let line = || {
+            Line::from(vec![
+                Span::raw("bob: "),
+                Span::raw("why rust over go for this project"),
+            ])
+        };
+        let text = |l: &Line| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        };
+        assert_eq!(text(&truncate(line(), 16)), "bob: why rust o…");
+        assert_eq!(text(&truncate(line(), 80)), text(&line()));
+        let rows: Vec<String> = wrap(line(), 16, 5).iter().map(text).collect();
+        assert_eq!(
+            rows,
+            [
+                "bob: why rust ",
+                "     over go for",
+                "     this ",
+                "     project"
+            ]
+        );
+
+        let entries = vec![(line(), 5), (line(), 5)];
+        let rows = feed_rows(entries.clone(), None, 16, 10);
+        assert_eq!(rows.len(), 2, "one row per entry when nothing is open");
+        let rows = feed_rows(entries, Some(1), 16, 3);
+        assert_eq!(
+            rows.len(),
+            3,
+            "the open entry pushes older ones off the top"
+        );
+        assert_eq!(text(&rows[2]).trim_end(), "     project");
     }
 
     #[test]

@@ -167,6 +167,12 @@ again resumes the session where it left off.
 | `?` | Help |
 | `q` | Quit (or finalize) |
 
+Every chat message and log event keeps to one line, ending in `…` when it is cut. Focus Chat
+or the Event log and the line under the cursor (the newest, until you press `k`) opens in full
+and wraps under its author; `j/k` walks the cursor and opens each line in turn. The selected
+question opens the same way. Panes with little in them shrink to fit, so the busy ones get the
+room.
+
 Global hotkeys work while another app (your editor) has focus: `Ctrl+Alt+M` mark,
 `Ctrl+Alt+C` checkpoint, `Ctrl+Alt+B` BRB, `Ctrl+Alt+P` privacy. Configure them in
 `[hotkeys]`.

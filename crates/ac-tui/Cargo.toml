@@ -13,4 +13,5 @@ ac-template.workspace = true
 chrono.workspace = true
 ratatui = "0.30"
 serde_json.workspace = true
+unicode-width = "0.2"
 tokio = { workspace = true, features = ["sync"] }
