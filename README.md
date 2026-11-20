@@ -22,9 +22,9 @@ Work in progress, built phase by phase.
 | 4 | Keystroke and shell capture | done, manual test pending |
 | 5 | Post-stream pipeline (`aftercast post`) | done, manual test pending |
 | 6 | Clip rendering (`aftercast render`) | done, manual test pending |
-| 7 | MCP server, library | planned |
+| 7 | MCP server, clips skill, cross-session library | done, manual test pending |
 
-Commands for later phases (`mcp`, `library`, ...) exist but print "not yet implemented".
+`export` and `desc` (Phase 8) exist but print "not yet implemented".
 
 ## Install
 
@@ -218,6 +218,7 @@ AI-ready dataset under the session's `derived/` folder:
 | `segments` | `derived/segments.json`: speech, focus (typing), dead, brb, redacted |
 | `secrets` | `derived/secrets.json`; ranges around leaked tokens are redacted |
 | `index` | `derived/index.md` (the digest an AI reads first) and `derived/manifest.json` |
+| `library` | the session in `<home>/library/index.sqlite`, for `library search` and the MCP server |
 
 Stages whose inputs did not change are skipped, so rerunning is cheap and resumes after a
 failure. `--from frames` reruns from a stage on, `--only transcribe` one stage, `--force`
@@ -271,6 +272,48 @@ aftercast render --keys burn --captions burn
 - Unchanged items are skipped (`--force` re-renders). Shorts stay horizontal; the AI's
   framing hint is in `meta.json`.
 
+### Claude: MCP server and the clips skill
+
+aftercast never calls an AI API itself. Claude (Claude Code or the Claude desktop app, with your
+subscription) reads the dataset through the aftercast MCP server and writes the suggestions.
+
+Add the server to Claude Code:
+
+```powershell
+claude mcp add aftercast -e AFTERCAST_HOME=P:/Streams -- aftercast mcp
+```
+
+or to the Claude desktop app (Settings, Developer, Edit Config):
+
+```json
+{ "mcpServers": { "aftercast": { "command": "aftercast", "args": ["mcp"], "env": { "AFTERCAST_HOME": "P:/Streams" } } } }
+```
+
+Tools: `list_sessions`, `session_overview`, `read_index`, `get_transcript`, `search_transcript`,
+`get_events`, `get_activity`, `get_segments`, `list_frames`, `get_frame` (the image itself),
+`get_chat`, `validate_suggestions`, `write_suggestions` and `render` (only with
+`confirm: true`). Sessions are named by folder, episode (`42`, `ep042`) or `latest`; times are
+seconds or `HH:MM:SS`. Results stay under 25,000 characters and page with `next`. Redacted
+ranges come back only as `{ "redacted": true, "start", "end" }`, and keystrokes are never
+returned.
+
+The **aftercast-clips skill** (`.claude/skills/aftercast-clips/SKILL.md`) tells Claude how to
+find shorts, clips and topic videos and how to write `ai/suggestions.json`. Claude Code picks it
+up when started in this repository; to use it everywhere, copy the folder to
+`~/.claude/skills/`. For claude.ai and the desktop app, zip the `aftercast-clips` folder and
+upload it under Settings, Capabilities, Skills. Then ask: "find clips in the latest stream".
+
+### Library: search every stream
+
+`aftercast post` adds each session to `<home>/library/index.sqlite` (sessions, chapters,
+transcript, suggestions, rendered outputs):
+
+```powershell
+aftercast library search "borrow checker"
+aftercast library search lifetimes --session ep042
+aftercast library rebuild        # index every session again from its files
+```
+
 ### Other commands
 
 ```text
@@ -281,6 +324,8 @@ aftercast auth login | status | logout | obs
 aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
 aftercast post [SESSION]     process a finished session (see above)
 aftercast render [SESSION]   render ai/suggestions.json (see above)
+aftercast mcp                MCP server on stdio, for Claude (see above)
+aftercast library search Q   search the transcripts of every session
 ```
 
 ### Local API

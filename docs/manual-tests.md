@@ -304,3 +304,21 @@ Use the session from Phase 5.
 8. `aftercast render` again. Expect: `up to date` for the rendered items.
 9. Set `render.encoder = "libx264"` and render with `--force`. Expect: the same durations,
    slower.
+
+## Phase 7: Claude, MCP and the library
+
+1. `claude mcp add aftercast -e AFTERCAST_HOME=P:/Streams -- aftercast mcp`, start Claude Code
+   and run `/mcp`. Expect: `aftercast` connected with 14 tools.
+2. Ask: "list my aftercast sessions". Expect: your sessions, newest first, with durations.
+3. Ask: "show me the frame at 00:05:00 of the latest session". Expect: the image.
+4. Ask for the transcript across your privacy minute. Expect: a `redacted` placeholder, none of
+   what you said in it.
+5. Ask Claude to suggest a short that covers the privacy minute and write it. Expect: refused
+   with "overlaps a redacted segment"; `ai/suggestions.json` unchanged.
+6. Ask: "find clips in the latest stream" (the aftercast-clips skill). Expect: it reads the
+   overview and index, checks words and frames, writes `ai/suggestions.json` and `ai/notes.md`
+   and shows a table. Then "render 001" (with confirmation). Expect: the clip in `out/`.
+7. `aftercast library search <a word you said in two streams>`. Expect: hits from both, with
+   `HH:MM:SS`. Ask Claude the same through `search_transcript`.
+8. Optional: add the server to the Claude desktop app config, restart it, ask the same as in
+   step 2.
