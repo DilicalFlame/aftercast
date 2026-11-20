@@ -3,10 +3,12 @@
 //! The UI only reads [`View`] snapshots and sends [`Command`]s; the controller owns state.
 //! Times are captured when a key is pressed, before any prompt opens.
 
+mod theme;
+
 use std::collections::VecDeque;
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ac_core::chat::ChatMessage;
 use ac_core::command::{Command, QuestionAction};
@@ -20,14 +22,25 @@ use chrono::Local;
 use ratatui::DefaultTerminal;
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::layout::{Alignment, Constraint, Flex, Layout, Rect};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, BorderType, Clear, List, ListItem, ListState, Padding, Paragraph, Wrap,
+};
 use tokio::sync::{mpsc, watch};
 
-const ACCENT: Color = Color::Rgb(0xFF, 0x55, 0x55);
-const MUTED: Color = Color::Rgb(0x9A, 0x9A, 0x9A);
+use theme::{
+    ACCENT, ACCENT_DIM, FAINT, INFO, MUTED, OK, RAISED, SELECTED, TEXT, UserColors, WARN, hint,
+    mix, pulse, spinner,
+};
+
+/// YouTube's description limit, for the README budget gauge.
+const DESCRIPTION_LIMIT: usize = 5000;
+/// How long a status-bar flash (hotkey press) lasts.
+const FLASH: Duration = Duration::from_millis(700);
+/// New chat lines carry a marker this long.
+const FRESH_S: f64 = 4.0;
 /// Opens the README on `r`, run with `--clean` (no user config).
 const EDITOR: &str = "nvim";
 
@@ -162,6 +175,16 @@ impl Pane {
         let i = Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) as isize;
         Self::ORDER[(i + delta).rem_euclid(Self::ORDER.len() as isize) as usize]
     }
+
+    /// The pane's number: pressing it focuses the pane.
+    fn number(self) -> usize {
+        Self::ORDER.iter().position(|p| *p == self).unwrap_or(0) + 1
+    }
+
+    fn from_key(c: char) -> Option<Self> {
+        let n = c.to_digit(10)? as usize;
+        Self::ORDER.get(n.checked_sub(1)?).copied()
+    }
 }
 
 struct App {
@@ -184,6 +207,13 @@ struct App {
     pending: VecDeque<Timestamp>,
     /// `r` was pressed: open this README in Neovim before the next frame.
     edit_readme: Option<std::path::PathBuf>,
+    /// Animation clock.
+    started: Instant,
+    /// The status bar flashes until then (hotkeys pressed in another app).
+    flash_until: Option<Instant>,
+    /// The notice on screen and when it appeared, so it can fade.
+    notice: (String, Instant),
+    users: UserColors,
 }
 
 impl App {
@@ -209,7 +239,16 @@ impl App {
             external: None,
             pending: VecDeque::new(),
             edit_readme: None,
+            started: Instant::now(),
+            flash_until: None,
+            notice: (String::new(), Instant::now()),
+            users: UserColors::default(),
         }
+    }
+
+    /// Time since start, the input of every animation.
+    fn tick(&self) -> Duration {
+        self.started.elapsed()
     }
 
     fn run(mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
@@ -236,7 +275,9 @@ impl App {
                 self.edit(terminal, &path);
             }
             terminal.draw(|frame| self.draw(frame, &view))?;
-            if event::poll(Duration::from_millis(250))?
+            // 10 frames a second keeps the spinners and pulses smooth; ratatui only
+            // writes the cells that changed.
+            if event::poll(Duration::from_millis(100))?
                 && let event::Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
@@ -272,6 +313,7 @@ impl App {
                 External::Checkpoint(t) => self.pending.push_back(t),
                 External::Message(m) => self.message = Some(m),
             }
+            self.flash_until = Some(Instant::now() + FLASH);
         }
         let hotkey = Prompt::Checkpoint { by: By::Hotkey };
         let now = self.clock.now_ts();
@@ -324,6 +366,17 @@ impl App {
             } => match key.code {
                 KeyCode::Esc => {}
                 KeyCode::Enter => self.submit(prompt, text.trim().to_owned(), pressed_at, view),
+                KeyCode::Tab if prompt == Prompt::Palette => {
+                    if let Some(rest) = completion(&text) {
+                        text.push_str(rest);
+                        text.push(' ');
+                    }
+                    self.mode = Mode::Input {
+                        prompt,
+                        text,
+                        pressed_at,
+                    };
+                }
                 KeyCode::Backspace => {
                     text.pop();
                     self.mode = Mode::Input {
@@ -421,6 +474,16 @@ impl App {
             }),
             KeyCode::Tab => self.focus = self.focus.step(1),
             KeyCode::BackTab => self.focus = self.focus.step(-1),
+            KeyCode::Char(c) if Pane::from_key(c).is_some() => {
+                self.focus = Pane::from_key(c).unwrap_or(self.focus)
+            }
+            // Back to the newest line (chat, log) or the last chapter.
+            KeyCode::End | KeyCode::Char('G') => match self.focus {
+                Pane::Chat => self.chat_scroll = 0,
+                Pane::Log => self.log_scroll = 0,
+                _ => self.move_selection(isize::MAX / 2, view),
+            },
+            KeyCode::Home | KeyCode::Char('g') => self.move_selection(-isize::MAX / 2, view),
             KeyCode::Enter if self.focus == Pane::Questions => {
                 self.question(view, QuestionAction::Show)
             }
@@ -469,8 +532,14 @@ impl App {
                 }
             }
             // The log and chat show newest at the bottom; "down" moves towards newer lines.
-            Pane::Log => self.log_scroll = self.log_scroll.saturating_add_signed(-delta),
-            Pane::Chat => self.chat_scroll = self.chat_scroll.saturating_add_signed(-delta),
+            Pane::Log => {
+                let max = view.state.log.len().saturating_sub(1);
+                self.log_scroll = self.log_scroll.saturating_add_signed(-delta).min(max)
+            }
+            Pane::Chat => {
+                let max = view.chat.len().saturating_sub(1);
+                self.chat_scroll = self.chat_scroll.saturating_add_signed(-delta).min(max)
+            }
         }
     }
 
@@ -537,10 +606,9 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame, view: &View) {
-        let [status, body, readme, notice, keys] = Layout::vertical([
+        let [status, body, info, keys] = Layout::vertical([
             Constraint::Length(1),
             Constraint::Min(5),
-            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
@@ -553,105 +621,173 @@ impl App {
         let [chapters, log] =
             Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(right);
 
-        frame.render_widget(Paragraph::new(self.status_line(view)), status);
+        // Left side wins when the status bar is too narrow; the session name gives way.
+        let status_left = self.status_line(view);
+        let session = Line::styled(format!("{} ", view.session), Style::new().fg(FAINT));
+        let [a, b] = Layout::horizontal([
+            Constraint::Length(status_left.width() as u16),
+            Constraint::Min(0),
+        ])
+        .areas(status);
+        frame.render_widget(status_left, a);
+        if b.width as usize >= session.width() {
+            frame.render_widget(session.alignment(Alignment::Right), b);
+        }
+
         self.draw_chat(frame, chat, view);
         self.draw_questions(frame, questions, view);
         self.draw_chapters(frame, chapters, view);
         self.draw_log(frame, log, view);
-        frame.render_widget(Paragraph::new(readme_line(view)), readme);
-        let note = self.message.as_ref().or(view.notice.as_ref());
-        frame.render_widget(
-            Paragraph::new(note.map_or(String::new(), |n| format!(" {n}"))).fg(ACCENT),
-            notice,
-        );
-        frame.render_widget(Paragraph::new(self.keys_line()).fg(MUTED), keys);
+
+        // The notice wins on the info line; the README summary gives way.
+        let notice = self.notice_line(view);
+        let [a, b] = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(notice.width() as u16),
+        ])
+        .areas(info);
+        frame.render_widget(readme_line(view), a);
+        frame.render_widget(notice, b);
+        frame.render_widget(Line::from(self.keys_line()), keys);
         self.draw_modal(frame, view);
     }
 
+    /// The last action's feedback, bright when new, fading to gray after a few seconds.
+    fn notice_line(&mut self, view: &View) -> Line<'static> {
+        let text = self.message.as_ref().or(view.notice.as_ref()).cloned();
+        let text = text.unwrap_or_default();
+        if text != self.notice.0 {
+            self.notice = (text.clone(), Instant::now());
+        }
+        if text.is_empty() {
+            return Line::default();
+        }
+        let age = self.notice.1.elapsed().as_secs_f64();
+        let color = mix(ACCENT, MUTED, (age - 2.0) / 3.0);
+        Line::from(vec![
+            Span::styled("› ", Style::new().fg(color)),
+            Span::styled(format!("{text} "), Style::new().fg(color)),
+        ])
+    }
+
     fn status_line(&self, view: &View) -> Line<'static> {
+        let t = self.tick();
         let now = self.clock.now_ts();
         let anchors = &view.meta.anchors;
-        let (dot, label) = match view.state.stream {
-            Some(StreamStatus::Live) if !view.state.ended => ("●", "LIVE"),
-            Some(StreamStatus::Upcoming) => ("○", "UPCOMING"),
-            Some(_) | None if view.state.ended => ("■", "ENDED"),
-            _ => ("○", "OFFLINE"),
+        let state = &view.state;
+        let breathing = mix(ACCENT, ACCENT_DIM, pulse(t, Duration::from_secs(2)));
+        let (dot, label, color) = match state.stream {
+            Some(StreamStatus::Live) if !state.ended => ("●", "LIVE", breathing),
+            Some(StreamStatus::Upcoming) => ("○", "UPCOMING", WARN),
+            Some(_) | None if state.ended => ("■", "ENDED", MUTED),
+            _ => ("○", "OFFLINE", MUTED),
         };
         let elapsed = anchors
             .yt_actual_start
             .map(|start| hms(anchors.yt_actual_end.unwrap_or(now).secs_since(start)))
             .unwrap_or_default();
-        let service = |name: &str| match view.state.services.get(name) {
-            Some(ServiceStatus::Ok) => "ok",
-            Some(ServiceStatus::Retrying) => "retrying",
-            Some(ServiceStatus::Down) => "down",
-            None => "…",
+        let service = |name: &str| match state.services.get(name) {
+            Some(ServiceStatus::Ok) => Span::styled("●", Style::new().fg(OK)),
+            Some(ServiceStatus::Retrying) => Span::styled(spinner(t), Style::new().fg(WARN)),
+            Some(ServiceStatus::Down) => Span::styled("✖", Style::new().fg(ACCENT).bold()),
+            None => Span::styled(spinner(t), Style::new().fg(MUTED)),
         };
-        let state = &view.state;
-        let obs = if state.services.get("obs") == Some(&ServiceStatus::Ok) {
-            let rec = match state.obs_record {
-                Some(OutputState::Started | OutputState::Resumed) => " ● REC",
-                Some(OutputState::Paused) => " ‖ REC",
-                _ => " ○ not recording",
-            };
-            format!("OBS: {}{rec}", state.scene.as_deref().unwrap_or("?"))
-        } else {
-            format!("OBS {}", service("obs"))
-        };
-        let badge = |on: bool, text: &str| {
+        let label_span = |text: &str| Span::styled(format!("{text} "), Style::new().fg(MUTED));
+        let dot_sep = || Span::styled(" · ", Style::new().fg(FAINT));
+
+        // A hotkey pressed in another app flashes the episode chip.
+        let flash = self
+            .flash_until
+            .and_then(|until| until.checked_duration_since(Instant::now()))
+            .map_or(0.0, |left| left.as_secs_f64() / FLASH.as_secs_f64());
+        let chip_bg = mix(ACCENT, TEXT, flash);
+        let mut spans = vec![
+            Span::styled(
+                format!(" ◉ #{:03} ", view.meta.episode),
+                Style::new().fg(Color::Black).bg(chip_bg).bold(),
+            ),
+            Span::styled(format!(" {dot} "), Style::new().fg(color).bold()),
+            Span::styled(
+                format!("{label} {elapsed} "),
+                Style::new().fg(ACCENT).bold(),
+            ),
+        ];
+        for (on, text) in [(state.brb, "BRB"), (state.privacy, "PRIVACY")] {
             if on {
-                Span::styled(
+                spans.push(Span::styled(
                     format!(" {text} "),
-                    Style::new().fg(Color::Black).bg(ACCENT),
-                )
-            } else {
-                Span::raw("")
+                    Style::new().fg(Color::Black).bg(WARN).bold(),
+                ));
+                spans.push(Span::raw(" "));
             }
-        };
+        }
+
+        spans.push(label_span(" OBS"));
+        if state.services.get("obs") == Some(&ServiceStatus::Ok) {
+            spans.push(Span::styled(
+                state.scene.clone().unwrap_or_else(|| "?".into()),
+                Style::new().fg(TEXT),
+            ));
+            spans.push(match state.obs_record {
+                Some(OutputState::Started | OutputState::Resumed) => {
+                    Span::styled(" ● REC", Style::new().fg(breathing).bold())
+                }
+                Some(OutputState::Paused) => Span::styled(" ‖ REC", Style::new().fg(WARN)),
+                // The local recording is the editing source: say so loudly.
+                _ => Span::styled(" ○ not recording", Style::new().fg(ACCENT).bold()),
+            });
+        } else {
+            spans.push(service("obs"));
+        }
+        spans.extend([
+            dot_sep(),
+            label_span("YouTube"),
+            service("youtube"),
+            dot_sep(),
+            label_span("chat"),
+            service("chat"),
+            dot_sep(),
+            label_span("keys"),
+        ]);
+        spans.push(match view.keys {
+            KeysStatus::Off => Span::styled("off", Style::new().fg(FAINT)),
+            KeysStatus::Error => Span::styled("✖", Style::new().fg(ACCENT).bold()),
+            _ if state.privacy => Span::styled("✖ privacy", Style::new().fg(WARN)),
+            KeysStatus::Starting => Span::styled(spinner(t), Style::new().fg(MUTED)),
+            KeysStatus::On => Span::styled(sparkline(&view.keys_per_min), Style::new().fg(INFO)),
+        });
+        spans.extend([
+            dot_sep(),
+            label_span("quota"),
+            Span::styled(thousands(view.quota_remaining), Style::new().fg(TEXT)),
+            dot_sep(),
+        ]);
+        if view.latency_running {
+            spans.push(Span::styled(
+                format!("lat {} measuring", spinner(t)),
+                Style::new().fg(WARN),
+            ));
+        } else {
+            spans.push(label_span("lat"));
+            spans.push(Span::styled(
+                format!("{:.1}s", view.latency_s),
+                Style::new().fg(TEXT),
+            ));
+        }
         let failing = view
             .preflight
             .iter()
             .filter(|c| c.state == CheckState::Fail)
             .count();
-        let latency = if view.latency_running {
-            "LAT measuring".to_owned()
-        } else {
-            format!("lat {:.1}s", view.latency_s)
-        };
-        let keys = match view.keys {
-            KeysStatus::Off => "keys off".to_owned(),
-            KeysStatus::Error => "keys ✖".to_owned(),
-            _ if state.privacy => "keys ✖ privacy".to_owned(),
-            KeysStatus::Starting => "keys …".to_owned(),
-            KeysStatus::On => format!("keys {}", sparkline(&view.keys_per_min)),
-        };
-        Line::from(vec![
-            Span::styled(
-                format!(" #{:03} ", view.meta.episode),
-                Style::new().fg(Color::Black).bg(ACCENT).bold(),
-            ),
-            Span::styled(
-                format!(" {dot} {label} {elapsed} "),
+        if failing > 0 {
+            spans.push(dot_sep());
+            spans.push(Span::styled(
+                format!("✖ {failing} pre-flight"),
                 Style::new().fg(ACCENT).bold(),
-            ),
-            badge(state.brb, "BRB"),
-            badge(state.privacy, "PRIVACY"),
-            Span::raw(format!(
-                " {obs} · YouTube {} · chat {} · {keys} · quota {} · {latency} ",
-                service("youtube"),
-                service("chat"),
-                thousands(view.quota_remaining)
-            )),
-            if failing > 0 {
-                Span::styled(
-                    format!("· ✖ {failing} pre-flight "),
-                    Style::new().fg(ACCENT).bold(),
-                )
-            } else {
-                Span::raw("")
-            },
-            Span::styled(format!("· {}", view.session), Style::new().fg(MUTED)),
-        ])
+            ));
+        }
+        spans.push(Span::raw(" "));
+        Line::from(spans)
     }
 
     fn draw_chapters(&mut self, frame: &mut Frame, area: Rect, view: &View) {
@@ -662,16 +798,22 @@ impl App {
             let end = anchors.yt_actual_end.unwrap_or(now);
             vod_t(end, start, anchors.vod_offset_ms) >= 3600.0
         });
-        let items: Vec<ListItem> = sorted_checkpoints(&view.state)
-            .into_iter()
-            .map(|c| {
+        let checkpoints = sorted_checkpoints(&view.state);
+        let items: Vec<ListItem> = checkpoints
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
                 let ts = anchors
                     .yt_actual_start
                     .map(|start| {
                         chapter_ts(vod_t(c.pressed_at, start, anchors.vod_offset_ms), long)
                     })
                     .unwrap_or_else(|| "--:--".into());
-                ListItem::new(format!("{ts:>8}  {}", c.title))
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{:>2} ", i + 1), Style::new().fg(FAINT)),
+                    Span::styled(format!("{ts:>8}  "), Style::new().fg(INFO)),
+                    Span::styled(c.title.clone(), Style::new().fg(TEXT)),
+                ]))
             })
             .collect();
         let published = if ac_template::chapters::block(&view.chapters).is_empty() {
@@ -679,48 +821,113 @@ impl App {
         } else {
             view.chapters.len()
         };
-        let block = pane_block(
-            format!(" Chapters ({published} published) "),
-            self.focus == Pane::Chapters,
-        );
-        if self.chapters.selected().is_none() && !items.is_empty() {
+        let mut extra = vec![Span::styled(
+            format!("· {published} published "),
+            Style::new().fg(MUTED),
+        )];
+        if !self.pending.is_empty() {
+            extra.push(Span::styled(
+                format!("· {} waiting for a title ", self.pending.len()),
+                Style::new().fg(WARN).bold(),
+            ));
+        }
+        let focused = self.focus == Pane::Chapters;
+        let block = pane_block(Pane::Chapters, "Chapters", extra, focused);
+        if items.is_empty() {
+            let hint = empty_state(&[
+                "No chapters yet.",
+                "Press c to add one at this moment, or Ctrl+Alt+C from any app.",
+            ]);
+            frame.render_widget(hint.block(block), area);
+            return;
+        }
+        if self.chapters.selected().is_none() {
             self.chapters.select(Some(items.len() - 1));
         }
         let list = List::new(items)
             .block(block)
-            .highlight_style(Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED));
+            .highlight_symbol("▍")
+            .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
+            .highlight_style(selected_style(focused));
         frame.render_stateful_widget(list, area, &mut self.chapters);
     }
 
-    fn draw_chat(&self, frame: &mut Frame, area: Rect, view: &View) {
+    fn draw_chat(&mut self, frame: &mut Frame, area: Rect, view: &View) {
+        // Colors are handed out in the order people first speak.
+        for m in view.chat.iter() {
+            self.users.get(&m.author_channel_id);
+        }
         let height = area.height.saturating_sub(2) as usize;
         let len = view.chat.len();
-        let end = len.saturating_sub(self.chat_scroll.min(len));
+        let scroll = self.chat_scroll.min(len);
+        let end = len - scroll;
+        let now = self.clock.now_ts();
         let lines: Vec<Line> = view
             .chat
             .range(end.saturating_sub(height)..end)
-            .map(chat_line)
+            .map(|m| {
+                let fresh = now.secs_since(m.t_received) < FRESH_S;
+                chat_line(m, self.users.get(&m.author_channel_id), fresh)
+            })
             .collect();
-        let block = pane_block(" Chat ".into(), self.focus == Pane::Chat);
+        let extra = if scroll > 0 {
+            vec![Span::styled(
+                format!("↓ {scroll} newer · G jumps back "),
+                Style::new().fg(WARN),
+            )]
+        } else {
+            Vec::new()
+        };
+        let block = pane_block(Pane::Chat, "Chat", extra, self.focus == Pane::Chat);
+        if lines.is_empty() {
+            let connected = view.state.services.get("chat") == Some(&ServiceStatus::Ok);
+            let text = if connected {
+                "No messages yet.".to_owned()
+            } else {
+                format!("{} waiting for chat", spinner(self.tick()))
+            };
+            frame.render_widget(empty_state(&[&text]).block(block), area);
+            return;
+        }
         frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 
     fn draw_questions(&mut self, frame: &mut Frame, area: Rect, view: &View) {
         let queue = queue(&view.state);
+        let live = mix(
+            ACCENT,
+            ACCENT_DIM,
+            pulse(self.tick(), Duration::from_secs(2)),
+        );
         let items: Vec<ListItem> = queue
             .iter()
             .map(|q| {
                 let shown = q.state == ac_core::session_state::QuestionState::Shown;
-                let mark = if shown { "▶ " } else { "  " };
+                let mark = if shown {
+                    Span::styled("● ", Style::new().fg(live).bold())
+                } else {
+                    Span::raw("  ")
+                };
+                let color = self.users.get(&q.author_id);
                 ListItem::new(Line::from(vec![
-                    Span::styled(mark, Style::new().fg(ACCENT)),
-                    Span::styled(format!("{}: ", q.author), Style::new().fg(MUTED)),
-                    Span::raw(q.text.clone()),
+                    mark,
+                    Span::styled(q.author.clone(), Style::new().fg(color).bold()),
+                    Span::styled(": ", Style::new().fg(FAINT)),
+                    Span::styled(q.text.clone(), Style::new().fg(TEXT)),
                 ]))
             })
             .collect();
-        let title = format!(" Questions ({}) ", queue.len());
-        let block = pane_block(title, self.focus == Pane::Questions);
+        let focused = self.focus == Pane::Questions;
+        let extra = vec![Span::styled(
+            format!("({}) ", queue.len()),
+            Style::new().fg(MUTED),
+        )];
+        let block = pane_block(Pane::Questions, "Questions", extra, focused);
+        if items.is_empty() {
+            let hint = empty_state(&["No questions yet. Viewers ask with !q <question>."]);
+            frame.render_widget(hint.block(block), area);
+            return;
+        }
         let last = items.len().checked_sub(1);
         match self.questions.selected() {
             None if last.is_some() => self.questions.select(Some(0)),
@@ -729,16 +936,17 @@ impl App {
         }
         let list = List::new(items)
             .block(block)
-            .highlight_style(Style::new().fg(ACCENT).add_modifier(Modifier::REVERSED));
+            .highlight_symbol("▍")
+            .highlight_spacing(ratatui::widgets::HighlightSpacing::Always)
+            .highlight_style(selected_style(focused));
         frame.render_stateful_widget(list, area, &mut self.questions);
     }
 
     fn draw_log(&self, frame: &mut Frame, area: Rect, view: &View) {
         let height = area.height.saturating_sub(2) as usize;
         let events: Vec<&Event> = view.state.log.iter().collect();
-        let end = events
-            .len()
-            .saturating_sub(self.log_scroll.min(events.len()));
+        let scroll = self.log_scroll.min(events.len());
+        let end = events.len() - scroll;
         let start = end.saturating_sub(height);
         let lines: Vec<Line> = events[start..end]
             .iter()
@@ -749,31 +957,79 @@ impl App {
                         .format("%H:%M:%S")
                         .to_string();
                 let (text, dim) = summary(e);
-                let style = if dim {
-                    Style::new().fg(MUTED)
-                } else {
-                    Style::new()
-                };
+                let (icon, color) = event_icon(e);
+                let style = Style::new().fg(if dim { MUTED } else { TEXT });
                 Line::from(vec![
-                    Span::styled(format!("{time} "), Style::new().fg(MUTED)),
+                    Span::styled(format!("{time} "), Style::new().fg(FAINT)),
+                    Span::styled(format!("{icon} "), Style::new().fg(color)),
                     Span::styled(text, style),
                 ])
             })
             .collect();
-        let block = pane_block(" Event log ".into(), self.focus == Pane::Log);
+        let extra = if scroll > 0 {
+            vec![Span::styled(
+                format!("↓ {scroll} newer · G jumps back "),
+                Style::new().fg(WARN),
+            )]
+        } else {
+            Vec::new()
+        };
+        let block = pane_block(Pane::Log, "Event log", extra, self.focus == Pane::Log);
         frame.render_widget(Paragraph::new(lines).block(block), area);
     }
 
-    fn keys_line(&self) -> String {
-        match &self.mode {
-            Mode::Input { .. } => " [Enter] save  [Esc] cancel".into(),
-            Mode::Preview { .. } => " [Enter] push  [j/k] scroll  [Esc] close".into(),
-            _ if self.focus == Pane::Questions => " [Enter] show/answer [x] dismiss [j/k] move [Tab] focus [c]heckpoint [m]ark [b]rb [p]rivacy [:] command [?] help".into(),
-            _ => " [c]heckpoint [m]ark [b]rb [p]rivacy [n]ote [r]eadme [s]ync [e]dit [d]elete [Tab] focus [:] command [?] help [q]uit".into(),
+    /// Hints for the current mode and pane, most useful first (cut at the right edge).
+    fn keys_line(&self) -> Vec<Span<'static>> {
+        let pairs: &[(&str, &str)] = match &self.mode {
+            Mode::Input {
+                prompt: Prompt::Palette,
+                ..
+            } => &[("Enter", "run"), ("Tab", "complete"), ("Esc", "cancel")],
+            Mode::Input { .. } => &[("Enter", "save"), ("Esc", "cancel")],
+            Mode::Preview { .. } => &[("Enter", "push"), ("j/k", "scroll"), ("Esc", "close")],
+            _ => {
+                let pane: &[(&str, &str)] = match self.focus {
+                    Pane::Questions => &[("Enter", "show/answer"), ("x", "dismiss")],
+                    Pane::Chapters => &[("e", "edit"), ("d", "delete")],
+                    Pane::Chat | Pane::Log => &[("j/k", "scroll"), ("G", "newest")],
+                };
+                let global: &[(&str, &str)] = &[
+                    ("c", "checkpoint"),
+                    ("m", "mark"),
+                    ("b", "brb"),
+                    ("p", "privacy"),
+                    ("s", "sync"),
+                    ("1-4", "pane"),
+                    ("?", "help"),
+                    ("n", "note"),
+                    ("r", "readme"),
+                    (":", "command"),
+                    ("q", "quit"),
+                ];
+                let mut spans = vec![Span::raw(" ")];
+                for (k, label) in pane.iter().chain(global) {
+                    spans.extend(hint(k, label));
+                }
+                return spans;
+            }
+        };
+        let mut spans = vec![Span::raw(" ")];
+        for (k, label) in pairs {
+            spans.extend(hint(k, label));
         }
+        spans
     }
 
     fn draw_modal(&self, frame: &mut Frame, view: &View) {
+        let t = self.tick();
+        let chips = |pairs: &[(&str, &str)]| -> Line<'static> {
+            Line::from(
+                pairs
+                    .iter()
+                    .flat_map(|(k, l)| hint(k, l))
+                    .collect::<Vec<_>>(),
+            )
+        };
         let (title, body, width, height): (String, Vec<Line>, u16, u16) = match &self.mode {
             Mode::Normal => return,
             Mode::Input {
@@ -793,18 +1049,28 @@ impl App {
                     .datetime()
                     .with_timezone(&Local)
                     .format("%H:%M:%S");
-                let prefix = if *prompt == Prompt::Palette { ":" } else { "" };
-                let hint = if *prompt == Prompt::Palette {
+                let palette = *prompt == Prompt::Palette;
+                let hint = if palette {
                     String::new()
                 } else {
                     format!(" (time {at})")
                 };
-                (
-                    format!(" {label}{hint} "),
-                    vec![Line::from(format!("{prefix}{text}▏"))],
-                    70,
-                    3,
-                )
+                // A blinking caret, and the palette's Tab completion as gray ghost text.
+                let caret = if t.as_millis() % 1000 < 600 {
+                    "▏"
+                } else {
+                    " "
+                };
+                let mut line = vec![];
+                if palette {
+                    line.push(Span::styled(":", Style::new().fg(ACCENT).bold()));
+                }
+                line.push(Span::styled(text.clone(), Style::new().fg(TEXT)));
+                line.push(Span::styled(caret, Style::new().fg(ACCENT)));
+                if palette && let Some(rest) = completion(text) {
+                    line.push(Span::styled(rest, Style::new().fg(FAINT)));
+                }
+                (format!(" {label}{hint} "), vec![Line::from(line)], 70, 3)
             }
             Mode::Preview { scroll } => {
                 let mut lines: Vec<Line> = Vec::new();
@@ -825,7 +1091,11 @@ impl App {
                 }
                 let chars = view.description.as_ref().map_or(0, Description::chars);
                 let area = frame.area();
-                let title = format!(" Description preview · {chars} chars · Enter pushes ");
+                let title = format!(
+                    " Description preview · {} / {} chars · Enter pushes ",
+                    thousands(chars as i64),
+                    thousands(DESCRIPTION_LIMIT as i64)
+                );
                 let popup = centered(
                     area,
                     area.width.saturating_sub(8),
@@ -833,71 +1103,98 @@ impl App {
                 );
                 frame.render_widget(Clear, popup);
                 let widget = Paragraph::new(lines)
-                    .block(
-                        Block::bordered()
-                            .title(title)
-                            .border_style(Style::new().fg(ACCENT)),
-                    )
+                    .block(modal_block(title))
                     .wrap(Wrap { trim: false })
                     .scroll((*scroll, 0));
                 frame.render_widget(widget, popup);
                 return;
             }
-            Mode::Help => (" Help (any key closes) ".into(), help_lines(), 76, 33),
-            Mode::Preflight => {
-                let lines: Vec<Line> = view.preflight.iter().map(check_line).collect();
+            Mode::Help => {
+                let lines = help_lines();
                 let height = lines.len() as u16 + 2;
-                (
-                    " Pre-flight (any key closes, :preflight reopens) ".into(),
-                    lines,
-                    90,
-                    height,
-                )
+                (" Help · any key closes ".into(), lines, 84, height)
             }
-            Mode::ConfirmQuit => {
-                let mut body = vec![Line::raw(
-                    "Quit aftercast? The session can be resumed later.",
-                )];
-                body.push(Line::raw(""));
-                body.push(Line::raw(
-                    "[y] quit   [f] finalize (final description push) and quit   [n] cancel",
+            Mode::Preflight => {
+                let ok = view
+                    .preflight
+                    .iter()
+                    .filter(|c| c.state == CheckState::Ok)
+                    .count();
+                let mut lines = vec![
+                    Line::from(vec![
+                        Span::styled(
+                            " ◉ aftercast ",
+                            Style::new().fg(Color::Black).bg(ACCENT).bold(),
+                        ),
+                        Span::styled(
+                            format!("  {ok} of {} checks pass", view.preflight.len()),
+                            Style::new().fg(MUTED),
+                        ),
+                    ]),
+                    Line::raw(""),
+                ];
+                lines.extend(view.preflight.iter().map(|c| check_line(c, t)));
+                lines.push(Line::raw(""));
+                lines.push(Line::styled(
+                    "Any key closes; :preflight opens this again.",
+                    Style::new().fg(FAINT),
                 ));
-                (" Quit ".into(), body, 76, 5)
+                let height = lines.len() as u16 + 2;
+                (" Pre-flight ".into(), lines, 90, height)
             }
+            Mode::ConfirmQuit => (
+                " Quit ".into(),
+                vec![
+                    Line::raw("Quit aftercast? The session can be resumed later."),
+                    Line::raw(""),
+                    chips(&[
+                        ("y", "quit"),
+                        ("f", "finalize (final description push) and quit"),
+                        ("n", "cancel"),
+                    ]),
+                ],
+                76,
+                5,
+            ),
             Mode::ConfirmDelete { title, .. } => (
                 " Delete chapter ".into(),
-                vec![Line::raw(format!(
-                    "Delete {title:?}?  [y] delete  [any] cancel"
-                ))],
+                vec![
+                    Line::raw(format!("Delete {title:?}?")),
+                    Line::raw(""),
+                    chips(&[("y", "delete"), ("any key", "cancel")]),
+                ],
                 70,
-                3,
+                5,
             ),
             Mode::ConfirmTitle(title) => (
                 " Title change from chat ".into(),
                 vec![
                     Line::raw(format!("Set the YouTube title to {title:?}?")),
-                    Line::raw("[y] set (51 quota units)   [n] drop"),
+                    Line::raw(""),
+                    chips(&[("y", "set (51 quota units)"), ("n", "drop")]),
                 ],
                 84,
-                4,
+                5,
             ),
             Mode::Ended => (
                 " Stream ended ".into(),
-                vec![Line::raw(
-                    "[F]inalize (push final description) · [K]eep session open · [P]ost-process now",
-                )],
-                84,
-                3,
+                vec![
+                    Line::raw("The stream has ended. What next?"),
+                    Line::raw(""),
+                    chips(&[
+                        ("f", "finalize (push final description)"),
+                        ("k", "keep session open"),
+                        ("p", "post-process now"),
+                    ]),
+                ],
+                92,
+                5,
             ),
         };
         let popup = centered(frame.area(), width, height);
         frame.render_widget(Clear, popup);
         let widget = Paragraph::new(body)
-            .block(
-                Block::bordered()
-                    .title(title)
-                    .border_style(Style::new().fg(ACCENT)),
-            )
+            .block(modal_block(title))
             .wrap(Wrap { trim: false });
         frame.render_widget(widget, popup);
     }
@@ -1004,22 +1301,41 @@ fn queue(state: &SessionState) -> Vec<&ac_core::session_state::Question> {
         .collect()
 }
 
-fn chat_line(m: &ChatMessage) -> Line<'_> {
+fn chat_line(m: &ChatMessage, color: Color, fresh: bool) -> Line<'_> {
     use ac_core::chat::ChatKind;
-    let name_style = if m.is_owner || m.is_moderator {
-        Style::new().fg(ACCENT).bold()
+    // A colored bar marks lines that just arrived.
+    let mut spans = vec![Span::styled(
+        if fresh { "▎" } else { " " },
+        Style::new().fg(color),
+    )];
+    let (badge, badge_color) = if m.is_owner {
+        ("★ ", ACCENT)
+    } else if m.is_moderator {
+        ("⚑ ", INFO)
+    } else if m.is_member {
+        ("✦ ", OK)
     } else {
-        Style::new().fg(MUTED)
+        ("", MUTED)
     };
-    let mut spans = vec![Span::styled(format!("{}: ", m.author_name), name_style)];
+    if !badge.is_empty() {
+        spans.push(Span::styled(badge, Style::new().fg(badge_color)));
+    }
+    let name = if m.is_owner { ACCENT } else { color };
+    spans.push(Span::styled(
+        m.author_name.as_str(),
+        Style::new().fg(name).bold(),
+    ));
+    spans.push(Span::styled(": ", Style::new().fg(FAINT)));
     if let Some(amount) = &m.amount {
         spans.push(Span::styled(
-            format!("[{amount}] "),
-            Style::new().fg(Color::Black).bg(ACCENT),
+            format!(" {amount} "),
+            Style::new().fg(Color::Black).bg(WARN).bold(),
         ));
+        spans.push(Span::raw(" "));
     }
     let text_style = match m.kind {
-        ChatKind::Text | ChatKind::Superchat | ChatKind::Supersticker => Style::new(),
+        ChatKind::Text if m.text.starts_with('!') => Style::new().fg(INFO),
+        ChatKind::Text | ChatKind::Superchat | ChatKind::Supersticker => Style::new().fg(TEXT),
         _ => Style::new().fg(MUTED).italic(),
     };
     spans.push(Span::styled(m.text.as_str(), text_style));
@@ -1032,39 +1348,111 @@ fn sorted_checkpoints(state: &SessionState) -> Vec<&ac_core::session_state::Chec
     list
 }
 
-fn pane_block(title: String, focused: bool) -> Block<'static> {
-    let color = if focused { ACCENT } else { MUTED };
+/// A rounded pane frame titled with its number chip (press the number to focus it).
+fn pane_block(pane: Pane, label: &str, extra: Vec<Span<'static>>, focused: bool) -> Block<'static> {
+    let (number, name, border) = if focused {
+        (
+            Style::new().fg(Color::Black).bg(ACCENT).bold(),
+            Style::new().fg(TEXT).bold(),
+            ACCENT,
+        )
+    } else {
+        (
+            Style::new().fg(MUTED).bg(RAISED),
+            Style::new().fg(MUTED),
+            FAINT,
+        )
+    };
+    let mut title = vec![
+        Span::styled(format!(" {} ", pane.number()), number),
+        Span::styled(format!(" {label} "), name),
+    ];
+    title.extend(extra);
     Block::bordered()
-        .title(title)
-        .border_style(Style::new().fg(color))
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(border))
+        .title(Line::from(title))
+}
+
+fn modal_block(title: String) -> Block<'static> {
+    Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(ACCENT))
+        .title(Span::styled(title, Style::new().fg(TEXT).bold()))
+        .padding(Padding::horizontal(1))
+}
+
+fn selected_style(focused: bool) -> Style {
+    if focused {
+        Style::new().bg(SELECTED).fg(TEXT).bold()
+    } else {
+        Style::new().bg(RAISED)
+    }
+}
+
+/// Gray hint text for a pane with nothing in it yet.
+fn empty_state<'a>(lines: &[&str]) -> Paragraph<'a> {
+    let lines: Vec<Line> = lines
+        .iter()
+        .map(|l| Line::styled(format!(" {l}"), Style::new().fg(FAINT).italic()))
+        .collect();
+    Paragraph::new(lines).wrap(Wrap { trim: false })
 }
 
 fn readme_line(view: &View) -> Line<'static> {
-    let mut parts = Vec::new();
+    let mut parts = vec![Span::styled(" README ", Style::new().fg(MUTED))];
     match (&view.render_error, &view.description) {
         (Some(error), _) => parts.push(Span::styled(
-            format!(" README error: {error}"),
-            Style::new().fg(ACCENT),
+            format!("✖ {error}"),
+            Style::new().fg(ACCENT).bold(),
         )),
-        (None, Some(d)) => parts.push(Span::raw(format!(
-            " README: {} chars",
-            thousands(d.chars() as i64)
-        ))),
-        (None, None) => parts.push(Span::raw(" README: not rendered")),
+        (None, Some(d)) => {
+            let chars = d.chars();
+            let (bar, color) = gauge(chars, DESCRIPTION_LIMIT, 10);
+            parts.push(Span::styled(bar, Style::new().fg(color)));
+            parts.push(Span::styled(
+                format!(
+                    " {} / {} chars",
+                    thousands(chars as i64),
+                    thousands(DESCRIPTION_LIMIT as i64)
+                ),
+                Style::new().fg(TEXT),
+            ));
+        }
+        (None, None) => parts.push(Span::styled("not rendered", Style::new().fg(FAINT))),
     }
     let published = if ac_template::chapters::block(&view.chapters).is_empty() {
         0
     } else {
         view.chapters.len()
     };
-    parts.push(Span::raw(format!(" · {published} chapters")));
+    let sep = || Span::styled(" · ", Style::new().fg(FAINT));
+    parts.push(sep());
+    parts.push(Span::styled(
+        format!("{published} chapters"),
+        Style::new().fg(MUTED),
+    ));
     if let Some((t, trigger)) = view.state.last_push {
         let at = t.datetime().with_timezone(&Local).format("%H:%M");
-        parts.push(Span::raw(
-            format!(" · last push {at} ({trigger:?})").to_lowercase(),
+        parts.push(sep());
+        parts.push(Span::styled(
+            format!("last push {at} ({trigger:?})").to_lowercase(),
+            Style::new().fg(MUTED),
         ));
     }
     Line::from(parts)
+}
+
+/// `▰▰▰▱▱` filled to `used / limit`: green, amber past 80 %, red past the limit.
+fn gauge(used: usize, limit: usize, cells: usize) -> (String, Color) {
+    let filled = (used * cells).div_ceil(limit.max(1)).min(cells);
+    let bar = "▰".repeat(filled) + &"▱".repeat(cells - filled);
+    let color = match used * 100 / limit.max(1) {
+        0..=80 => OK,
+        81..=100 => WARN,
+        _ => ACCENT,
+    };
+    (bar, color)
 }
 
 /// `▁▃▅█` style bars scaled to the largest value.
@@ -1170,47 +1558,132 @@ fn summary(e: &Event) -> (String, bool) {
     }
 }
 
-fn help_lines() -> Vec<Line<'static>> {
-    [
-        "c        checkpoint (time taken at key press, then type the title)",
-        "m        mark a good moment (optional label)",
-        "n        private note (never published)",
-        "b        BRB on/off (OBS BRB scene, back to the previous scene)",
-        "p        privacy on/off (OBS privacy scene)",
-        "s        preview description; Enter pushes it",
-        "r        edit the README in Neovim (clean, no config); :wq comes back",
-        "e / d    edit / delete the selected chapter (Chapters pane)",
-        "Enter    show question on stream; again: answered (Questions pane)",
-        "x        dismiss question (Questions pane)",
-        "Tab      switch pane      j/k, arrows  move",
-        ":        command palette  ?  help      q  quit",
-        "",
-        "Commands",
-        ":checkpoint <title>  :cp <title>   (time = when Enter is pressed)",
-        ":mark [label]   :note <text>   :quest <title>",
-        ":sync   push the description now",
-        ":finalize   final push and end the session",
-        ":reload   re-read config and templates",
-        ":brb  :back   :privacy [on|off]   :scene <name>",
-        ":say <text>   chat message as the channel (20 quota units)",
-        ":overlay <name> on|off   now, question, toast, brb, latency, chapters",
-        ":latency   start/stop measuring; :lat <n> enters the number seen",
-        ":preflight   show the pre-flight checklist",
-        ":quit",
-        "",
-        "Global hotkeys (any app): Ctrl+Alt+M mark, Ctrl+Alt+C checkpoint,",
-        "Ctrl+Alt+B BRB, Ctrl+Alt+P privacy (configurable in [hotkeys])",
-    ]
-    .into_iter()
-    .map(Line::raw)
-    .collect()
+/// Icon and color for an event log line.
+fn event_icon(e: &Event) -> (&'static str, Color) {
+    match &e.kind {
+        EventKind::Checkpoint { .. }
+        | EventKind::CheckpointEdit { .. }
+        | EventKind::CheckpointDelete { .. } => ("◆", ACCENT),
+        EventKind::Mark { .. } => ("★", WARN),
+        EventKind::Note { .. } => ("✎", MUTED),
+        EventKind::QuestSet { .. } => ("⚑", INFO),
+        EventKind::DescRendered { ok: true, .. } => ("↻", FAINT),
+        EventKind::DescPushed { .. } | EventKind::TitlePushed { .. } => ("⇡", OK),
+        EventKind::DescRendered { .. }
+        | EventKind::DescPushFailed { .. }
+        | EventKind::ServiceError { .. } => ("✖", ACCENT),
+        EventKind::StreamStatus { .. }
+        | EventKind::StreamEnded { .. }
+        | EventKind::ObsStream { .. }
+        | EventKind::ObsRecord { .. } => ("●", INFO),
+        EventKind::BrbStart { .. }
+        | EventKind::BrbEnd {}
+        | EventKind::PrivacyStart { .. }
+        | EventKind::PrivacyEnd {} => ("◐", WARN),
+        EventKind::QuestionAdd { .. }
+        | EventKind::QuestionShow { .. }
+        | EventKind::QuestionAnswered { .. }
+        | EventKind::QuestionDismiss { .. } => ("?", INFO),
+        EventKind::LatencyMeasured { .. } => ("◷", INFO),
+        EventKind::CaptureSecretDropped { .. } => ("⚿", WARN),
+        EventKind::BotCmd { .. } | EventKind::BotReply { .. } => ("›", MUTED),
+        EventKind::ShellCmd { .. } => ("$", FAINT),
+        _ => ("·", FAINT),
+    }
 }
 
-fn check_line(c: &Check) -> Line<'static> {
+fn help_lines() -> Vec<Line<'static>> {
+    let sections: &[(&str, &[(&str, &str)])] = &[
+        (
+            "Moments (time is taken when the key is pressed)",
+            &[
+                ("c", "checkpoint: a chapter, then type its title"),
+                ("m", "mark a good moment (optional label)"),
+                ("n", "private note (never published)"),
+            ],
+        ),
+        (
+            "Stream",
+            &[
+                ("b", "BRB on/off (OBS BRB scene, then back)"),
+                (
+                    "p",
+                    "privacy on/off (OBS privacy scene, key capture paused)",
+                ),
+                ("s", "preview the description; Enter pushes it"),
+                (
+                    "r",
+                    "edit the README in Neovim (clean, no config); :wq comes back",
+                ),
+            ],
+        ),
+        (
+            "Panes",
+            &[
+                ("1 2 3 4", "focus Chat, Questions, Chapters, Event log"),
+                ("Tab", "next pane (Shift+Tab: previous)"),
+                ("j/k", "move or scroll; g/G first/newest"),
+                ("e / d", "edit / delete the selected chapter"),
+                ("Enter", "show the selected question; again: answered"),
+                ("x", "dismiss the selected question"),
+            ],
+        ),
+        (
+            "Commands (: opens, Tab completes)",
+            &[
+                (
+                    ":cp <title>",
+                    "checkpoint at Enter   :mark [label]   :note <text>",
+                ),
+                (
+                    ":sync",
+                    "push the description now   :finalize   end the session",
+                ),
+                (
+                    ":brb  :back",
+                    ":privacy [on|off]   :scene <name>   :quest <title>",
+                ),
+                (":say <text>", "chat as the channel (20 quota units)"),
+                (
+                    ":overlay",
+                    "<name> on|off: now, question, toast, brb, latency, chapters",
+                ),
+                (
+                    ":latency",
+                    "start/stop measuring; :lat <n> enters the number seen",
+                ),
+                (":preflight", "the checklist again   :reload   :quit"),
+            ],
+        ),
+        (
+            "Global hotkeys (any app, [hotkeys] in config)",
+            &[
+                ("Ctrl+Alt+C", "checkpoint   Ctrl+Alt+M mark"),
+                ("Ctrl+Alt+B", "BRB   Ctrl+Alt+P privacy"),
+            ],
+        ),
+    ];
+    let mut lines = Vec::new();
+    for (i, (heading, rows)) in sections.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::styled(*heading, Style::new().fg(ACCENT).bold()));
+        for (k, what) in *rows {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {k:<13}"), Style::new().fg(TEXT).bold()),
+                Span::styled(*what, Style::new().fg(MUTED)),
+            ]));
+        }
+    }
+    lines
+}
+
+fn check_line(c: &Check, t: Duration) -> Line<'static> {
     let (mark, style) = match c.state {
-        CheckState::Ok => ("✔", Style::new().fg(Color::Green)),
+        CheckState::Ok => ("✔", Style::new().fg(OK)),
         CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
-        CheckState::Pending => ("…", Style::new().fg(MUTED)),
+        CheckState::Pending => (spinner(t), Style::new().fg(MUTED)),
     };
     let mut spans = vec![
         Span::styled(format!(" {mark} "), style),
@@ -1219,10 +1692,47 @@ fn check_line(c: &Check) -> Line<'static> {
     if !c.detail.is_empty() {
         spans.push(Span::styled(
             format!("  {}", c.detail),
-            Style::new().fg(MUTED),
+            Style::new().fg(FAINT),
         ));
     }
     Line::from(spans)
+}
+
+/// Palette command names, in Tab completion order.
+const COMMANDS: [&str; 19] = [
+    "checkpoint",
+    "cp",
+    "mark",
+    "note",
+    "quest",
+    "sync",
+    "finalize",
+    "reload",
+    "quit",
+    "help",
+    "preflight",
+    "brb",
+    "back",
+    "privacy",
+    "scene",
+    "say",
+    "overlay",
+    "latency",
+    "lat",
+];
+
+/// What Tab adds to a half-typed palette command name (`""` when it is complete).
+fn completion(text: &str) -> Option<&'static str> {
+    if text.is_empty() || text.contains(' ') {
+        return None;
+    }
+    if COMMANDS.contains(&text) {
+        return Some("");
+    }
+    COMMANDS
+        .iter()
+        .find(|c| c.starts_with(text))
+        .map(|c| &c[text.len()..])
 }
 
 fn centered(area: Rect, width: u16, height: u16) -> Rect {
@@ -1569,7 +2079,7 @@ mod tests {
             text.contains("bob: !q why rust over go?"),
             "chat pane: {text}"
         );
-        assert!(text.contains("chat …"), "{text}");
+        assert!(text.contains(" 2  Questions (2)"), "numbered panes: {text}");
         assert!(text.contains("lat 4.2s"), "{text}");
 
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
@@ -1600,6 +2110,42 @@ mod tests {
             Command::ConfirmTitle { ok: true }
         );
         assert_eq!(app.title_answered.as_deref(), Some("New title"));
+    }
+
+    #[test]
+    fn number_keys_focus_panes_and_tab_completes_commands() {
+        let clock = Arc::new(Clock::new());
+        let view = sample_view(&clock);
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
+        for (key, pane) in [('1', Pane::Chat), ('4', Pane::Log), ('2', Pane::Questions)] {
+            press(&mut app, KeyCode::Char(key));
+            assert_eq!(app.focus, pane);
+        }
+        press(&mut app, KeyCode::Char('9'));
+        assert_eq!(app.focus, Pane::Questions);
+
+        assert_eq!(completion("fin"), Some("alize"));
+        assert_eq!(completion("lat"), Some(""));
+        assert_eq!(completion("say hi"), None);
+        assert_eq!(completion("zzz"), None);
+        press(&mut app, KeyCode::Char(':'));
+        for c in "sy".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Sync);
+    }
+
+    #[test]
+    fn gauge_fills_and_turns_red_past_the_limit() {
+        assert_eq!(gauge(0, 5000, 5), ("▱▱▱▱▱".into(), OK));
+        assert_eq!(gauge(4500, 5000, 5), ("▰▰▰▰▰".into(), WARN));
+        assert_eq!(gauge(6000, 5000, 5).1, ACCENT);
     }
 
     #[test]
