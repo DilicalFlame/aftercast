@@ -124,11 +124,12 @@ impl Controller {
             }
         }
         if !self.overlays_off.contains("keys") {
-            let data = match (rec.combo(), &rec.ch) {
-                (Some(combo), _) => json!({ "combo": combo }),
+            // Enter and Tab both edit the typed text and show as a chip.
+            let data = match (rec.chip(), &rec.ch) {
+                (Some(chip), Some(ch)) => json!({ "ch": ch, "combo": chip }),
+                (Some(chip), None) => json!({ "combo": chip }),
                 (None, Some(ch)) => json!({ "ch": ch }),
-                (None, None) if rec.k == "Backspace" => json!({ "back": true }),
-                (None, None) => json!({ "key": rec.k }),
+                (None, None) => json!({ "back": true }),
             };
             self.overlays.send(OverlayMsg {
                 overlay: "keys".into(),

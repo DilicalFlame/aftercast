@@ -75,7 +75,8 @@
     chapters(d) {
       root.replaceChildren(el("div", "card chapters", d.title || ""));
     },
-    // Typed text as a rolling line (last 24 characters) and shortcuts as key chips.
+    // Typed text as a rolling line (last 24 characters); shortcuts and keys that type
+    // nothing (arrows, Enter, Esc, ...) as key chips.
     // Password boxes and denied apps never reach the overlay. Cleared after 1.5 s idle.
     keys(d) {
       clearTimeout(keysIdle);

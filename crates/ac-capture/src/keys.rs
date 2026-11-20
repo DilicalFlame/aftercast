@@ -55,15 +55,55 @@ impl KeyRecord {
     pub fn combo(&self) -> Option<String> {
         let shortcut = self.mods.iter().any(|m| m != "Shift");
         shortcut.then(|| {
-            let key = self.k.strip_prefix("Key").unwrap_or(&self.k);
-            let key = key
-                .strip_prefix("Num")
-                .filter(|d| d.len() == 1)
-                .unwrap_or(key);
             let mut parts = self.mods.clone();
-            parts.push(key.to_owned());
+            parts.push(key_label(&self.k).to_owned());
             parts.join("+")
         })
+    }
+
+    /// What the keys overlay shows as a key chip: a shortcut, or a key that types nothing
+    /// (arrows, Enter, Esc, Tab, Delete, F5, ...; with Shift when held, for selections).
+    /// `None` for typed characters and Backspace, which edit the typed text instead.
+    pub fn chip(&self) -> Option<String> {
+        if let Some(combo) = self.combo() {
+            return Some(combo);
+        }
+        let label = match self.ch.as_deref() {
+            Some("\n") => "Enter",
+            Some("\t") => "Tab",
+            Some(_) => return None,
+            None if self.k == "Backspace" => return None,
+            None => key_label(&self.k),
+        };
+        Some(if self.mods.iter().any(|m| m == "Shift") {
+            format!("Shift+{label}")
+        } else {
+            label.to_owned()
+        })
+    }
+}
+
+/// Short label for an rdev key name: `KeyA` is `A`, `Num1` is `1`, arrows are arrows.
+pub fn key_label(k: &str) -> &str {
+    match k {
+        "UpArrow" => "↑",
+        "DownArrow" => "↓",
+        "LeftArrow" => "←",
+        "RightArrow" => "→",
+        "Return" | "KpReturn" => "Enter",
+        "Escape" => "Esc",
+        "Delete" | "KpDelete" => "Del",
+        "PageUp" => "PgUp",
+        "PageDown" => "PgDn",
+        "CapsLock" => "Caps",
+        "PrintScreen" => "PrtSc",
+        "Space" => "Space",
+        _ => {
+            let key = k.strip_prefix("Key").unwrap_or(k);
+            key.strip_prefix("Num")
+                .filter(|d| d.len() == 1)
+                .unwrap_or(key)
+        }
     }
 }
 
@@ -329,6 +369,48 @@ mod tests {
             title: "main.rs - aftercast".into(),
             password: false,
         }
+    }
+
+    #[test]
+    fn chips_label_shortcuts_and_keys_that_type_nothing() {
+        let rec = |k: &str, ch: Option<&str>, mods: &[&str]| KeyRecord {
+            t: t(0.0),
+            k: k.into(),
+            mods: mods.iter().map(|m| m.to_string()).collect(),
+            app: "Code.exe".into(),
+            ch: ch.map(String::from),
+        };
+        let chip = |k, ch, mods| rec(k, ch, mods).chip();
+        assert_eq!(chip("LeftArrow", None, &[]).as_deref(), Some("←"));
+        assert_eq!(
+            chip("RightArrow", None, &["Shift"]).as_deref(),
+            Some("Shift+→")
+        );
+        assert_eq!(chip("UpArrow", None, &["Ctrl"]).as_deref(), Some("Ctrl+↑"));
+        assert_eq!(
+            chip(
+                "Return",
+                Some(
+                    "
+"
+                ),
+                &[]
+            )
+            .as_deref(),
+            Some("Enter")
+        );
+        assert_eq!(chip("Tab", Some("	"), &[]).as_deref(), Some("Tab"));
+        assert_eq!(chip("Escape", None, &[]).as_deref(), Some("Esc"));
+        assert_eq!(chip("F5", None, &[]).as_deref(), Some("F5"));
+        assert_eq!(chip("KeyS", None, &["Ctrl"]).as_deref(), Some("Ctrl+S"));
+        assert_eq!(
+            chip("Backspace", None, &["Ctrl"]).as_deref(),
+            Some("Ctrl+Backspace")
+        );
+        // Typed characters and Backspace edit the typed text instead.
+        assert_eq!(chip("KeyA", Some("a"), &[]), None);
+        assert_eq!(chip("KeyA", Some("A"), &["Shift"]), None);
+        assert_eq!(chip("Backspace", None, &[]), None);
     }
 
     fn filter() -> Filter {

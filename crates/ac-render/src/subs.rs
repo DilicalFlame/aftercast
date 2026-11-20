@@ -16,6 +16,8 @@ const GAP_S: f64 = 1.2;
 /// How long a shortcut chip stays, and how many stack up.
 const CHIP_S: f64 = 1.2;
 const CHIP_SLOTS: usize = 3;
+/// The same chip again within this long after it ends extends it instead of stacking.
+const REPEAT_S: f64 = 0.3;
 /// Typing fades after this much idle time and starts over.
 const IDLE_S: f64 = 1.5;
 /// Typed characters shown.
@@ -204,8 +206,15 @@ pub fn keys_ass(
 /// oldest.
 fn chips(keys: &[(f64, &KeyRecord)], cut_end: f64, lines: &mut Vec<Line>) {
     let mut slots: [Option<usize>; CHIP_SLOTS] = [None; CHIP_SLOTS];
+    let mut last: Option<usize> = None;
     for (t, k) in keys {
-        let Some(combo) = k.combo() else { continue };
+        let Some(chip) = k.chip() else { continue };
+        let text = chip.replace('+', " + ");
+        // A held key (auto-repeat) or the same key again right away: one chip that stays.
+        if let Some(i) = last.filter(|&i| lines[i].text == text && lines[i].end + REPEAT_S >= *t) {
+            lines[i].end = (t + CHIP_S).min(cut_end);
+            continue;
+        }
         let free = slots
             .iter()
             .position(|s| s.is_none_or(|i| lines[i].end <= *t));
@@ -224,13 +233,14 @@ fn chips(keys: &[(f64, &KeyRecord)], cut_end: f64, lines: &mut Vec<Line>) {
             slot
         });
         slots[slot] = Some(lines.len());
+        last = Some(lines.len());
         lines.push(Line {
             start: *t,
             end: (t + CHIP_S).min(cut_end),
             style: "Chip",
             slot: slot + 1,
             fade: false,
-            text: combo.replace('+', " + "),
+            text,
         });
     }
 }
@@ -452,6 +462,44 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn held_arrow_is_one_chip_and_enter_shows() {
+        let mut keys: Vec<(f64, KeyRecord)> = (0..10)
+            .map(|i| (1.0 + i as f64 * 0.1, key("RightArrow", None, &[])))
+            .collect();
+        keys.push((
+            3.0,
+            key(
+                "Return",
+                Some(
+                    "
+",
+                ),
+                &[],
+            ),
+        ));
+        let ass = keys_ass(
+            &keys,
+            &[cut(0.0, 10.0, 1.0)],
+            &Overlay::default(),
+            1920,
+            1080,
+        )
+        .unwrap();
+        assert_eq!(ass.matches(",Chip,,").count(), 2, "{ass}");
+        // The held arrow lasts until 1.2 s after the last repeat; Enter is its own chip.
+        assert!(
+            ass.contains("Dialogue: 0,0:00:01.00,0:00:03.10,Chip,"),
+            "{ass}"
+        );
+        assert!(ass.lines().any(|l| l.ends_with(",,→")), "{ass}");
+        assert!(
+            ass.contains("Dialogue: 0,0:00:03.00,0:00:04.20,Chip,"),
+            "{ass}"
+        );
+        assert!(ass.lines().any(|l| l.ends_with(",,Enter")), "{ass}");
     }
 
     #[test]
