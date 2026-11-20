@@ -61,6 +61,7 @@ pub struct SessionState {
     pub quests: Vec<Quest>,
     pub questions: Vec<Question>,
     pub brb_starts: Vec<Timestamp>,
+    pub brb_ends: Vec<Timestamp>,
     pub brb: bool,
     /// Scene to return to when BRB ends (from `brb.start`).
     pub brb_return: Option<String>,
@@ -161,7 +162,10 @@ impl SessionState {
                 self.brb_return.clone_from(return_scene);
                 self.brb_starts.push(e.t);
             }
-            EventKind::BrbEnd {} => self.brb = false,
+            EventKind::BrbEnd {} => {
+                self.brb = false;
+                self.brb_ends.push(e.t);
+            }
             EventKind::ObsScene { to, .. } => self.scene = Some(to.clone()),
             EventKind::ObsStream { state } => self.obs_stream = Some(*state),
             EventKind::ObsRecord { state, .. } => {

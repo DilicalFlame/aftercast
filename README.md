@@ -89,7 +89,7 @@ aftercast connects to OBS it refreshes these sources, so a page that failed to l
 | `brb` | "Be right back" card with a timer |
 | `latency` | the counter used by `:latency` |
 | `chapters` | the latest chapter title |
-| `keys` | what you type (last 24 characters) and shortcuts as key chips (`Ctrl` `S`) |
+| `keys` | what you type (last 24 characters); shortcuts and keys that type nothing as key chips (`Ctrl` `S`, `←`, `Shift` `→`, `Enter`, `Esc`, `F5`) |
 
 Pages are transparent and reconnect by themselves when aftercast restarts. To restyle, put
 `overlay.css`, `overlay.js` or `<name>.html` in `<home>\overlays\`; theme colors and fonts
@@ -203,7 +203,9 @@ your phone and type `!lat <number you see>` in chat (or `:lat <n>` in the palett
 three times. The result is stored in the session and shown as `lat` in the status bar.
 The measurement gets its own "Latency check" chapter, and when it ends (third sample or
 `:latency` again) a chapter returns to the title you were on, so viewers can skip it
-(`stream.chapter_on_latency = false` turns this off).
+(`stream.chapter_on_latency = false` turns this off). Breaks work the same way: `b` starts a
+"Break" chapter and coming back returns to the chapter you were in
+(`stream.chapter_on_brb = false` turns this off).
 
 ### The session README
 

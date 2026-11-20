@@ -222,7 +222,7 @@ impl Default for Stream {
             default_latency_s: 5.0,
             first_chapter_title: "Start".into(),
             chapter_on_quest_change: true,
-            chapter_on_brb: false,
+            chapter_on_brb: true,
             chapter_on_question: false,
             chapter_on_latency: true,
         }
