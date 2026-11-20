@@ -83,6 +83,12 @@ fn run(cli: Cli) -> Result<u8> {
             };
             render(&home, config, session.as_deref(), &opts)
         }
+        Some(Command::Mcp) => {
+            let server = ac_mcp::Server::new(home.clone(), config_path.clone());
+            server.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
+            Ok(exit::OK)
+        }
+        Some(Command::Library { action }) => library(&home, &config_path, action),
         None => runtime()?.block_on(live_session(&home, &config_path, &cli)),
         Some(_) => {
             eprintln!("not yet implemented");
@@ -325,8 +331,52 @@ fn render(
     }
     if !opts.dry_run {
         println!("{rendered} rendered, {skipped} up to date, {failed} failed");
+        if let Err(e) = ac_library::Library::open(home).and_then(|mut l| l.upsert(&dir)) {
+            eprintln!("warning: library not updated: {e}");
+        }
     }
     Ok(if failed > 0 { exit::GENERIC } else { exit::OK })
+}
+
+fn library(home: &Home, config_path: &std::path::Path, action: cli::LibraryAction) -> Result<u8> {
+    use error::AppError;
+    let config = Config::load(config_path)?;
+    let mut lib = ac_library::Library::open(home).map_err(AppError::Usage)?;
+    match action {
+        cli::LibraryAction::Rebuild => {
+            let n = lib.rebuild(home, &config).map_err(AppError::Usage)?;
+            println!(
+                "indexed {n} sessions into {}",
+                home.join("library/index.sqlite").display()
+            );
+        }
+        cli::LibraryAction::Search {
+            query,
+            session,
+            limit,
+        } => {
+            lib.sync(home, &config).map_err(AppError::Usage)?;
+            let session = session
+                .map(|s| session_dir(home, &config, Some(&s)))
+                .transpose()?
+                .map(|d| {
+                    d.file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned()
+                });
+            let hits = lib
+                .search(&query, session.as_deref(), limit)
+                .map_err(AppError::Usage)?;
+            if hits.is_empty() {
+                println!("no matches");
+            }
+            for h in hits {
+                println!("{}  {}  {}", h.session, ac_core::time::hms(h.start), h.text);
+            }
+        }
+    }
+    Ok(exit::OK)
 }
 
 /// A session folder from a path, a folder name like `2026-11-19_ep042`, or the last session.

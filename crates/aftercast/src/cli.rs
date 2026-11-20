@@ -140,8 +140,17 @@ pub enum ExportWhat {
 
 #[derive(Debug, Subcommand)]
 pub enum LibraryAction {
+    /// Index every session again from its files
     Rebuild,
-    Search { query: String },
+    /// Search the transcripts of all sessions
+    Search {
+        query: String,
+        /// Only this session
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]

@@ -11,6 +11,8 @@ publish.workspace = true
 ac-bot.workspace = true
 ac-capture.workspace = true
 ac-obs.workspace = true
+ac-library.workspace = true
+ac-mcp.workspace = true
 ac-post.workspace = true
 ac-render.workspace = true
 ac-server.workspace = true
@@ -30,6 +32,7 @@ tracing.workspace = true
 ac-core.workspace = true
 
 [dev-dependencies]
+base64 = "0.22"
 chrono.workspace = true
 futures-util = { version = "0.3", default-features = false }
 jsonschema.workspace = true
