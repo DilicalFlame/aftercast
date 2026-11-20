@@ -1447,41 +1447,23 @@ impl Controller {
         let port = self.config.overlay.port;
         for c in list.iter_mut().filter(|c| c.state != CheckState::Ok) {
             c.fix = match (c.label.as_str(), connected) {
-                ("Templates found", _) => {
-                    "fix the README or the templates; r opens the README".into()
-                }
-                ("liveChatId present", _) => {
-                    "turn on live chat for this stream in YouTube Studio, then restart".into()
-                }
-                ("OBS connected", _) => "start OBS and turn on Tools › WebSocket Server \
-                    Settings; aftercast connects by itself"
-                    .into(),
-                ("OBS scenes exist", true) => {
-                    "create them in OBS, or set the names in Settings › OBS".into()
-                }
-                ("OBS streaming", true) => "start streaming in OBS (also :stream start)".into(),
-                ("OBS recording", true) => {
-                    "start recording in OBS: clips are cut from it (also :record start)".into()
-                }
-                ("Mic live", true) if mic.is_some() => "unmute the mic (also :unmute)".into(),
-                ("Recording into the session", true) => {
-                    "needs OBS 30.2 or newer; or turn it off in Settings › OBS".into()
-                }
-                ("Mic live", true) => "add your mic as an audio input in OBS".into(),
+                ("Templates found", _) => "fix the README (r) or templates".into(),
+                ("liveChatId present", _) => "turn on live chat in YouTube Studio".into(),
+                ("OBS connected", _) => "start OBS, enable its WebSocket server".into(),
+                ("OBS scenes exist", true) => "create them in OBS, or rename in Settings".into(),
+                ("OBS streaming", true) => "start streaming".into(),
+                ("OBS recording", true) => "start recording".into(),
+                ("Mic live", true) if mic.is_some() => "unmute the mic".into(),
+                ("Mic live", true) => "add a mic input in OBS".into(),
+                ("Recording into the session", true) => "needs OBS 30.2+".into(),
                 ("Quota remaining >= reserve", _) => {
-                    "wait for the daily reset (midnight Pacific) or lower the reserve in \
-                     Settings › YouTube"
-                        .into()
+                    "wait for the reset, or lower the reserve".into()
                 }
-                ("Overlay server listening", _) => {
-                    format!("port {port} is taken: change overlay.port in aftercast.toml, restart")
-                }
+                ("Overlay server listening", _) => format!("port {port} taken: set overlay.port"),
                 ("Key capture running", _) if c.state == CheckState::Fail => {
-                    "turn it off in Settings › Capture, or restart aftercast".into()
+                    "off in Settings › Capture, or restart".into()
                 }
-                ("Shell hook seen in last 24 h", _) => {
-                    "run aftercast shell-hook pwsh and add it to your profile".into()
-                }
+                ("Shell hook seen in last 24 h", _) => "aftercast shell-hook pwsh".into(),
                 _ => String::new(),
             };
         }

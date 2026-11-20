@@ -1,10 +1,9 @@
 //! The Home page (`0`, and where a session starts).
 //!
-//! Two areas: the primary card (Start or Resume, Quit, and whether everything is ready)
-//! and the cards below it: Checks (what needs you, each with its fix), Status (what is
-//! live), Audio (a meter per input) and On air (the scene's sources as switches). The
-//! cards are arranged as `tui.home_layout` says. Everything that can be acted on is
-//! reached with j/k (Tab jumps card to card) and acted on with Enter.
+//! The header holds the episode and, top right, the decision (Start or Resume, Quit). Below
+//! it, cards you act on (rounded borders: Checks, Mixer, Sources) and information that is
+//! only read (no border: Status, Session, Mic). Tab moves between cards, j/k inside one,
+//! Ctrl+j/k (or Ctrl+arrows) between scenes.
 //!
 //! A new session is a draft here: nothing lasting or public happens until it is started,
 //! and quitting before that keeps nothing.
@@ -17,7 +16,7 @@ use ac_core::event::{OutputState, ServiceStatus, StreamStatus};
 use ac_core::obs::{Audio, Media};
 use ac_core::time::{Timestamp, hms};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Padding, Paragraph};
@@ -37,33 +36,112 @@ pub enum Item {
     Fix(char),
     /// An audio input: Enter mutes or unmutes, h/l change the volume.
     Audio(String),
-    /// A source in the scene on air: Enter shows or hides it.
-    Source(String),
+    /// A source in a scene: Enter shows or hides it.
+    Source {
+        scene: String,
+        source: String,
+    },
 }
 
-/// The cards an item lives in.
+/// A part of Home that takes the focus: the header buttons, Checks, Mixer, Sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Card {
-    Primary,
+    Buttons,
     Checks,
-    Status,
-    Audio,
-    Scene,
-    /// The mics alone, with their meters (the `tabs` layout's Checks tab).
-    Mics,
-    /// The description, chapters, last push and overlay address.
-    Session,
+    Mixer,
+    Sources,
 }
 
-impl Item {
-    pub fn card(&self) -> Card {
-        match self {
-            Item::Start | Item::Quit | Item::Dashboard => Card::Primary,
-            Item::Fix(_) => Card::Checks,
-            Item::Audio(_) => Card::Audio,
-            Item::Source(_) => Card::Scene,
+/// Where the focus is on Home: a card, an item in it, the open tab (`tabs`) and the scene
+/// the Mixer and Sources show (`None`: the scene on air).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Focus {
+    pub card: Card,
+    pub pick: usize,
+    pub tab: usize,
+    pub scene: Option<String>,
+}
+
+impl Default for Focus {
+    fn default() -> Self {
+        Self {
+            card: Card::Buttons,
+            pick: 0,
+            tab: 0,
+            scene: None,
         }
     }
+}
+
+/// The tabs of the `tabs` layout.
+pub const TABS: [&str; 3] = ["Checks", "Mixer", "Sources"];
+
+/// The cards Tab moves between, in order.
+pub fn cards(view: &View, tab: usize) -> Vec<Card> {
+    let mut cards = vec![Card::Buttons];
+    cards.extend(match (view.config.tui.home_layout, tab) {
+        (HomeLayout::Columns, _) => vec![Card::Checks, Card::Sources, Card::Mixer],
+        (HomeLayout::Tabs, 0) => vec![Card::Checks],
+        (HomeLayout::Tabs, 1) => vec![Card::Mixer],
+        (HomeLayout::Tabs, _) => vec![Card::Sources],
+    });
+    cards
+}
+
+/// The scene the Mixer and Sources show: the chosen one if OBS still has it, else the
+/// scene on air, else the first.
+pub fn scene(view: &View, chosen: Option<&str>) -> String {
+    let scenes = &view.obs.scenes;
+    chosen
+        .filter(|c| scenes.iter().any(|s| s == c))
+        .map(str::to_owned)
+        .or_else(|| view.state.scene.clone())
+        .or_else(|| scenes.first().cloned())
+        .unwrap_or_default()
+}
+
+/// What j/k reach in `card`.
+pub fn items(view: &View, card: Card, scene: &str) -> Vec<Item> {
+    match card {
+        Card::Buttons if view.begun => vec![Item::Dashboard],
+        Card::Buttons => vec![Item::Start, Item::Quit],
+        Card::Checks => sorted_checks(view)
+            .into_iter()
+            .filter_map(|c| fix_key(c).map(Item::Fix))
+            .collect(),
+        Card::Mixer => scene_audio(view, scene)
+            .into_iter()
+            .map(|a| Item::Audio(a.name.clone()))
+            .collect(),
+        Card::Sources => view
+            .obs
+            .sources_in(scene)
+            .map(|i| Item::Source {
+                scene: scene.to_owned(),
+                source: i.source.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// The audio a scene uses: OBS's global devices (desktop audio, mics) and the scene's
+/// own sources that have audio. Mics first.
+pub fn scene_audio<'a>(view: &'a View, scene: &str) -> Vec<&'a Audio> {
+    let obs = &view.obs;
+    let mut audio: Vec<&Audio> = obs
+        .audio
+        .iter()
+        .filter(|a| {
+            let placed = obs.items.iter().any(|i| i.source == a.name);
+            !placed
+                || obs
+                    .items
+                    .iter()
+                    .any(|i| i.scene == scene && i.source == a.name)
+        })
+        .collect();
+    audio.sort_by_key(|a| !a.is_mic());
+    audio
 }
 
 /// What `Enter` on an item asks, as a command for the session (None: handled by the TUI).
@@ -84,96 +162,31 @@ pub fn command(item: &Item, view: &View) -> Option<Command> {
             input: name.clone(),
             on: None,
         },
-        Item::Source(source) => Command::Source {
+        Item::Source { scene, source } => Command::Source {
             source: source.clone(),
-            scene: None,
+            scene: Some(scene.clone()),
             visible: None,
         },
     })
 }
 
-/// The tabs of the `tabs` layout.
-pub const TABS: [&str; 3] = ["Checks", "Audio", "On air"];
-
-/// The cards in reading order for the layout (and, for `tabs`, the open tab).
-fn cards(view: &View, tab: usize) -> Vec<Card> {
-    match view.config.tui.home_layout {
-        // Top row Checks, Status; bottom row On air, Audio.
-        HomeLayout::Columns => vec![Card::Checks, Card::Status, Card::Scene, Card::Audio],
-        HomeLayout::Tabs => match tab {
-            0 => vec![Card::Checks, Card::Mics, Card::Status, Card::Session],
-            1 => vec![Card::Audio],
-            _ => vec![Card::Scene],
-        },
-    }
-}
-
-/// Everything j/k can reach, in reading order: the primary card's buttons, then each
-/// card's items. In the `tabs` layout only the open tab's.
-pub fn items(view: &View, tab: usize) -> Vec<Item> {
-    let mut items = if view.begun {
-        vec![Item::Dashboard]
-    } else {
-        vec![Item::Start, Item::Quit]
-    };
-    for card in cards(view, tab) {
-        match card {
-            Card::Checks => items.extend(
-                sorted_checks(view)
-                    .into_iter()
-                    .filter_map(|c| fix_key(c).map(Item::Fix)),
-            ),
-            Card::Audio => items.extend(
-                sorted_audio(view)
-                    .into_iter()
-                    .map(|a| Item::Audio(a.name.clone())),
-            ),
-            Card::Scene => {
-                let scene = view.state.scene.as_deref().unwrap_or_default();
-                items.extend(
-                    view.obs
-                        .sources_in(scene)
-                        .map(|i| Item::Source(i.source.clone())),
-                );
-            }
-            Card::Primary | Card::Status | Card::Mics | Card::Session => {}
-        }
-    }
-    items
-}
-
-/// The first item of the next card after `pick` (Tab), wrapping to the top.
-pub fn next_group(items: &[Item], pick: usize) -> usize {
-    let now = items.get(pick).map(Item::card);
-    items
-        .iter()
-        .enumerate()
-        .skip(pick)
-        .find(|(_, i)| Some(i.card()) != now)
-        .map_or(0, |(n, _)| n)
-}
-
-/// What Enter does on `item`, for the focused card's border.
+/// What Enter does on `item`, in as few words as possible.
 pub fn what(item: &Item, view: &View) -> String {
     match item {
-        Item::Start if view.fresh => "start the session".into(),
-        Item::Start => "resume the session".into(),
-        Item::Quit if view.fresh => "quit, keep nothing".into(),
+        Item::Start if view.fresh => "start".into(),
+        Item::Start => "resume".into(),
         Item::Quit => "quit".into(),
-        Item::Dashboard => "go to the dashboard".into(),
-        Item::Fix('R') => "start recording".into(),
-        Item::Fix('S') => "start streaming".into(),
-        Item::Fix(_) => "unmute the mic".into(),
+        Item::Dashboard => "dashboard".into(),
+        Item::Fix('R') => "record".into(),
+        Item::Fix('S') => "stream".into(),
+        Item::Fix(_) => "unmute".into(),
         Item::Audio(name) => match view.obs.audio(name) {
-            Some(a) if a.muted => format!("unmute {name}"),
-            _ => format!("mute {name}"),
+            Some(a) if a.muted => "unmute".into(),
+            _ => "mute".into(),
         },
-        Item::Source(source) => match view
-            .obs
-            .item(view.state.scene.as_deref().unwrap_or_default(), source)
-        {
-            Some(i) if i.enabled => format!("hide {source}"),
-            _ => format!("show {source}"),
+        Item::Source { scene, source } => match view.obs.item(scene, source) {
+            Some(i) if i.enabled => "hide".into(),
+            _ => "show".into(),
         },
     }
 }
@@ -207,139 +220,149 @@ fn sorted_checks(view: &View) -> Vec<&Check> {
     checks
 }
 
-/// Mics first.
-fn sorted_audio(view: &View) -> Vec<&Audio> {
-    let mut audio: Vec<&Audio> = view.obs.audio.iter().collect();
-    audio.sort_by_key(|a| !a.is_mic());
-    audio
+/// The shortest start of each scene's name (at least 3 characters) that no other scene's
+/// name starts with, for tabs where every scene must fit.
+pub fn short_names(scenes: &[String]) -> Vec<String> {
+    scenes
+        .iter()
+        .map(|name| {
+            let chars: Vec<char> = name.chars().collect();
+            (3.min(chars.len())..=chars.len())
+                .map(|n| chars[..n].iter().collect::<String>())
+                .find(|prefix| {
+                    let p = prefix.to_lowercase();
+                    scenes
+                        .iter()
+                        .filter(|other| *other != name)
+                        .all(|other| !other.to_lowercase().starts_with(&p))
+                })
+                .unwrap_or_else(|| name.clone())
+        })
+        .collect()
 }
 
-/// Draws the page over everything but the key hints. `now` is for the live timer, `spin`
-/// a spinner frame, `pick` the focused item and `tab` the open tab (`tabs` layout).
-pub fn draw(
-    frame: &mut Frame,
-    view: &View,
-    now: Timestamp,
-    spin: &'static str,
-    pick: usize,
-    tab: usize,
-) {
-    let items = items(view, tab);
-    let focus = items.get(pick).cloned();
-    let focused = focus.as_ref().map(Item::card);
+/// Draws the page over everything but the key hints.
+pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, focus: &Focus) {
     let area = frame.area();
     let page = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(2),
         height: area.height.saturating_sub(1),
         ..area
     };
-    frame.render_widget(Clear, page);
+    // Everything but the footer of key hints.
+    frame.render_widget(
+        Clear,
+        Rect {
+            height: area.height.saturating_sub(1),
+            ..area
+        },
+    );
+    let scene = scene(view, focus.scene.as_deref());
     let ctx = Ctx {
         view,
-        focus: focus.as_ref(),
+        focus,
         spin,
         now,
+        scene,
     };
-
-    let [head, primary, body] = Layout::vertical([
+    let [head, _, body] = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Length(4),
+        Constraint::Length(1),
         Constraint::Min(3),
     ])
-    .areas(Rect {
-        x: page.x + 1,
-        width: page.width.saturating_sub(2),
-        ..page
-    });
+    .areas(page);
     ctx.header(frame, head);
-    ctx.primary(frame, primary, focused == Some(Card::Primary));
 
-    // The cards, each sized to its content where the layout allows it.
-    let rows =
-        |card: Card, width: u16| ctx.content(card, width.saturating_sub(4)).0.len() as u16 + 2;
-    let place = |frame: &mut Frame, card: Card, area: Rect| {
-        ctx.card(frame, card, area, focused == Some(card));
-    };
     match view.config.tui.home_layout {
         HomeLayout::Columns => {
             let [left, right] = halves(body);
-            let top = rows(Card::Checks, left.width)
-                .max(rows(Card::Status, right.width))
-                .min(body.height / 2 + 2);
+            let checks = ctx.checks(left.width.saturating_sub(4), false).0.len() as u16 + 2;
+            let status = ctx.status(right.width).len() as u16 + 1;
+            let top = checks.max(status).min(body.height / 2 + 1);
             let [tl, bl] =
                 Layout::vertical([Constraint::Length(top), Constraint::Min(3)]).areas(left);
             let [tr, br] =
                 Layout::vertical([Constraint::Length(top), Constraint::Min(3)]).areas(right);
-            place(frame, Card::Checks, tl);
-            place(frame, Card::Status, tr);
-            place(frame, Card::Scene, bl);
-            place(frame, Card::Audio, br);
+            ctx.card(frame, Card::Checks, tl, true);
+            ctx.info(frame, tr, "Status", ctx.status(tr.width));
+            ctx.card(frame, Card::Sources, bl, true);
+            ctx.card(frame, Card::Mixer, br, true);
         }
         HomeLayout::Tabs => {
-            let [bar, rest] =
-                Layout::vertical([Constraint::Length(1), Constraint::Min(3)]).areas(body);
-            frame.render_widget(tab_bar(view, tab), bar);
-            let order = cards(view, tab);
-            if tab == 0 {
-                // An overview: Checks over the mics, Status over the session.
-                let [l, r] = halves(rest);
-                let half = rest.height / 2 + 2;
-                let [lt, lb] = Layout::vertical([
-                    Constraint::Length(rows(Card::Checks, l.width).min(half)),
-                    Constraint::Min(3),
-                ])
-                .areas(l);
-                let [rt, rb] = Layout::vertical([
-                    Constraint::Length(rows(Card::Status, r.width).min(half)),
-                    Constraint::Min(3),
-                ])
-                .areas(r);
-                place(frame, Card::Checks, lt);
-                place(frame, Card::Mics, lb);
-                place(frame, Card::Status, rt);
-                place(frame, Card::Session, rb);
-            } else {
-                place(frame, order[0], rest);
+            let [bar, _, rest] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(3),
+            ])
+            .areas(body);
+            frame.render_widget(tab_bar(view, focus.tab), bar);
+            let [left, right] =
+                Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
+                    .spacing(2)
+                    .areas(rest);
+            match focus.tab {
+                0 => {
+                    ctx.card(frame, Card::Checks, left, false);
+                    let status = ctx.status(right.width);
+                    let session = ctx.session(right.width);
+                    let mics = ctx.mic_levels(right.width);
+                    let [s1, _, s2, _, s3] = Layout::vertical([
+                        Constraint::Length(status.len() as u16 + 1),
+                        Constraint::Length(1),
+                        Constraint::Length(session.len() as u16 + 1),
+                        Constraint::Length(1),
+                        Constraint::Min(2),
+                    ])
+                    .areas(right);
+                    ctx.info(frame, s1, "Status", status);
+                    ctx.info(frame, s2, "Session", session);
+                    ctx.info(frame, s3, "Mic", mics);
+                }
+                tab => {
+                    let card = if tab == 1 { Card::Mixer } else { Card::Sources };
+                    ctx.card(frame, card, left, false);
+                    ctx.scene_list(frame, right);
+                }
             }
         }
     }
 }
 
-/// Two columns of `area`, 1 apart.
+/// Two columns of `area`, 2 apart.
 fn halves(area: Rect) -> [Rect; 2] {
-    let [l, r] = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .spacing(1)
-        .areas(area);
-    [l, r]
+    Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .spacing(2)
+        .areas(area)
 }
 
-/// The `tabs` layout's tab bar: the open tab lit, each with what it holds.
+/// The `tabs` layout's tab bar: the open tab lit, each with a count.
 fn tab_bar(view: &View, tab: usize) -> Line<'static> {
     let open = view
         .preflight
         .iter()
         .filter(|c| c.state != CheckState::Ok)
         .count();
-    let scene = view.state.scene.as_deref().unwrap_or_default();
-    let counts = [
+    // Only Checks carries a mark: what needs you, or that all pass.
+    let marks = [
         if open == 0 {
-            "all pass".to_owned()
+            " ✔".to_owned()
         } else {
-            format!("{open} need you")
+            format!(" {open}")
         },
-        format!("{}", view.obs.audio.len()),
-        format!("{}", view.obs.sources_in(scene).count()),
+        String::new(),
+        String::new(),
     ];
-    let mut spans = vec![Span::raw(" ")];
+    let mut spans = Vec::new();
     for (i, name) in TABS.iter().enumerate() {
         let style = if i == tab {
             Style::new().fg(Color::Black).bg(ACCENT).bold()
         } else {
-            Style::new().fg(TEXT).bg(RAISED)
+            Style::new().fg(MUTED).bg(RAISED)
         };
-        spans.push(Span::styled(format!("  {name} · {}  ", counts[i]), style));
+        spans.push(Span::styled(format!("  {name}{}  ", marks[i]), style));
         spans.push(Span::raw(" "));
     }
-    spans.push(Span::styled("  [ ] switch", Style::new().fg(FAINT)));
     Line::from(spans)
 }
 
@@ -357,20 +380,37 @@ fn scroll_to(lines: &[Line], focus: Option<usize>, width: u16, height: u16) -> u
     end.saturating_sub(usize::from(height)) as u16
 }
 
-/// What every card needs to draw itself.
+/// What every part of Home needs to draw itself.
 struct Ctx<'a> {
     view: &'a View,
-    focus: Option<&'a Item>,
+    focus: &'a Focus,
     spin: &'static str,
     now: Timestamp,
+    /// The scene the Mixer and Sources show.
+    scene: String,
 }
 
 impl Ctx<'_> {
-    /// The logo beside the episode, its link and the session folder.
+    /// The item under the focus in `card`, if that card has the focus.
+    fn focused(&self, card: Card) -> Option<Item> {
+        (self.focus.card == card)
+            .then(|| {
+                items(self.view, card, &self.scene)
+                    .into_iter()
+                    .nth(self.focus.pick)
+            })
+            .flatten()
+    }
+
+    /// Logo, episode, link; top right the decision: buttons, state and verdict.
     fn header(&self, frame: &mut Frame, area: Rect) {
         let view = self.view;
-        let [logo, who] =
-            Layout::horizontal([Constraint::Length(11), Constraint::Min(10)]).areas(area);
+        let [logo, who, right] = Layout::horizontal([
+            Constraint::Length(11),
+            Constraint::Min(10),
+            Constraint::Length(44),
+        ])
+        .areas(area);
         let tile = Style::new().fg(Color::White).bg(ACCENT).bold();
         frame.render_widget(
             Paragraph::new(vec![
@@ -385,11 +425,6 @@ impl Ctx<'_> {
             .title_at_start
             .clone()
             .unwrap_or_else(|| format!("Episode {}", view.meta.episode));
-        let state = if !view.begun {
-            Span::styled(" DRAFT ", Style::new().fg(Color::Black).bg(WARN).bold())
-        } else {
-            Span::styled(" STARTED ", Style::new().fg(Color::Black).bg(OK).bold())
-        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
@@ -399,221 +434,237 @@ impl Ctx<'_> {
                     ),
                     Span::styled(title, Style::new().fg(TEXT).bold()),
                 ]),
-                Line::from(vec![
-                    Span::styled(
-                        format!("youtu.be/{}", view.meta.video_id),
-                        Style::new().fg(INFO),
-                    ),
-                    Span::styled(format!("   {}", view.session), Style::new().fg(FAINT)),
-                ]),
-                Line::from(vec![state]),
+                Line::styled(
+                    format!("youtu.be/{}", view.meta.video_id),
+                    Style::new().fg(INFO),
+                ),
+                Line::styled(view.session.clone(), Style::new().fg(FAINT)),
             ]),
             who,
         );
-    }
 
-    /// The primary card: the decision, kept apart from everything else.
-    fn primary(&self, frame: &mut Frame, area: Rect, lit: bool) {
-        let view = self.view;
         let (ok, failing, total) = counts(&view.preflight);
         let ready = failing == 0 && ok == total;
-        let verdict = match failing {
-            0 if ready => Span::styled("Everything is ready.", Style::new().fg(OK).bold()),
-            0 => Span::styled("Still checking…", Style::new().fg(MUTED)),
-            1 => Span::styled("1 thing needs you.", Style::new().fg(ACCENT).bold()),
-            n => Span::styled(
-                format!("{n} things need you."),
-                Style::new().fg(ACCENT).bold(),
-            ),
-        };
-        // Buttons keep their width whatever is focused: focus is color only.
+        let lit = self.focused(Card::Buttons);
         let button = |label: &str, item: Item, color: Color| {
-            let style = if self.focus == Some(&item) {
+            let style = if lit.as_ref() == Some(&item) {
                 Style::new().fg(Color::Black).bg(color).bold()
             } else {
                 Style::new().fg(TEXT).bg(RAISED)
             };
             Span::styled(format!("  {label}  "), style)
         };
-        let (title, mut buttons, explain) = if view.begun {
+        let go = if ready { OK } else { WARN };
+        let (buttons, state) = if view.begun {
             (
-                " Session ",
                 vec![button("Dashboard", Item::Dashboard, ACCENT)],
-                "Started. 0 brings you back here from the dashboard.",
-            )
-        } else if view.fresh {
-            (
-                " Start ",
-                vec![
-                    button(
-                        "Start the session",
-                        Item::Start,
-                        if ready { OK } else { WARN },
-                    ),
-                    Span::raw("  "),
-                    button("Quit, keep nothing", Item::Quit, ACCENT),
-                ],
-                "Nothing is kept until you start (session folder, description push, key \
-                 capture, bot).",
+                Line::from(Span::styled(
+                    " ● STARTED ",
+                    Style::new().fg(Color::Black).bg(OK).bold(),
+                )),
             )
         } else {
+            let start = if view.fresh { "Start" } else { "Resume" };
+            let tag = if view.fresh { " DRAFT " } else { " RESUME " };
+            let note = if view.fresh {
+                "  nothing kept until you start"
+            } else {
+                "  continues where it stopped"
+            };
             (
-                " Resume ",
                 vec![
-                    button(
-                        "Resume the session",
-                        Item::Start,
-                        if ready { OK } else { WARN },
-                    ),
-                    Span::raw("  "),
+                    button(start, Item::Start, go),
+                    Span::raw(" "),
                     button("Quit", Item::Quit, ACCENT),
                 ],
-                "This session already exists; resuming continues it where it stopped.",
+                Line::from(vec![
+                    Span::styled(tag, Style::new().fg(Color::Black).bg(WARN).bold()),
+                    Span::styled(note, Style::new().fg(FAINT)),
+                ]),
             )
         };
-        buttons.push(Span::raw("    "));
-        buttons.push(verdict);
-        let border = match (lit, view.begun, ready) {
-            (true, ..) => ACCENT,
-            (false, true, _) => RAISED,
-            (false, false, true) => OK,
-            (false, false, false) => WARN,
+        let verdict = match failing {
+            0 if ready => Span::styled("✔ ready", Style::new().fg(OK).bold()),
+            0 => Span::styled(format!("{} checking", self.spin), Style::new().fg(MUTED)),
+            n => Span::styled(format!("✖ {n} need you"), Style::new().fg(ACCENT).bold()),
         };
-        let mut block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(Style::new().fg(border))
-            .title(Span::styled(title, Style::new().fg(TEXT).bold()))
-            .padding(Padding::horizontal(1));
-        if lit && let Some(item) = self.focus {
-            block = block.title_bottom(hint(item, view));
-        }
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
         frame.render_widget(
-            Paragraph::new(vec![
-                Line::from(buttons),
-                crate::truncate(
-                    Line::styled(explain, Style::new().fg(MUTED)),
-                    usize::from(inner.width),
-                ),
-            ]),
-            inner,
+            Paragraph::new(vec![Line::from(buttons), state, Line::from(verdict)])
+                .alignment(Alignment::Right),
+            right,
         );
     }
 
-    /// A card: rounded border (lit when it holds the focus), its title and count, the
-    /// content scrolled to the focus, what Enter does and `↓ more` in the bottom border.
-    fn card(&self, frame: &mut Frame, card: Card, area: Rect, lit: bool) {
+    /// Information that is only read: a small label and rows, no border.
+    fn info(&self, frame: &mut Frame, area: Rect, label: &str, rows: Vec<Line<'static>>) {
+        let mut lines = vec![Line::styled(
+            label.to_uppercase(),
+            Style::new().fg(FAINT).bold(),
+        )];
+        lines.extend(rows);
+        frame.render_widget(Paragraph::new(lines), area);
+    }
+
+    /// A card you act on: a rounded border (lit when it has the focus), its title, the
+    /// content scrolled to the focus, and in the bottom border what Enter does there.
+    fn card(&self, frame: &mut Frame, card: Card, area: Rect, scene_tabs: bool) {
         let view = self.view;
-        let (title, right) = match card {
-            Card::Checks => {
-                let (ok, _, total) = counts(&view.preflight);
-                (
-                    " Checks ".to_owned(),
-                    Some(Span::styled(
-                        format!(" ✔ {ok} of {total} pass "),
-                        Style::new().fg(OK),
-                    )),
-                )
-            }
-            Card::Status => (" Status ".into(), None),
-            Card::Audio => (
-                " Audio ".into(),
-                Some(Span::styled(
-                    format!(" {} ", view.obs.audio.len()),
-                    Style::new().fg(MUTED),
-                )),
-            ),
-            Card::Scene => {
-                let scene = view.state.scene.clone().unwrap_or_default();
-                (
-                    if scene.is_empty() {
-                        " On air ".into()
-                    } else {
-                        format!(" On air · {scene} ")
-                    },
-                    None,
-                )
-            }
-            Card::Mics => (
-                " Mic ".into(),
-                Some(Span::styled(
-                    " Audio tab for every input ",
-                    Style::new().fg(FAINT),
-                )),
-            ),
-            Card::Session => (" Session ".into(), None),
-            Card::Primary => (String::new(), None),
-        };
+        let lit = self.focus.card == card;
+        let mut title = vec![Span::styled(
+            match card {
+                Card::Checks => " Checks ",
+                Card::Mixer => " Mixer ",
+                Card::Sources => " Sources ",
+                Card::Buttons => "",
+            },
+            Style::new().fg(if lit { TEXT } else { MUTED }).bold(),
+        )];
+        if scene_tabs && matches!(card, Card::Mixer | Card::Sources) {
+            title.extend(self.scene_tabs(area.width.saturating_sub(14)));
+        }
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(if lit { ACCENT } else { RAISED }))
-            .title(Span::styled(
-                title,
-                Style::new().fg(if lit { TEXT } else { MUTED }).bold(),
-            ))
+            .title(Line::from(title))
             .padding(Padding::horizontal(1));
-        if let Some(right) = right {
-            block = block.title(right.into_right_aligned_line());
+        if card == Card::Checks {
+            let (ok, _, total) = counts(&view.preflight);
+            block = block.title(
+                Span::styled(format!(" ✔ {ok}/{total} "), Style::new().fg(OK))
+                    .into_right_aligned_line(),
+            );
         }
         let inner = block.inner(area);
-        let (lines, focus) = self.content(card, inner.width);
-        let scroll = scroll_to(&lines, focus, inner.width, inner.height);
-        let above = scroll > 0;
-        let below = lines.len() > usize::from(scroll) + usize::from(inner.height);
-        if lit && let Some(item) = self.focus {
-            block = block.title_bottom(hint(item, view));
-        }
-        let arrows = match (above, below) {
-            (true, true) => " ↑↓ more ",
-            (true, false) => " ↑ more ",
-            (false, true) => " ↓ more ",
-            (false, false) => "",
+        let (lines, focus) = match card {
+            Card::Checks => self.checks(inner.width, !scene_tabs),
+            Card::Mixer => self.mixer(inner.width),
+            Card::Sources => self.sources(inner.width),
+            Card::Buttons => (Vec::new(), None),
         };
-        if !arrows.is_empty() {
-            block = block.title_bottom(
-                Span::styled(arrows, Style::new().fg(WARN)).into_right_aligned_line(),
-            );
+        let scroll = scroll_to(&lines, focus, inner.width, inner.height);
+        if let Some(item) = self.focused(card) {
+            block = block.title_bottom(hint(&item, view));
+        }
+        if lines.len() > usize::from(scroll) + usize::from(inner.height) {
+            block = block
+                .title_bottom(Span::styled(" ↓ ", Style::new().fg(WARN)).into_right_aligned_line());
         }
         frame.render_widget(block, area);
         frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner);
     }
 
-    fn content(&self, card: Card, width: u16) -> Section {
-        match card {
-            Card::Checks => self.checks(width),
-            Card::Status => (self.status(width), None),
-            Card::Audio => self.audio(width, false),
-            Card::Mics => (self.audio(width, true).0, None),
-            Card::Scene => self.scene(width),
-            Card::Session => (self.session(width), None),
-            Card::Primary => (Vec::new(), None),
+    /// Scenes as tabs for a card's top border: shortest unique names, the shown one lit,
+    /// the one on air marked; a window around the shown one when they do not all fit.
+    fn scene_tabs(&self, room: u16) -> Vec<Span<'static>> {
+        let scenes = &self.view.obs.scenes;
+        if scenes.is_empty() {
+            return Vec::new();
         }
+        let short = short_names(scenes);
+        let on_air = self.view.state.scene.as_deref();
+        let at = scenes.iter().position(|s| *s == self.scene).unwrap_or(0);
+        let air = |i: usize| on_air == Some(scenes[i].as_str());
+        let width = |i: usize| short[i].chars().count() + 2 + usize::from(air(i));
+        // Widen the window around the shown scene, alternating sides, while it fits.
+        let room = usize::from(room).saturating_sub(4);
+        let (mut from, mut to) = (at, at);
+        let mut used = width(at);
+        loop {
+            let mut grew = false;
+            if to + 1 < scenes.len() && used + width(to + 1) <= room {
+                to += 1;
+                used += width(to);
+                grew = true;
+            }
+            if from > 0 && used + width(from - 1) <= room {
+                from -= 1;
+                used += width(from);
+                grew = true;
+            }
+            if !grew {
+                break;
+            }
+        }
+        let mut spans = vec![Span::styled(
+            if from > 0 { "‹" } else { " " },
+            Style::new().fg(FAINT),
+        )];
+        for (i, short) in short.iter().enumerate().take(to + 1).skip(from) {
+            let name = format!(" {}{short} ", if air(i) { "●" } else { "" });
+            let style = if i == at {
+                Style::new().fg(Color::Black).bg(ACCENT).bold()
+            } else if air(i) {
+                Style::new().fg(ACCENT)
+            } else {
+                Style::new().fg(MUTED)
+            };
+            spans.push(Span::styled(name, style));
+        }
+        spans.push(Span::styled(
+            if to + 1 < scenes.len() { "› " } else { " " },
+            Style::new().fg(FAINT),
+        ));
+        spans
     }
 
-    /// Checks that are not fine yet, each with how to fix it, wrapped under its text.
-    /// Passing checks are only counted (in the card's title).
-    fn checks(&self, width: u16) -> Section {
-        let w = usize::from(width);
-        let open: Vec<&Check> = sorted_checks(self.view)
-            .into_iter()
-            .filter(|c| c.state != CheckState::Ok)
-            .collect();
-        if open.is_empty() {
-            return (
-                vec![Line::styled("✔ Everything passes.", Style::new().fg(OK))],
-                None,
-            );
-        }
+    /// Every scene, one per line (the `tabs` layout): the shown one lit, the one on air
+    /// marked. Ctrl+j/k move through them.
+    fn scene_list(&self, frame: &mut Frame, area: Rect) {
+        let on_air = self.view.state.scene.as_deref();
+        let width = area.width.saturating_sub(2);
         let mut lines = Vec::new();
         let mut focus = None;
+        for scene in &self.view.obs.scenes {
+            let air = on_air == Some(scene.as_str());
+            let shown = *scene == self.scene;
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(if air { "● " } else { "  " }, Style::new().fg(ACCENT)),
+                Span::styled(
+                    scene.clone(),
+                    Style::new().fg(if shown || air { TEXT } else { MUTED }),
+                ),
+            ]);
+            if shown {
+                focus = Some(lines.len());
+            }
+            lines.push(lit(line, shown, width));
+        }
+        if lines.is_empty() {
+            lines.push(Line::styled(" OBS not connected", Style::new().fg(FAINT)));
+        }
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::new().fg(FAINT))
+            .title(Span::styled(" Scenes ", Style::new().fg(MUTED).bold()))
+            .title_bottom(Span::styled(" ^j/k ", Style::new().fg(MUTED)));
+        let inner = block.inner(area);
+        let scroll = scroll_to(&lines, focus, inner.width, inner.height);
+        frame.render_widget(block, area);
+        frame.render_widget(Paragraph::new(lines).scroll((scroll, 0)), inner);
+    }
+
+    /// Checks that are not fine, each with its fix; with `passing`, the fine ones after.
+    fn checks(&self, width: u16, passing: bool) -> Section {
+        let w = usize::from(width);
+        let checks = sorted_checks(self.view);
+        let open: Vec<&&Check> = checks
+            .iter()
+            .filter(|c| c.state != CheckState::Ok)
+            .collect();
+        let mut lines = Vec::new();
+        let mut focus = None;
+        let lit_item = self.focused(Card::Checks);
+        if open.is_empty() && !passing {
+            lines.push(Line::styled("✔ all pass", Style::new().fg(OK)));
+        }
         for c in open {
             let (mark, style) = match c.state {
                 CheckState::Fail => ("✖", Style::new().fg(ACCENT).bold()),
                 _ => (self.spin, Style::new().fg(MUTED)),
             };
             let key = fix_key(c);
-            let on = key.is_some() && self.focus == key.map(Item::Fix).as_ref();
+            let on = key.is_some() && lit_item == key.map(Item::Fix);
             let mut spans = vec![
                 Span::raw(" "),
                 Span::styled(format!("{mark} "), style),
@@ -621,7 +672,7 @@ impl Ctx<'_> {
             ];
             if !c.detail.is_empty() {
                 spans.push(Span::styled(
-                    format!("   {}", c.detail),
+                    format!("  {}", c.detail),
                     Style::new().fg(FAINT),
                 ));
             }
@@ -649,21 +700,149 @@ impl Ctx<'_> {
                 lines.push(lit(row, on, width));
             }
         }
+        if passing {
+            for c in checks.iter().filter(|c| c.state == CheckState::Ok) {
+                let mut spans = vec![
+                    Span::styled(" ✔ ", Style::new().fg(OK)),
+                    Span::styled(c.label.clone(), Style::new().fg(MUTED)),
+                ];
+                if !c.detail.is_empty() {
+                    spans.push(Span::styled(
+                        format!("  {}", c.detail),
+                        Style::new().fg(FAINT),
+                    ));
+                }
+                lines.push(crate::truncate(Line::from(spans), w));
+            }
+        }
         (lines, focus)
     }
 
-    /// What is live, one thing per row: stream, OBS, services, keys, quota and latency.
+    /// The shown scene's audio: a meter, level, volume and mute per input.
+    fn mixer(&self, width: u16) -> Section {
+        let audio = scene_audio(self.view, &self.scene);
+        if audio.is_empty() {
+            return (vec![Line::styled("no audio", Style::new().fg(FAINT))], None);
+        }
+        let lit_item = self.focused(Card::Mixer);
+        let mut lines = Vec::new();
+        let mut focus = None;
+        for (name, line) in self.meters(&audio, width) {
+            let on = lit_item == Some(Item::Audio(name));
+            if on {
+                focus = Some(lines.len());
+            }
+            lines.push(lit(line, on, width));
+        }
+        (lines, focus)
+    }
+
+    /// Meter rows for `audio`, each with its input's name.
+    fn meters(&self, audio: &[&Audio], width: u16) -> Vec<(String, Line<'static>)> {
+        let levels = self
+            .view
+            .levels
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_default();
+        let name_width = audio
+            .iter()
+            .map(|a| a.name.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(22);
+        // " name  " + "▕bar▏" + " -38dB" + "  -12" + "  muted": the meter gives way first.
+        let bar = usize::from(width)
+            .saturating_sub(name_width + 23)
+            .clamp(4, 24);
+        audio
+            .iter()
+            .map(|a| {
+                let level = levels.get(&a.name).copied();
+                let mut spans = vec![
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{:<name_width$.name_width$}  ", a.name),
+                        Style::new().fg(TEXT),
+                    ),
+                ];
+                spans.extend(meter(level, a.muted, bar));
+                spans.push(Span::styled(
+                    match level {
+                        Some(db) if db > -60.0 && !a.muted => format!(" {db:>3.0}dB"),
+                        _ => "      ".to_owned(),
+                    },
+                    Style::new().fg(MUTED),
+                ));
+                spans.push(Span::styled(
+                    format!("  {:+.0}", a.volume_db),
+                    Style::new().fg(FAINT),
+                ));
+                if a.muted {
+                    spans.push(Span::styled("  muted", Style::new().fg(ACCENT).bold()));
+                }
+                (a.name.clone(), Line::from(spans))
+            })
+            .collect()
+    }
+
+    /// The mics' meters, only read (the Checks tab).
+    fn mic_levels(&self, width: u16) -> Vec<Line<'static>> {
+        let mics: Vec<&Audio> = self.view.obs.audio.iter().filter(|a| a.is_mic()).collect();
+        if mics.is_empty() {
+            return vec![Line::styled(" no mic in OBS", Style::new().fg(FAINT))];
+        }
+        self.meters(&mics, width)
+            .into_iter()
+            .map(|(_, l)| l)
+            .collect()
+    }
+
+    /// The shown scene's sources as switches.
+    fn sources(&self, width: u16) -> Section {
+        let lit_item = self.focused(Card::Sources);
+        let mut lines = Vec::new();
+        let mut focus = None;
+        for item in self.view.obs.sources_in(&self.scene) {
+            let (mark, style) = if item.enabled {
+                ("━━●", Style::new().fg(OK))
+            } else {
+                ("●━━", Style::new().fg(FAINT))
+            };
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(format!("{mark} "), style),
+                Span::styled(
+                    item.source.clone(),
+                    Style::new().fg(if item.enabled { TEXT } else { MUTED }),
+                ),
+            ]);
+            let on = lit_item
+                == Some(Item::Source {
+                    scene: self.scene.clone(),
+                    source: item.source.clone(),
+                });
+            if on {
+                focus = Some(lines.len());
+            }
+            lines.push(lit(line, on, width));
+        }
+        if lines.is_empty() {
+            lines.push(Line::styled("no sources", Style::new().fg(FAINT)));
+        }
+        (lines, focus)
+    }
+
+    /// What is live: stream, OBS, services, keys, quota and latency.
     fn status(&self, width: u16) -> Vec<Line<'static>> {
         let view = self.view;
         let state = &view.state;
         let anchors = &view.meta.anchors;
         let service = |name: &str| match state.services.get(name) {
-            Some(ServiceStatus::Ok) => Span::styled("● ok", Style::new().fg(OK)),
-            Some(ServiceStatus::Retrying) => {
-                Span::styled(format!("{} retrying", self.spin), Style::new().fg(WARN))
-            }
-            Some(ServiceStatus::Down) => Span::styled("✖ down", Style::new().fg(ACCENT).bold()),
-            None => Span::styled(format!("{} …", self.spin), Style::new().fg(MUTED)),
+            Some(ServiceStatus::Ok) => Span::styled("●", Style::new().fg(OK)),
+            Some(ServiceStatus::Retrying) => Span::styled(self.spin, Style::new().fg(WARN)),
+            Some(ServiceStatus::Down) => Span::styled("✖", Style::new().fg(ACCENT).bold()),
+            None => Span::styled(self.spin, Style::new().fg(MUTED)),
         };
         let stream = match state.stream {
             Some(StreamStatus::Live) if !state.ended => {
@@ -680,10 +859,10 @@ impl Ctx<'_> {
         let obs = if state.services.get("obs") == Some(&ServiceStatus::Ok) {
             let rec = match state.obs_record {
                 Some(OutputState::Started | OutputState::Resumed) => {
-                    Span::styled(" · ● REC", Style::new().fg(ACCENT).bold())
+                    Span::styled("  ● REC", Style::new().fg(ACCENT).bold())
                 }
-                Some(OutputState::Paused) => Span::styled(" · ‖ paused", Style::new().fg(WARN)),
-                _ => Span::styled(" · not recording", Style::new().fg(WARN)),
+                Some(OutputState::Paused) => Span::styled("  ‖ REC", Style::new().fg(WARN)),
+                _ => Span::styled("  ○ REC", Style::new().fg(FAINT)),
             };
             vec![
                 Span::styled(
@@ -697,20 +876,20 @@ impl Ctx<'_> {
         };
         let keys = match view.keys {
             KeysStatus::Off => Span::styled("off", Style::new().fg(FAINT)),
-            KeysStatus::Error => Span::styled("✖ error", Style::new().fg(ACCENT)),
-            _ if state.privacy => Span::styled("paused (privacy)", Style::new().fg(WARN)),
+            KeysStatus::Error => Span::styled("✖", Style::new().fg(ACCENT)),
+            _ if state.privacy => Span::styled("paused", Style::new().fg(WARN)),
             KeysStatus::Starting => Span::styled(self.spin, Style::new().fg(MUTED)),
             KeysStatus::On => {
                 Span::styled(crate::sparkline(&view.keys_per_min), Style::new().fg(INFO))
             }
         };
         let latency = if view.latency_running {
-            Span::styled(format!("{} measuring", self.spin), Style::new().fg(WARN))
+            Span::styled(self.spin, Style::new().fg(WARN))
         } else {
-            Span::styled(format!("{:.1} s", view.latency_s), Style::new().fg(TEXT))
+            Span::styled(format!("{:.1}s", view.latency_s), Style::new().fg(TEXT))
         };
         let row = |label: &str, value: Vec<Span<'static>>| {
-            let mut spans = vec![Span::styled(format!("{label:<9}"), Style::new().fg(MUTED))];
+            let mut spans = vec![Span::styled(format!(" {label:<9}"), Style::new().fg(MUTED))];
             spans.extend(value);
             crate::truncate(Line::from(spans), usize::from(width))
         };
@@ -733,7 +912,7 @@ impl Ctx<'_> {
                         crate::thousands(view.quota_remaining),
                         Style::new().fg(TEXT),
                     ),
-                    Span::styled("   latency ", Style::new().fg(MUTED)),
+                    Span::styled("   lat ", Style::new().fg(MUTED)),
                     latency,
                 ],
             ),
@@ -754,13 +933,11 @@ impl Ctx<'_> {
         lines
     }
 
-    /// A meter per audio input, mics first, with level, volume and mute.
-    /// What the session will publish and where: description size, chapters, last push,
-    /// the overlay address.
+    /// Description size, chapters, last push, overlay address.
     fn session(&self, width: u16) -> Vec<Line<'static>> {
         let view = self.view;
         let row = |label: &str, value: Vec<Span<'static>>| {
-            let mut spans = vec![Span::styled(format!("{label:<12}"), Style::new().fg(MUTED))];
+            let mut spans = vec![Span::styled(format!(" {label:<9}"), Style::new().fg(MUTED))];
             spans.extend(value);
             crate::truncate(Line::from(spans), usize::from(width))
         };
@@ -771,16 +948,12 @@ impl Ctx<'_> {
                 vec![
                     Span::styled(bar, Style::new().fg(color)),
                     Span::styled(
-                        format!(
-                            " {} / {}",
-                            crate::thousands(d.chars() as i64),
-                            crate::thousands(crate::DESCRIPTION_LIMIT as i64)
-                        ),
+                        format!(" {}", crate::thousands(d.chars() as i64)),
                         Style::new().fg(TEXT),
                     ),
                 ]
             }
-            (None, None) => vec![Span::styled("not rendered", Style::new().fg(FAINT))],
+            (None, None) => vec![Span::styled("·", Style::new().fg(FAINT))],
         };
         let published = if ac_template::chapters::block(&view.chapters).is_empty() {
             0
@@ -788,169 +961,57 @@ impl Ctx<'_> {
             view.chapters.len()
         };
         let push = match view.state.last_push {
-            Some((t, trigger)) => {
-                let at = t.datetime().with_timezone(&chrono::Local).format("%H:%M");
-                format!("{at} ({trigger:?})").to_lowercase()
-            }
-            None => "not yet".into(),
+            Some((t, _)) => t
+                .datetime()
+                .with_timezone(&chrono::Local)
+                .format("%H:%M")
+                .to_string(),
+            None => "·".into(),
         };
         let overlays = view
             .preflight
             .iter()
             .find(|c| c.label == "Overlay server listening" && c.state == CheckState::Ok)
-            .map_or("not listening".to_owned(), |c| c.detail.clone());
+            .map_or("·".to_owned(), |c| {
+                c.detail
+                    .trim_start_matches("http://")
+                    .trim_end_matches("/overlay/<name>")
+                    .to_owned()
+            });
         vec![
-            row("Description", readme),
+            row("README", readme),
             row(
                 "Chapters",
                 vec![
                     Span::styled(
-                        format!("{} marked", view.state.checkpoints.len()),
+                        view.state.checkpoints.len().to_string(),
                         Style::new().fg(TEXT),
                     ),
-                    Span::styled(format!(" · {published} published"), Style::new().fg(MUTED)),
+                    Span::styled(format!("  {published} live"), Style::new().fg(MUTED)),
                 ],
             ),
-            row("Last push", vec![Span::styled(push, Style::new().fg(TEXT))]),
+            row("Pushed", vec![Span::styled(push, Style::new().fg(TEXT))]),
             row(
                 "Overlays",
                 vec![Span::styled(overlays, Style::new().fg(INFO))],
             ),
         ]
     }
-
-    /// A meter per audio input (only the mics with `mics_only`), mics first.
-    fn audio(&self, width: u16, mics_only: bool) -> Section {
-        let levels = self
-            .view
-            .levels
-            .lock()
-            .map(|m| m.clone())
-            .unwrap_or_default();
-        let mut audio = sorted_audio(self.view);
-        if mics_only {
-            audio.retain(|a| a.is_mic());
-        }
-        if audio.is_empty() {
-            return (
-                vec![Line::styled(
-                    if mics_only {
-                        "No mic input in OBS (or OBS is not connected)."
-                    } else {
-                        "OBS is not connected, or has no audio inputs."
-                    },
-                    Style::new().fg(FAINT).italic(),
-                )],
-                None,
-            );
-        }
-        let name_width = audio
-            .iter()
-            .map(|a| a.name.chars().count())
-            .max()
-            .unwrap_or(0)
-            .min(16);
-        // " name  " + "▕bar▏" + " -38dB" + "  vol-12" + "  muted": the meter gives way
-        // first, so the row fits narrow cards too.
-        let bar = usize::from(width)
-            .saturating_sub(name_width + 26)
-            .clamp(4, 24);
-        let mut lines = Vec::new();
-        let mut focus = None;
-        for a in audio {
-            let level = levels.get(&a.name).copied();
-            let mut spans = vec![
-                Span::raw(" "),
-                Span::styled(
-                    format!("{:<name_width$.name_width$}  ", a.name),
-                    Style::new().fg(TEXT),
-                ),
-            ];
-            spans.extend(meter(level, a.muted, bar));
-            spans.push(Span::styled(
-                match level {
-                    Some(db) if db > -60.0 && !a.muted => format!(" {db:>3.0}dB"),
-                    _ => "    … ".to_owned(),
-                },
-                Style::new().fg(MUTED),
-            ));
-            spans.push(Span::styled(
-                format!("  vol{:+.0}", a.volume_db),
-                Style::new().fg(FAINT),
-            ));
-            if a.muted {
-                spans.push(Span::styled("  muted", Style::new().fg(ACCENT).bold()));
-            }
-            let on = self.focus == Some(&Item::Audio(a.name.clone()));
-            if on {
-                focus = Some(lines.len());
-            }
-            lines.push(lit(Line::from(spans), on, width));
-        }
-        (lines, focus)
-    }
-
-    /// The scene on air: its sources one per line, each with its switch.
-    fn scene(&self, width: u16) -> Section {
-        let scene = self.view.state.scene.clone().unwrap_or_default();
-        let sources: Vec<_> = self.view.obs.sources_in(&scene).collect();
-        if sources.is_empty() {
-            let why = if scene.is_empty() {
-                "OBS is not connected."
-            } else {
-                "This scene has no sources."
-            };
-            return (
-                vec![Line::styled(why, Style::new().fg(FAINT).italic())],
-                None,
-            );
-        }
-        let mut lines = Vec::new();
-        let mut focus = None;
-        for item in sources {
-            let (mark, style) = if item.enabled {
-                ("━━●", Style::new().fg(OK))
-            } else {
-                ("●━━", Style::new().fg(FAINT))
-            };
-            let line = Line::from(vec![
-                Span::raw(" "),
-                Span::styled(format!("{mark} "), style),
-                Span::styled(
-                    item.source.clone(),
-                    Style::new().fg(if item.enabled { TEXT } else { MUTED }),
-                ),
-                Span::styled(
-                    if item.enabled { "" } else { "  hidden" },
-                    Style::new().fg(FAINT),
-                ),
-            ]);
-            let on = self.focus == Some(&Item::Source(item.source.clone()));
-            if on {
-                focus = Some(lines.len());
-            }
-            lines.push(lit(line, on, width));
-        }
-        (lines, focus)
-    }
 }
 
 /// What Enter (and h/l) do on the focused item, faded in its card's bottom border.
 fn hint(item: &Item, view: &View) -> Line<'static> {
-    let mut pairs = vec![("Enter".to_owned(), what(item, view))];
-    match item {
-        Item::Audio(_) => pairs.push(("h/l".into(), "volume".into())),
-        Item::Source(_) => pairs.push(("h/l".into(), "hide/show".into())),
-        Item::Start | Item::Quit => pairs.push(("h/l".into(), "switch".into())),
-        _ => {}
-    }
-    let mut spans = vec![Span::raw(" ")];
-    for (i, (k, label)) in pairs.into_iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" · ", Style::new().fg(FAINT)));
-        }
-        spans.push(Span::styled(k, Style::new().fg(MUTED)));
-        spans.push(Span::styled(format!(" {label}"), Style::new().fg(FAINT)));
+    let mut spans = vec![
+        Span::styled(" ⏎ ", Style::new().fg(MUTED)),
+        Span::styled(what(item, view), Style::new().fg(FAINT)),
+    ];
+    let extra = match item {
+        Item::Audio(_) => Some("h/l vol"),
+        Item::Source { .. } => Some("h/l"),
+        _ => None,
+    };
+    if let Some(extra) = extra {
+        spans.push(Span::styled(format!(" · {extra}"), Style::new().fg(FAINT)));
     }
     spans.push(Span::raw(" "));
     Line::from(spans)
@@ -1009,22 +1070,22 @@ pub fn meter(level: Option<f32>, muted: bool, cells: usize) -> Vec<Span<'static>
     spans
 }
 
-/// Footer hints: the same keys whatever is focused, so the line never shifts (what Enter
-/// does on the focused item is in its card's bottom border).
+/// Footer hints: the same keys whatever is focused, so the line never shifts.
 pub fn hints(view: &View) -> Vec<(String, String)> {
-    let quit = match (view.begun, view.fresh) {
-        (false, true) => "quit, keep nothing",
-        _ => "quit",
-    };
-    let mut pairs = vec![("j/k", "move"), ("Tab", "next card"), ("Enter", "do it")];
+    let mut pairs = vec![
+        ("Tab", "card"),
+        ("j/k", "move"),
+        ("⏎", "do"),
+        ("^j/k", "scene"),
+    ];
     if view.config.tui.home_layout == HomeLayout::Tabs {
         pairs.push(("[ ]", "tab"));
     }
     pairs.extend([
         ("v", "layout"),
-        ("q", quit),
+        ("q", "quit"),
         (",", "settings"),
-        (":", "command"),
+        (":", "cmd"),
     ]);
     pairs
         .into_iter()
@@ -1050,7 +1111,6 @@ mod tests {
         assert_eq!(text(meter(Some(-60.0), false, 6)), "▕░░░░░░▏");
         assert_eq!(text(meter(Some(0.0), false, 6)), "▕██████▏");
         assert_eq!(text(meter(Some(-30.0), false, 6)), "▕███░░░▏");
-        // 20 cells: the last one is in the red zone above -3 dB, the first is green.
         let loud = meter(Some(0.0), false, 20);
         assert_eq!(loud[20].style.fg, Some(ACCENT));
         assert_eq!(loud[18].style.fg, Some(WARN));
@@ -1081,25 +1141,26 @@ mod tests {
         assert_eq!(scroll_to(&lines, None, 20, 4), 0);
         assert_eq!(scroll_to(&lines, Some(2), 20, 4), 0);
         assert_eq!(scroll_to(&lines, Some(9), 20, 4), 6);
-        // A line that wraps over two rows counts as two.
         let mut wide = lines.clone();
         wide[0] = Line::raw("x".repeat(30));
         assert_eq!(scroll_to(&wide, Some(3), 20, 4), 1);
     }
 
     #[test]
-    fn tab_jumps_to_the_next_card() {
-        let items = [
-            Item::Start,
-            Item::Quit,
-            Item::Fix('R'),
-            Item::Audio("Mic".into()),
-            Item::Audio("Desktop".into()),
-            Item::Source("Camera".into()),
-        ];
-        assert_eq!(next_group(&items, 0), 2);
-        assert_eq!(next_group(&items, 2), 3);
-        assert_eq!(next_group(&items, 4), 5);
-        assert_eq!(next_group(&items, 5), 0);
+    fn scene_names_are_cut_to_their_shortest_unique_start() {
+        let scenes: Vec<String> = [
+            "Code",
+            "BRB",
+            "BRB_Video",
+            "Starting Soon",
+            "Stream Ending",
+            "Ok",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            short_names(&scenes),
+            ["Cod", "BRB", "BRB_", "Sta", "Str", "Ok"]
+        );
     }
 }

@@ -345,9 +345,8 @@ struct App {
     meters: bool,
     /// The palette or settings were opened from Home (and go back there).
     from_home: bool,
-    /// The focused item on Home, and its open tab (`tabs` layout).
-    home_pick: usize,
-    home_tab: usize,
+    /// Where the focus is on Home (card, item, tab, scene).
+    home: home::Focus,
     /// Palette lines run before, oldest first (`<home>/state/history`), read on first use.
     history: Option<Vec<String>>,
     filter: Filter,
@@ -389,8 +388,7 @@ impl App {
             picked: false,
             meters: false,
             from_home: false,
-            home_pick: 0,
-            home_tab: 0,
+            home: home::Focus::default(),
             history: None,
             filter: Filter::All,
             split: [0.45, 0.6, 0.5],
@@ -750,7 +748,7 @@ impl App {
             // Home: j/k move through everything on it, Enter acts on what is focused.
             Mode::Preflight => {
                 self.mode = Mode::Preflight;
-                self.home_input(key.code, view);
+                self.home_input(key, view);
             }
             Mode::ConfirmStreamStop => {
                 if key.code == KeyCode::Char('y') {
@@ -932,31 +930,81 @@ impl App {
         }
     }
 
-    /// A key on Home. Before the session starts, Esc and 0 stay (Home is the only way in).
-    fn home_input(&mut self, code: KeyCode, view: &View) {
-        let items = home::items(view, self.home_tab);
+    /// A key on Home: Tab moves between cards, j/k inside the focused one (wrapping),
+    /// Ctrl+j/k (or Ctrl+arrows, Ctrl+h/l) between scenes. Before the session starts,
+    /// Esc and 0 stay (Home is the only way in).
+    fn home_input(&mut self, key: KeyEvent, view: &View) {
+        use home::{Card, Item};
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let cards = home::cards(view, self.home.tab);
+        if !cards.contains(&self.home.card) {
+            self.home.card = Card::Buttons;
+            self.home.pick = 0;
+        }
+        let scene = home::scene(view, self.home.scene.as_deref());
+        let items = home::items(view, self.home.card, &scene);
         let last = items.len().saturating_sub(1);
-        self.home_pick = self.home_pick.min(last);
-        let focused = items.get(self.home_pick).cloned();
-        match code {
-            // j/k wrap around: past the last item to the first, and back.
+        self.home.pick = self.home.pick.min(last);
+        let focused = items.get(self.home.pick).cloned();
+        match key.code {
+            // Scenes: the next or previous one, wrapping.
+            KeyCode::Char('j' | 'k' | 'h' | 'l')
+            | KeyCode::Down
+            | KeyCode::Up
+            | KeyCode::Left
+            | KeyCode::Right
+                if ctrl =>
+            {
+                let scenes = &view.obs.scenes;
+                if !scenes.is_empty() {
+                    let now = scenes.iter().position(|s| *s == scene).unwrap_or(0);
+                    let back = matches!(
+                        key.code,
+                        KeyCode::Char('k' | 'h') | KeyCode::Up | KeyCode::Left
+                    );
+                    let next = (now + if back { scenes.len() - 1 } else { 1 }) % scenes.len();
+                    self.home.scene = Some(scenes[next].clone());
+                    if matches!(self.home.card, Card::Mixer | Card::Sources) {
+                        self.home.pick = 0;
+                    }
+                }
+            }
+            // Cards: Tab forward, Shift+Tab back, wrapping; cards with nothing to act on
+            // are skipped.
+            KeyCode::Tab | KeyCode::BackTab => {
+                let now = cards.iter().position(|c| *c == self.home.card).unwrap_or(0);
+                let step = if key.code == KeyCode::Tab {
+                    1
+                } else {
+                    cards.len() - 1
+                };
+                let mut next = now;
+                for _ in 0..cards.len() {
+                    next = (next + step) % cards.len();
+                    if !home::items(view, cards[next], &scene).is_empty() {
+                        break;
+                    }
+                }
+                self.home.card = cards[next];
+                self.home.pick = 0;
+            }
+            // Inside a card, wrapping.
             KeyCode::Char('j') | KeyCode::Down => {
-                self.home_pick = if self.home_pick >= last {
+                self.home.pick = if self.home.pick >= last {
                     0
                 } else {
-                    self.home_pick + 1
+                    self.home.pick + 1
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.home_pick = if self.home_pick == 0 {
+                self.home.pick = if self.home.pick == 0 {
                     last
                 } else {
-                    self.home_pick - 1
+                    self.home.pick - 1
                 }
             }
-            KeyCode::Char('g') | KeyCode::Home => self.home_pick = 0,
-            KeyCode::Char('G') | KeyCode::End => self.home_pick = last,
-            KeyCode::Tab => self.home_pick = home::next_group(&items, self.home_pick),
+            KeyCode::Char('g') | KeyCode::Home => self.home.pick = 0,
+            KeyCode::Char('G') | KeyCode::End => self.home.pick = last,
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(item) = focused {
                     self.home_act(item, view);
@@ -967,37 +1015,35 @@ impl App {
             KeyCode::Char(c @ ('h' | 'l')) => {
                 let up = c == 'l';
                 match focused {
-                    Some(home::Item::Start | home::Item::Quit) => {
-                        let to = if up {
-                            home::Item::Quit
-                        } else {
-                            home::Item::Start
-                        };
+                    Some(Item::Start | Item::Quit) => {
+                        let to = if up { Item::Quit } else { Item::Start };
                         if let Some(i) = items.iter().position(|i| *i == to) {
-                            self.home_pick = i;
+                            self.home.pick = i;
                         }
                     }
-                    Some(home::Item::Audio(name)) => {
+                    Some(Item::Audio(name)) => {
                         if let Some(a) = view.obs.audio(&name) {
                             let db = (a.volume_db + if up { 1.0 } else { -1.0 }).round();
                             self.send(Command::Volume { input: name, db });
                         }
                     }
-                    Some(home::Item::Source(source)) => self.send(Command::Source {
+                    Some(Item::Source { scene, source }) => self.send(Command::Source {
                         source,
-                        scene: None,
+                        scene: Some(scene),
                         visible: Some(up),
                     }),
                     _ => {}
                 }
             }
-            // The tabs layout: [ and ] switch tabs (the buttons keep the focus).
+            // The tabs layout: [ and ] switch tabs; the tab's card takes the focus.
             KeyCode::Char(c @ ('[' | ']'))
                 if view.config.tui.home_layout == ac_core::config::HomeLayout::Tabs =>
             {
                 let n = home::TABS.len();
-                self.home_tab = (self.home_tab + if c == ']' { 1 } else { n - 1 }) % n;
-                self.home_pick = 0;
+                self.home.tab = (self.home.tab + if c == ']' { 1 } else { n - 1 }) % n;
+                let cards = home::cards(view, self.home.tab);
+                self.home.card = cards.get(1).copied().unwrap_or(Card::Buttons);
+                self.home.pick = 0;
             }
             // v: the next layout, saved like any setting.
             KeyCode::Char('v') => {
@@ -1008,8 +1054,10 @@ impl App {
                     .position(|l| *l == view.config.tui.home_layout)
                     .unwrap_or(0);
                 let next = all[(now + 1) % all.len()];
-                self.home_pick = 0;
-                self.home_tab = 0;
+                self.home = home::Focus {
+                    scene: self.home.scene.take(),
+                    ..home::Focus::default()
+                };
                 let value = ac_core::config::Value::Text(next.name().into());
                 match ac_core::config::set_value(&view.config_path, "tui.home_layout", Some(value))
                 {
@@ -1893,14 +1941,7 @@ impl App {
     }
 
     fn draw_home(&self, frame: &mut Frame, view: &View) {
-        home::draw(
-            frame,
-            view,
-            self.clock.now_ts(),
-            self.spin(),
-            self.home_pick,
-            self.home_tab,
-        );
+        home::draw(frame, view, self.clock.now_ts(), self.spin(), &self.home);
     }
 
     /// The command palette: the line being typed, what the command does, and a list of
@@ -3227,10 +3268,10 @@ mod tests {
         // Home opens first (this session has started); Esc goes to the dashboard.
         let text = screen(&mut app, &view);
         assert!(
-            text.contains("STARTED") && text.contains("1 thing needs you"),
+            text.contains("STARTED") && text.contains("1 need you"),
             "{text}"
         );
-        assert!(text.contains("Enter go to the dashboard"), "{text}");
+        assert!(text.contains("Dashboard"), "{text}");
         assert!(text.contains("✖ OBS recording"), "{text}");
         app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &view);
 
@@ -3835,6 +3876,41 @@ mute Mic/Aux
         assert_eq!(app.suggestions("", &view)[0].line, "mute Mic/Aux");
     }
 
+    /// The whole screen as text, at `w` by `h`.
+    fn text_at(app: &mut App, view: &View, w: u16, h: u16) -> String {
+        let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+        t.draw(|f| app.draw(f, view)).unwrap();
+        let b = t.backend().buffer().clone();
+        (0..b.area.height)
+            .map(|y| {
+                (0..b.area.width)
+                    .map(|x| b[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// A view with two scenes holding sources and a second audio input placed in BRB.
+    fn studio_view(clock: &Clock) -> View {
+        let mut view = sample_view(clock);
+        view.state.scene = Some("Code".into());
+        let obs = Arc::make_mut(&mut view.obs);
+        obs.audio.push(ac_core::obs::Audio {
+            name: "Music".into(),
+            kind: "ffmpeg_source".into(),
+            muted: false,
+            volume_db: 0.0,
+        });
+        obs.items.push(ac_core::obs::Item {
+            scene: "BRB".into(),
+            source: "Music".into(),
+            id: 7,
+            enabled: true,
+        });
+        view
+    }
+
     #[test]
     fn a_draft_home_starts_on_enter_and_quits_keeping_nothing_on_q() {
         let clock = Arc::new(Clock::new());
@@ -3845,11 +3921,12 @@ mute Mic/Aux
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock.clone(), rx, cmd_tx);
         let text = screen(&mut app, &view);
-        assert!(text.contains("Start the session"), "{text}");
-        assert!(text.contains("Enter start the session"), "{text}");
-        assert!(text.contains("Quit, keep nothing"), "{text}");
-        // No status bar on Home: the page starts at the top with the episode.
+        // Top right: the buttons, the draft tag and the verdict; no status bar on Home.
+        assert!(text.contains("Start") && text.contains("Quit"), "{text}");
+        assert!(text.contains("DRAFT"), "{text}");
         assert!(text.lines().next().unwrap().contains("#042"), "{text}");
+        // The footer of key hints stays under Home.
+        assert!(text.lines().last().unwrap().contains("Tab"), "{text}");
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
         // Esc does not leave a draft Home.
         press(&mut app, KeyCode::Esc);
@@ -3863,10 +3940,12 @@ mute Mic/Aux
             press(&mut app, KeyCode::Esc);
             assert_eq!(app.mode, Mode::Preflight, "back to Home after {open}");
         }
+        // l to Quit and h back to Start; Enter starts and leaves for the dashboard.
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.home.pick, 1);
+        press(&mut app, KeyCode::Char('h'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
-        // Enter leaves for the dashboard (the run loop keeps Home until the session says it
-        // started); back on the draft Home, q quits.
         assert_eq!(app.mode, Mode::Normal);
         app.mode = Mode::Preflight;
         press(&mut app, KeyCode::Char('q'));
@@ -3875,41 +3954,22 @@ mute Mic/Aux
     }
 
     #[test]
-    fn home_is_navigated_with_j_k_and_enter_acts_on_the_focused_item() {
+    fn tab_moves_between_cards_j_k_inside_and_ctrl_between_scenes() {
         let clock = Arc::new(Clock::new());
-        let mut view = sample_view(&clock);
-        // The columns layout reads: fixes, the scene's sources (left), then audio (right).
+        let mut view = studio_view(&clock);
         view.begun = false;
         view.fresh = true;
-        view.state.scene = Some("Code".into());
         let (_tx, rx) = watch::channel(view.clone());
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock, rx, cmd_tx);
-        let draw = |app: &mut App| {
-            let mut t =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 32)).unwrap();
-            t.draw(|f| app.draw(f, &view)).unwrap();
-            let b = t.backend().buffer().clone();
-            (0..b.area.height)
-                .map(|y| {
-                    (0..b.area.width)
-                        .map(|x| b[(x, y)].symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join(
-                    "
-",
-                )
-        };
-        let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
-        // Start, Quit, the recording fix, the camera, the mic.
-        press(&mut app, KeyCode::Char('j'));
-        assert!(draw(&mut app).contains("Enter quit, keep nothing"));
-        press(&mut app, KeyCode::Char('j'));
-        let text = draw(&mut app);
-        assert!(text.contains("Enter start recording"), "{text}");
-        assert!(text.contains(" R  start recording in OBS"), "{text}");
+        let key = |app: &mut App, code, mods| app.key(KeyEvent::new(code, mods), &view);
+        let press = |app: &mut App, code| key(app, code, KeyModifiers::NONE);
+        let ctrl = |app: &mut App, code| key(app, code, KeyModifiers::CONTROL);
+        // Columns: Buttons, Checks, Sources, Mixer.
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.home.card, home::Card::Checks);
+        let text = text_at(&mut app, &view, 110, 30);
+        assert!(text.contains("⏎ record"), "{text}");
         press(&mut app, KeyCode::Enter);
         assert_eq!(
             cmd_rx.try_recv().unwrap(),
@@ -3917,149 +3977,111 @@ mute Mic/Aux
                 action: ac_core::command::OutputAction::Start
             }
         );
-        // Tab: the On air card; Enter hides the camera.
+        // j inside a one-item card wraps onto itself: the focus stays in Checks.
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.home.card, home::Card::Checks);
+        // Sources of the scene on air; Enter hides the camera there.
         press(&mut app, KeyCode::Tab);
-        assert!(draw(&mut app).contains("Enter hide Camera"));
+        assert_eq!(app.home.card, home::Card::Sources);
         press(&mut app, KeyCode::Enter);
         assert_eq!(
             cmd_rx.try_recv().unwrap(),
             Command::Source {
                 source: "Camera".into(),
-                scene: None,
+                scene: Some("Code".into()),
                 visible: None
             }
         );
-        // Tab: the Audio card; Enter mutes, l raises the volume by 1 dB.
+        // Mixer: Code uses the mic only; Ctrl+j to BRB adds its Music.
         press(&mut app, KeyCode::Tab);
-        assert!(draw(&mut app).contains("Enter mute Mic/Aux"));
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(
-            cmd_rx.try_recv().unwrap(),
-            Command::Mute {
-                input: "Mic/Aux".into(),
-                on: None
-            }
+        assert_eq!(app.home.card, home::Card::Mixer);
+        let text = text_at(&mut app, &view, 110, 30);
+        assert!(
+            text.contains("Mic/Aux") && !text.contains("Music"),
+            "{text}"
         );
+        ctrl(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.home.scene.as_deref(), Some("BRB"));
+        let text = text_at(&mut app, &view, 110, 30);
+        assert!(text.contains("Music"), "{text}");
+        press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('l'));
         assert_eq!(
             cmd_rx.try_recv().unwrap(),
             Command::Volume {
-                input: "Mic/Aux".into(),
-                db: -2.0
+                input: "Music".into(),
+                db: 1.0
             }
         );
-        // j past the last item wraps to Start, k from Start to the last; Enter starts.
-        press(&mut app, KeyCode::Char('j'));
-        assert!(draw(&mut app).contains("Enter start the session"));
-        press(&mut app, KeyCode::Char('k'));
-        assert!(draw(&mut app).contains("Enter mute Mic/Aux"));
-        press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
+        // Ctrl+k back to Code; Shift+Tab back to Sources; Tab past the last card wraps to
+        // the buttons.
+        ctrl(&mut app, KeyCode::Up);
+        assert_eq!(app.home.scene.as_deref(), Some("Code"));
+        press(&mut app, KeyCode::BackTab);
+        assert_eq!(app.home.card, home::Card::Sources);
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.home.card, home::Card::Buttons);
     }
 
     #[test]
-    fn every_home_layout_draws_tabs_switch_and_v_cycles_the_layout() {
+    fn both_layouts_draw_tabs_switch_and_v_switches_the_layout() {
         use ac_core::config::HomeLayout;
         let clock = Arc::new(Clock::new());
-        let mut view = sample_view(&clock);
-        view.state.scene = Some("Code".into());
+        let mut view = studio_view(&clock);
         let dir = tempfile::tempdir().unwrap();
         view.config_path = dir.path().join("aftercast.toml");
         std::fs::write(&view.config_path, "").unwrap();
-        let draw = |app: &mut App, view: &View| {
-            let mut t =
-                ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
-            t.draw(|f| app.draw(f, view)).unwrap();
-            let b = t.backend().buffer().clone();
-            (0..b.area.height)
-                .map(|y| {
-                    (0..b.area.width)
-                        .map(|x| b[(x, y)].symbol())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join(
-                    "
-",
-                )
-        };
-        for layout in HomeLayout::ALL {
-            let mut config = ac_core::config::Config::default();
-            config.tui.home_layout = layout;
-            view.config = Arc::new(config);
-            let (_tx, rx) = watch::channel(view.clone());
-            let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
-            let mut app = App::new(clock.clone(), rx, cmd_tx);
-            let text = draw(&mut app, &view);
-            // Passing checks are counted, never listed.
-            assert!(text.contains("✔ 1 of 2 pass"), "{layout:?}: {text}");
-            assert!(!text.contains("OBS connected"), "{layout:?}: {text}");
-            if layout == HomeLayout::Tabs {
-                // Checks (with Status), then Audio, then On air.
-                assert!(
-                    text.contains("Checks · 1 need you") && text.contains("Status"),
-                    "{text}"
-                );
-                // An overview: the Mic card and the Session card; sources wait for On air.
-                assert!(
-                    text.contains("Mic/Aux")
-                        && text.contains("Session")
-                        && !text.contains("Camera"),
-                    "{text}"
-                );
-                let next = |app: &mut App| {
-                    app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view)
-                };
-                next(&mut app);
-                let text = draw(&mut app, &view);
-                assert!(
-                    text.contains("Mic/Aux") && !text.contains("Camera"),
-                    "{text}"
-                );
-                next(&mut app);
-                let text = draw(&mut app, &view);
-                assert!(
-                    text.contains("On air · Code") && text.contains("Camera"),
-                    "{text}"
-                );
-            } else {
-                assert!(
-                    text.contains("Mic/Aux") && text.contains("Camera") && text.contains("Status"),
-                    "{layout:?}: {text}"
-                );
-            }
-        }
-        // In columns, j/k read down the left (fixes, then the scene's sources) before the
-        // audio on the right.
-        let mut config = ac_core::config::Config::default();
-        config.tui.home_layout = HomeLayout::Columns;
-        view.config = Arc::new(config);
-        assert_eq!(
-            home::items(&view, 0)[1..],
-            [
-                home::Item::Fix('R'),
-                home::Item::Source("Camera".into()),
-                home::Item::Audio("Mic/Aux".into())
-            ]
+
+        // Columns: Checks counts what passes, Status is plain information, Sources and the
+        // Mixer carry the scenes as tabs (shortest unique names, the one on air marked).
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock.clone(), rx, cmd_tx);
+        let text = text_at(&mut app, &view, 110, 26);
+        assert!(text.contains("✔ 1/2"), "{text}");
+        assert!(!text.contains("OBS connected"), "{text}");
+        assert!(
+            text.contains("STATUS") && !text.contains("╭ Status"),
+            "{text}"
         );
-        // v writes the next layout and asks for a reload.
+        assert!(text.contains("●Cod") && text.contains("BRB"), "{text}");
+
+        // Tabs: Checks lists passing ones too, beside Status, Session and Mic.
+        let mut config = ac_core::config::Config::default();
+        config.tui.home_layout = HomeLayout::Tabs;
+        view.config = Arc::new(config);
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock.clone(), rx, cmd_tx);
+        let text = text_at(&mut app, &view, 110, 26);
+        assert!(text.contains("✔ OBS connected"), "{text}");
+        assert!(text.contains("SESSION") && text.contains("MIC"), "{text}");
+        let next =
+            |app: &mut App| app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view);
+        // Mixer, with every scene listed on the right.
+        next(&mut app);
+        assert_eq!(app.home.card, home::Card::Mixer);
+        let text = text_at(&mut app, &view, 110, 26);
+        assert!(text.contains("Scenes") && text.contains("● Code"), "{text}");
+        // Sources.
+        next(&mut app);
+        let text = text_at(&mut app, &view, 110, 26);
+        assert!(text.contains("Camera"), "{text}");
+
+        // v writes the other layout and asks for a reload.
         let (_tx, rx) = watch::channel(view.clone());
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
         let mut app = App::new(clock, rx, cmd_tx);
         app.key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &view);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Reload);
         let file = std::fs::read_to_string(&view.config_path).unwrap();
-        assert!(file.contains("home_layout = \"tabs\""), "{file}");
+        assert!(file.contains("home_layout = \"columns\""), "{file}");
         // Layouts that were removed load as columns.
         for old in ["page", "row", "classic"] {
             std::fs::write(
                 &view.config_path,
-                format!(
-                    "[tui]
-home_layout = \"{old}\"
-"
-                ),
+                format!("[tui]\nhome_layout = \"{old}\"\n"),
             )
             .unwrap();
             let config = ac_core::config::Config::load(&view.config_path).unwrap();

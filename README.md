@@ -269,39 +269,36 @@ With `obs.record_into_session` (on by default, Settings › OBS), OBS records in
 Videos folder; OBS's own folder is put back when aftercast exits (needs OBS 30.2 or newer).
 Quitting a draft while OBS records stops the recording first, then deletes the draft with it.
 
-Home fills the screen (the status bar would only repeat it): the episode, its link and what
-is live; the decision ("Enter Start the session", "q Quit, keep nothing") with a verdict
-("Everything is ready." or "2 things need you."); the checks that need you, each with how to
-fix it, with a key where aftercast can do it (`R` start recording, `S` start
-streaming, `M` unmute the mic) and the steps where it cannot (start OBS and turn on its
-WebSocket server, create a missing scene, turn on live chat, a taken overlay port, the quota
-reserve, the shell hook); a live level meter for every audio input (mics first; green, amber
-from -12 dB, red from -3 dB, "muted"), so you can talk and watch your mic before going live;
-and the sources of the scene on air.
+Home fills the screen (the status bar would only repeat it). Each check that needs you shows
+its fix, with a key where aftercast can do it (`R`, `S`, `M`); meters are green, amber from
+-12 dB, red from -3 dB, so you can talk and watch your mic before going live.
 
-Home has two areas. The primary card holds the decision and nothing else: Start (or Resume)
-and Quit, the verdict, and what starting means. Below it, four cards: **Checks** (only what
-needs you, each with its fix; the title counts what passes, "✔ 9 of 11 pass"), **Status**
-(stream, OBS scene and recording, YouTube and chat, keys, quota, latency), **Audio** (a meter
-per input) and **On air** (the scene's sources as switches). The card holding the focus is
-lit, and its bottom border says what `Enter` does there and `↓ more` when it scrolls.
-
-Two layouts, chosen in Settings › Display › Home layout (`tui.home_layout`) or switched with
-`v` on Home:
+Top right of Home: `Start` (or `Resume`) and `Quit`, a `DRAFT` tag and the verdict
+("✖ 2 need you", "✔ ready"). Below, cards you act on have rounded borders (**Checks**,
+**Mixer**, **Sources**); information you only read has none (**Status**, **Session**,
+**Mic**). The Mixer and Sources show one scene at a time: the Mixer that scene's audio (its
+own sources with audio plus OBS's global devices) with level, volume and mute, Sources its
+sources with show/hide.
 
 | Layout | Arrangement |
 |---|---|
-| `columns` (default) | A 2 by 2 grid: Checks and Status on top, On air and Audio below |
-| `tabs` | Three tabs, `[` and `]` switch: Checks (an overview: Checks over a Mic meter card, Status over a Session card with the description size, chapters, last push and overlay address), Audio (every input), On air |
+| `columns` (default) | Checks (what needs you) beside Status; Sources beside the Mixer, each with the scenes as tabs in its top border (shortest unique names, `●` on air) |
+| `tabs` | Checks (failing, then passing) beside Status, Session and Mic · Mixer · Sources, the last two beside a list of every scene; `[` `]` switch tabs |
 
-Everything on Home can be reached and used from the keyboard: `j/k` (or arrows) move through
-the buttons, the checks aftercast can fix, every audio input and every source on air; `Tab`
-jumps to the next card (the primary card is one stop; `h/l` there switch Start and Quit); `Enter` or `Space` does what the focused row offers (start, quit,
-start recording, mute or unmute, show or hide), and the key hints say what that is; on an
-audio input `h/l` change the volume by 1 dB, on a source `h` hides and `l` shows. `R`, `S`
-and `M` work from anywhere on the page, `,` opens settings and `:` the palette. Once started,
-`0` brings Home back and `Esc` or `0` go to the dashboard. Levels are asked of OBS only while
-Home is open.
+Choose one in Settings › Display › Home layout (`tui.home_layout`) or switch with `v`.
+
+| Key | On Home |
+|---|---|
+| `Tab` / `Shift+Tab` | Next / previous card (the buttons are one) |
+| `j/k` | Move inside the card, wrapping |
+| `Ctrl+j/k`, `Ctrl`+arrows | Previous / next scene in the Mixer and Sources |
+| `Enter`, `Space` | Do it (start, quit, record, mute, hide…); the card's border says what |
+| `h/l` | Start / Quit; volume -1 / +1 dB; hide / show |
+| `R` `S` `M` | Start recording, start streaming, mute the mic |
+| `,` `:` | Settings, palette (both return to Home) |
+| `Esc`, `0` | Dashboard, once started |
+
+Levels are asked of OBS only while Home is open.
 
 Mutes and source changes are logged as `obs.mute` and `obs.source` events, whether made from
 aftercast or in OBS.
