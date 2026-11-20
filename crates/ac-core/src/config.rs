@@ -31,6 +31,136 @@ pub struct Config {
     pub post: Post,
     pub render: Render,
     pub external: External,
+    pub tui: Tui,
+}
+
+/// `[tui]`: how the terminal UI looks; changed from its settings page (`,`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Tui {
+    /// Wrap every chat message, Inbox item and log event instead of cutting it.
+    pub wrap_lines: bool,
+    /// Pulsing dots, spinners and gliding panes; off keeps everything still.
+    pub animations: bool,
+    /// Every chat author gets their own color.
+    pub name_colors: bool,
+}
+
+impl Default for Tui {
+    fn default() -> Self {
+        Self {
+            wrap_lines: false,
+            animations: true,
+            name_colors: true,
+        }
+    }
+}
+
+/// A value written by [`set_value`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(String),
+}
+
+/// Sets the dotted `key` (e.g. `stream.chapter_on_brb`) in the config file, or removes it
+/// with `None` so the default applies again. Comments and layout of the rest of the file
+/// are kept. The result is validated first: an invalid value is refused and nothing is
+/// written.
+pub fn set_value(path: &Path, key: &str, value: Option<Value>) -> Result<()> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(Error::io(path)(e)),
+    };
+    let refuse = |message: String| {
+        Error::Toml(crate::error::TomlError {
+            path: path.to_path_buf(),
+            line: 1,
+            col: 1,
+            message,
+        })
+    };
+    // A file that does not parse is reported with its line and column, and left alone.
+    parse_toml::<toml::Table>(path, &text)?;
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e: toml_edit::TomlError| refuse(e.to_string()))?;
+    let parts: Vec<&str> = key.split('.').collect();
+    let (name, tables) = parts.split_last().expect("split yields one part");
+    // In a file of only comments they are the document's trailing text; keep them on top.
+    let only_comments = doc.as_table().is_empty();
+    let mut table = doc.as_table_mut();
+    for part in tables {
+        if !table.contains_key(part) {
+            let mut new = toml_edit::Table::new();
+            new.set_implicit(false);
+            table.insert(part, toml_edit::Item::Table(new));
+        }
+        table = table[part]
+            .as_table_mut()
+            .ok_or_else(|| refuse(format!("{key}: {part} is not a table")))?;
+    }
+    match value {
+        None => {
+            table.remove(name);
+        }
+        Some(value) => {
+            let value = match value {
+                Value::Bool(b) => toml_edit::value(b),
+                Value::Int(i) => toml_edit::value(i),
+                Value::Float(f) => toml_edit::value(f),
+                Value::Text(t) => toml_edit::value(t),
+            };
+            // Keep a trailing comment on the line, in the same column, if the key had one.
+            let old = table.get(name).and_then(toml_edit::Item::as_value).cloned();
+            table[name] = value;
+            if let (Some(old), Some(v)) = (old, table[name].as_value_mut()) {
+                let width = |v: &toml_edit::Value| {
+                    let mut v = v.clone();
+                    v.decor_mut().clear();
+                    v.to_string().chars().count()
+                };
+                let (was, now) = (width(&old), width(v));
+                let mut decor = old.decor().clone();
+                let suffix = decor.suffix().and_then(|s| s.as_str()).map(str::to_owned);
+                if let Some(suffix) = suffix {
+                    let comment = suffix.trim_start_matches(' ');
+                    let spaces = suffix.len() - comment.len();
+                    if comment.starts_with('#') && spaces > 1 {
+                        let keep = (spaces + was).saturating_sub(now).max(1);
+                        decor.set_suffix(format!("{}{comment}", " ".repeat(keep)));
+                    }
+                }
+                *v.decor_mut() = decor;
+            }
+        }
+    }
+    if only_comments
+        && let Some(first) = tables.first()
+        && let Some(t) = doc.get_mut(first).and_then(toml_edit::Item::as_table_mut)
+    {
+        let head = doc_trailing(&text);
+        t.decor_mut().set_prefix(head);
+        doc.set_trailing("");
+    }
+    let new = doc.to_string();
+    parse_toml::<Config>(path, &new)?;
+    let tmp = path.with_extension("toml.tmp");
+    fs::write(&tmp, &new).map_err(Error::io(&tmp))?;
+    fs::rename(&tmp, path).map_err(Error::io(path))
+}
+
+/// The text of a file that holds no keys or tables (comments and blank lines), ending in a
+/// newline.
+fn doc_trailing(text: &str) -> String {
+    let mut head = text.trim_end().to_owned();
+    if !head.is_empty() {
+        head.push('\n');
+    }
+    head
 }
 
 impl Config {
@@ -605,6 +735,57 @@ pub struct External {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn set_value_keeps_comments_validates_and_resets() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aftercast.toml");
+        std::fs::write(
+            &path,
+            "# my config
+[stream]
+chapter_on_brb = true  # BRB chapters
+",
+        )
+        .unwrap();
+        set_value(&path, "stream.chapter_on_brb", Some(Value::Bool(false))).unwrap();
+        set_value(&path, "tui.wrap_lines", Some(Value::Bool(true))).unwrap();
+        set_value(
+            &path,
+            "bot.moderation.delete_links_from_non_mods",
+            Some(Value::Bool(true)),
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.starts_with(
+                "# my config
+"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("chapter_on_brb = false # BRB chapters"),
+            "{text}"
+        );
+        let config = Config::load(&path).unwrap();
+        assert!(!config.stream.chapter_on_brb);
+        assert!(config.tui.wrap_lines);
+        assert!(config.bot.moderation.delete_links_from_non_mods);
+
+        // A value of the wrong type is refused and the file is untouched.
+        let err = set_value(
+            &path,
+            "stream.chapter_on_brb",
+            Some(Value::Text("x".into())),
+        );
+        assert!(err.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+
+        // None removes the key: the default applies again.
+        set_value(&path, "stream.chapter_on_brb", None).unwrap();
+        assert!(Config::load(&path).unwrap().stream.chapter_on_brb);
+    }
+
     use super::*;
     use crate::home::DEFAULT_CONFIG;
 
