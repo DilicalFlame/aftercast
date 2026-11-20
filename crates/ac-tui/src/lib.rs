@@ -3839,10 +3839,7 @@ mute Mic/Aux
     fn home_is_navigated_with_j_k_and_enter_acts_on_the_focused_item() {
         let clock = Arc::new(Clock::new());
         let mut view = sample_view(&clock);
-        // The page layout: fixes, then audio, then the scene's sources.
-        let mut config = ac_core::config::Config::default();
-        config.tui.home_layout = ac_core::config::HomeLayout::Page;
-        view.config = Arc::new(config);
+        // The columns layout reads: fixes, the scene's sources (left), then audio (right).
         view.begun = false;
         view.fresh = true;
         view.state.scene = Some("Code".into());
@@ -3867,7 +3864,7 @@ mute Mic/Aux
                 )
         };
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
-        // Start, Quit, the recording fix, the mic, the camera.
+        // Start, Quit, the recording fix, the camera, the mic.
         press(&mut app, KeyCode::Char('j'));
         assert!(draw(&mut app).contains("Enter quit, keep nothing"));
         press(&mut app, KeyCode::Char('j'));
@@ -3881,7 +3878,19 @@ mute Mic/Aux
                 action: ac_core::command::OutputAction::Start
             }
         );
-        // Tab: on to audio; Enter mutes, l raises the volume by 1 dB.
+        // Tab: the On air card; Enter hides the camera.
+        press(&mut app, KeyCode::Tab);
+        assert!(draw(&mut app).contains("Enter hide Camera"));
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Source {
+                source: "Camera".into(),
+                scene: None,
+                visible: None
+            }
+        );
+        // Tab: the Audio card; Enter mutes, l raises the volume by 1 dB.
         press(&mut app, KeyCode::Tab);
         assert!(draw(&mut app).contains("Enter mute Mic/Aux"));
         press(&mut app, KeyCode::Enter);
@@ -3900,22 +3909,11 @@ mute Mic/Aux
                 db: -2.0
             }
         );
-        // j: the camera in the scene on air; Enter hides it.
-        press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Enter);
-        assert_eq!(
-            cmd_rx.try_recv().unwrap(),
-            Command::Source {
-                source: "Camera".into(),
-                scene: None,
-                visible: None
-            }
-        );
         // j past the last item wraps to Start, k from Start to the last; Enter starts.
         press(&mut app, KeyCode::Char('j'));
         assert!(draw(&mut app).contains("Enter start the session"));
         press(&mut app, KeyCode::Char('k'));
-        assert!(draw(&mut app).contains("Enter hide Camera"));
+        assert!(draw(&mut app).contains("Enter mute Mic/Aux"));
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
@@ -4007,7 +4005,21 @@ mute Mic/Aux
         app.key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &view);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Reload);
         let file = std::fs::read_to_string(&view.config_path).unwrap();
-        assert!(file.contains("home_layout = \"page\""), "{file}");
+        assert!(file.contains("home_layout = \"tabs\""), "{file}");
+        // Layouts that were removed load as columns.
+        for old in ["page", "row", "classic"] {
+            std::fs::write(
+                &view.config_path,
+                format!(
+                    "[tui]
+home_layout = \"{old}\"
+"
+                ),
+            )
+            .unwrap();
+            let config = ac_core::config::Config::load(&view.config_path).unwrap();
+            assert_eq!(config.tui.home_layout, HomeLayout::Columns, "{old}");
+        }
     }
 
     #[test]

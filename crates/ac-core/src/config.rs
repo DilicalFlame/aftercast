@@ -64,30 +64,20 @@ impl Default for Tui {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HomeLayout {
-    /// A 2 by 2 grid: Checks and Status on top, On air and Audio below.
+    /// A 2 by 2 grid: Checks and Status on top, On air and Audio below. Layouts that
+    /// were removed load as this one.
+    #[serde(alias = "page", alias = "row", alias = "classic")]
     Columns,
-    /// The cards stacked, full width.
-    Page,
-    /// All four side by side, for wide terminals.
-    #[serde(alias = "classic")]
-    Row,
     /// Three tabs: Checks (with Status), Audio, On air.
     Tabs,
 }
 
 impl HomeLayout {
-    pub const ALL: [HomeLayout; 4] = [
-        HomeLayout::Columns,
-        HomeLayout::Page,
-        HomeLayout::Row,
-        HomeLayout::Tabs,
-    ];
+    pub const ALL: [HomeLayout; 2] = [HomeLayout::Columns, HomeLayout::Tabs];
 
     pub fn name(self) -> &'static str {
         match self {
             HomeLayout::Columns => "columns",
-            HomeLayout::Page => "page",
-            HomeLayout::Row => "row",
             HomeLayout::Tabs => "tabs",
         }
     }

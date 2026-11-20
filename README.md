@@ -284,14 +284,12 @@ needs you, each with its fix; the title counts what passes, "✔ 9 of 11 pass"),
 per input) and **On air** (the scene's sources as switches). The card holding the focus is
 lit, and its bottom border says what `Enter` does there and `↓ more` when it scrolls.
 
-Four layouts, chosen in Settings › Display › Home layout (`tui.home_layout`) or cycled with
+Two layouts, chosen in Settings › Display › Home layout (`tui.home_layout`) or switched with
 `v` on Home:
 
 | Layout | Arrangement |
 |---|---|
 | `columns` (default) | A 2 by 2 grid: Checks and Status on top, On air and Audio below |
-| `page` | The cards stacked full width (when they do not all fit, Status gives way first) |
-| `row` | All four side by side, for wide terminals (`classic` in older configs means this) |
 | `tabs` | Three tabs: Checks (with Status), Audio, On air; `[` and `]` switch |
 
 Everything on Home can be reached and used from the keyboard: `j/k` (or arrows) move through

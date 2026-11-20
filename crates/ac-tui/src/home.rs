@@ -96,8 +96,6 @@ fn cards(view: &View, tab: usize) -> Vec<Card> {
     match view.config.tui.home_layout {
         // Top row Checks, Status; bottom row On air, Audio.
         HomeLayout::Columns => vec![Card::Checks, Card::Status, Card::Scene, Card::Audio],
-        HomeLayout::Page => vec![Card::Checks, Card::Audio, Card::Scene, Card::Status],
-        HomeLayout::Row => vec![Card::Checks, Card::Status, Card::Audio, Card::Scene],
         HomeLayout::Tabs => match tab {
             0 => vec![Card::Checks, Card::Status],
             1 => vec![Card::Audio],
@@ -271,41 +269,6 @@ pub fn draw(
             place(frame, Card::Status, tr);
             place(frame, Card::Scene, bl);
             place(frame, Card::Audio, br);
-        }
-        HomeLayout::Page => {
-            // When they do not all fit, the cards give way from the bottom: Status first,
-            // what needs you last.
-            let order = cards(view, 0);
-            let mut left = body.height;
-            let heights: Vec<u16> = order
-                .iter()
-                .map(|c| {
-                    let h = rows(*c, body.width).min(left);
-                    left -= h;
-                    h
-                })
-                .collect();
-            let mut constraints: Vec<Constraint> =
-                heights.iter().map(|h| Constraint::Length(*h)).collect();
-            constraints.push(Constraint::Min(0));
-            let areas = Layout::vertical(constraints).split(body);
-            for (card, area) in order.into_iter().zip(areas.iter()) {
-                if area.height >= 3 {
-                    place(frame, card, *area);
-                }
-            }
-        }
-        HomeLayout::Row => {
-            let areas = Layout::horizontal([
-                Constraint::Percentage(30),
-                Constraint::Percentage(22),
-                Constraint::Percentage(28),
-                Constraint::Percentage(20),
-            ])
-            .split(body);
-            for (card, area) in cards(view, 0).into_iter().zip(areas.iter()) {
-                place(frame, card, *area);
-            }
         }
         HomeLayout::Tabs => {
             let [bar, rest] =
