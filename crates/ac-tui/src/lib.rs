@@ -1273,25 +1273,54 @@ impl App {
         if self.focus != pane {
             return None;
         }
-        let pairs: &[(&str, &str)] = match pane {
-            // Questions are answered or dismissed; supporters are thanked.
-            Pane::Questions => match self.selected_item(view).map(|q| q.support.is_some()) {
-                Some(true) => &[
-                    ("Enter", "on stream/done"),
-                    ("t", "thank"),
-                    ("[ ]", "filter"),
-                ],
-                Some(false) => &[
-                    ("Enter", "on stream/answered"),
-                    ("x", "dismiss"),
-                    ("[ ]", "filter"),
-                ],
-                None => &[("[ ]", "filter")],
+        use ac_core::session_state::QuestionState;
+        let mut live = false;
+        let pairs: Vec<(&str, String)> = match pane {
+            // Questions are answered or dismissed; supporters are thanked. The hint follows
+            // what is on stream right now.
+            Pane::Questions => match self.selected_item(view) {
+                None => vec![("[ ]", "filter".into())],
+                Some(q) => {
+                    let supporter = q.support.is_some();
+                    let done = if supporter { "done" } else { "answered" };
+                    let enter = if q.state == QuestionState::Shown {
+                        live = true;
+                        format!("{done}, clears it")
+                    } else {
+                        // The overlay shows one card: the one shown last.
+                        let on_screen = view
+                            .state
+                            .questions
+                            .iter()
+                            .filter(|o| o.state == QuestionState::Shown)
+                            .max_by_key(|o| o.shown_at);
+                        match on_screen {
+                            Some(o) => format!("on stream (replaces {})", o.author),
+                            None => format!("on stream, again {done}"),
+                        }
+                    };
+                    let other = if supporter {
+                        ("t", "thank".into())
+                    } else {
+                        ("x", "dismiss".into())
+                    };
+                    vec![("Enter", enter), other, ("[ ]", "filter".into())]
+                }
             },
-            Pane::Chapters => &[("e", "edit"), ("d", "delete"), ("j/k", "move")],
-            Pane::Chat | Pane::Log => &[("j/k", "read"), ("G", "newest")],
+            Pane::Chapters => vec![
+                ("e", "edit".into()),
+                ("d", "delete".into()),
+                ("j/k", "move".into()),
+            ],
+            Pane::Chat | Pane::Log => vec![("j/k", "read".into()), ("G", "newest".into())],
         };
         let mut spans = vec![Span::raw(" ")];
+        if live {
+            let dot = mix(ACCENT, ACCENT_DIM, self.pulse(Duration::from_secs(2)));
+            spans.push(Span::styled("● ", Style::new().fg(dot)));
+            spans.push(Span::styled("ON STREAM", Style::new().fg(ACCENT).bold()));
+            spans.push(Span::styled(" · ", Style::new().fg(FAINT)));
+        }
         for (i, (k, label)) in pairs.iter().enumerate() {
             if i > 0 {
                 spans.push(Span::styled(" · ", Style::new().fg(FAINT)));
@@ -2684,6 +2713,24 @@ mod tests {
                 action: QuestionAction::Dismiss
             }
         );
+        // While the selected question is on stream, its border says so.
+        let mut shown = view.clone();
+        shown.state.apply(&Event::new(
+            &Clock::new(),
+            "tui",
+            EventKind::QuestionShow { qid: "q2".into() },
+        ));
+        app.last_frame -= Duration::from_secs(1);
+        press(&mut app, KeyCode::Char('j'));
+        let text = screen(&mut app, &shown);
+        assert!(
+            text.contains("● ON STREAM · Enter answered, clears it"),
+            "{text}"
+        );
+        press(&mut app, KeyCode::Char('k'));
+        let text = screen(&mut app, &shown);
+        assert!(text.contains("Enter on stream (replaces cy)"), "{text}");
+        press(&mut app, KeyCode::Char('j'));
         // `]` again: Super Chats only. A supporter is not dismissed; `t` thanks them.
         press(&mut app, KeyCode::Char(']'));
         screen(&mut app, &view);
