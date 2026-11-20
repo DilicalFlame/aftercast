@@ -21,9 +21,10 @@ Work in progress, built phase by phase.
 | 3 | Chat, bot, question queue, overlays, latency measurement, local API | done |
 | 4 | Keystroke and shell capture | done, manual test pending |
 | 5 | Post-stream pipeline (`aftercast post`) | done, manual test pending |
-| 6 to 7 | Clip rendering, MCP server | planned |
+| 6 | Clip rendering (`aftercast render`) | done, manual test pending |
+| 7 | MCP server, library | planned |
 
-Commands for later phases (`render`, `mcp`, ...) exist but print "not yet implemented".
+Commands for later phases (`mcp`, `library`, ...) exist but print "not yet implemented".
 
 ## Install
 
@@ -241,6 +242,35 @@ Set `post.whisper_compute_type = "int8_float16"` if large-v3 runs out of VRAM. w
 (`post.transcriber = "whisperx"`, also installed by `aftercast setup`) and whisper.cpp (`post.transcriber = "whisper-cpp"`,
 `post.whisper_model` = path of a ggml `.bin`) work too.
 
+### Clips: `aftercast render`
+
+Claude reads `derived/index.md` (with the aftercast-clips skill) and writes
+`ai/suggestions.json`: shorts, clips and topic videos as ranges of the master
+(`schemas/suggestions.schema.json`). `aftercast render` checks and renders them:
+
+```powershell
+aftercast render --dry-run          # check every item, show the adjusted ranges
+aftercast render                    # render all (or --ids 001,T01), latest session
+aftercast render --keys burn --captions burn
+```
+
+- Ranges overlapping a redacted segment are rejected; ranges outside the master, duplicate ids
+  or slugs, and shorts over 180 s are errors; shorts over `render.short_max_s` and items that
+  are more than 30% dead air get a warning.
+- Each range edge moves to the nearest word edge within 300 ms, then gets
+  `pad_start_ms`/`pad_end_ms` (never into a redacted segment; back-to-back ranges meet
+  halfway instead of repeating footage).
+- Ranges with `speed` play faster (4x for long typing stretches); above 4x they are muted and
+  get no captions.
+- Output in `out/<kind>s/<id>_<slug>/`: `clip.mp4` (encoded with `render.encoder`, NVENC or
+  libx264), `captions.srt`, `keys.ass` (shortcut chips and typed text, in the `[overlay]`
+  colours and mono font), `keys.mov` (the keys overlay as transparent ProRes 4444 to lay over
+  the clip in an editor, with `--keys alpha`), `thumb.jpg`, `meta.json` (adjusted ranges,
+  ffmpeg commands, durations) and `render.log`. `burn` draws keys or captions into
+  `clip.mp4` instead.
+- Unchanged items are skipped (`--force` re-renders). Shorts stay horizontal; the AI's
+  framing hint is in `meta.json`.
+
 ### Other commands
 
 ```text
@@ -250,6 +280,7 @@ aftercast setup              install the transcriber, model and OCR under <home>
 aftercast auth login | status | logout | obs
 aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
 aftercast post [SESSION]     process a finished session (see above)
+aftercast render [SESSION]   render ai/suggestions.json (see above)
 ```
 
 ### Local API

@@ -277,5 +277,30 @@ viewer, and ideally a third account you made a moderator.
 10. Set `post.use_vod = true` and post a public or unlisted stream after YouTube finished
     processing it. Expect: `media/vod.mp4`, `derived/calibration.json` with `accepted: true`
     and a peak ratio of at least 3, and `vod_offset_ms` in `session.toml`.
-11. Install tesseract, set `post.ocr = true`, `aftercast post --from ocr`. Expect: `ocr:`
-    snippets after frame names in `index.md`.
+11. Set `post.ocr = true`, `aftercast post --from ocr`. Expect: `ocr:` snippets after frame
+    names in `index.md`.
+
+## Phase 6: rendering clips
+
+Use the session from Phase 5.
+
+1. Ask Claude (with the aftercast-clips skill) to suggest clips for the session, or write
+   `ai/suggestions.json` by hand: a short with two ranges where you talk, and a topic with a
+   typing stretch at `"speed": 4`. Add a clip whose range covers your privacy minute.
+2. `aftercast render --dry-run`. Expect: each item with its adjusted ranges (start a little
+   before, end a little after the suggestion), the privacy clip `FAILED` with "overlaps a
+   redacted segment", and nothing in `out/`.
+3. `aftercast render --ids <short>,<topic>`. Expect: `2 rendered`; with NVENC about 5 to 10
+   times faster than real time.
+4. Play `out/shorts/.../clip.mp4`. Expect: cuts start and end on whole words, no repeated
+   footage where ranges meet, audio in sync. The topic's 4x part is silent and fast.
+5. Import the topic's `clip.mp4` and `keys.mov` into your editor, `keys.mov` on top. Expect:
+   shortcut chips and typed text bottom-left over the transparent background, in time with
+   the typing in the video; nothing typed in a password box or during privacy.
+6. Open `captions.srt` in the editor or a player. Expect: captions in time, at most two lines.
+7. `aftercast render --ids <topic> --keys burn --captions burn --force`. Expect: keys and
+   captions drawn into `clip.mp4` in the overlay font (`overlay.font_mono`, e.g.
+   `"JetBrainsMonoNL NF"` for a Nerd Font install).
+8. `aftercast render` again. Expect: `up to date` for the rendered items.
+9. Set `render.encoder = "libx264"` and render with `--force`. Expect: the same durations,
+   slower.

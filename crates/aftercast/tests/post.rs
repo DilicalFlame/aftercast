@@ -1,8 +1,11 @@
-//! Phase 5 acceptance (specs/14-roadmap.md): a 10-minute recording in two files plus a scripted
-//! session (chapters, chat, a question, typing, privacy, BRB, a mark), a shell secret and a
-//! commit. `aftercast post` must finish every stage with schema-valid outputs, a rerun must
-//! skip everything, `--from frames` must rerun only frames onward, `index.md` must follow the
-//! documented structure, and nothing from redacted ranges may appear in the outputs.
+//! Phase 5 and 6 acceptance (specs/14-roadmap.md): a 10-minute recording in two files plus a
+//! scripted session (chapters, chat, a question, typing, privacy, BRB, a mark), a shell secret
+//! and a commit. `aftercast post` must finish every stage with schema-valid outputs, a rerun
+//! must skip everything, `--from frames` must rerun only frames onward, `index.md` must follow
+//! the documented structure, and nothing from redacted ranges may appear in the outputs.
+//! Then `aftercast render` must render a two-range short and a topic with a 4x range (libx264,
+//! and NVENC when this machine has it) to the expected durations within a frame, give
+//! `keys.mov` an alpha channel, and reject a range overlapping a redacted segment.
 //! Needs ffmpeg and git on PATH; the transcript is a fixture (no Whisper in tests).
 
 use std::fs;
@@ -397,4 +400,162 @@ fn post_pipeline_on_a_ten_minute_session() {
     assert_eq!(after["ingest"], stages["ingest"]);
     assert_eq!(after["transcribe"], stages["transcribe"]);
     assert_ne!(after["frames"]["finished"], stages["frames"]["finished"]);
+
+    render_items(bin, &home, &dir);
+}
+
+/// Video stream duration and pixel format of `path`.
+fn video_info(path: &Path) -> (f64, String) {
+    let out = ok(Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0"])
+        .args(["-show_entries", "stream=duration,pix_fmt", "-of", "json"])
+        .arg(path));
+    let v: Value = serde_json::from_str(&out).unwrap();
+    let s = &v["streams"][0];
+    (
+        s["duration"].as_str().unwrap().parse().unwrap(),
+        s["pix_fmt"].as_str().unwrap().to_owned(),
+    )
+}
+
+fn nvenc_works() -> bool {
+    Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi"])
+        .args([
+            "-i",
+            "color=s=320x180:r=10:d=0.5",
+            "-c:v",
+            "h264_nvenc",
+            "-f",
+            "null",
+            "-",
+        ])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+fn render_items(bin: &str, home: &Path, dir: &Path) {
+    let session = dir.file_name().unwrap().to_string_lossy().into_owned();
+    let suggestions = json!({
+        "schema_version": 1,
+        "session": session,
+        "generated_by": "test",
+        "items": [
+            { "id": "S1", "kind": "short", "title": "Welcome and plan", "slug": "welcome-and-plan",
+              "ranges": [ { "start": 3.0, "end": 10.0 }, { "start": 28.0, "end": 36.0 } ] },
+            { "id": "T1", "kind": "topic", "title": "Writing the parser", "slug": "writing-the-parser",
+              "ranges": [ { "start": 320.0, "end": 340.0, "label": "plan" },
+                          { "start": 540.0, "end": 590.0, "speed": 4.0, "label": "typing" } ] },
+            { "id": "R1", "kind": "clip", "title": "Private bit", "slug": "private-bit",
+              "ranges": [ { "start": 100.0, "end": 130.0 } ] }
+        ]
+    });
+    validate("suggestions.schema.json", &suggestions);
+    fs::create_dir_all(dir.join("ai")).unwrap();
+    fs::write(dir.join("ai/suggestions.json"), suggestions.to_string()).unwrap();
+    let config = home.join("aftercast.toml");
+    let set_encoder = |encoder: &str| {
+        let toml = fs::read_to_string(&config).unwrap();
+        let toml: Vec<String> = toml
+            .lines()
+            .map(|l| {
+                if l.starts_with("encoder = ") {
+                    format!("encoder = \"{encoder}\"")
+                } else {
+                    l.to_owned()
+                }
+            })
+            .collect();
+        fs::write(&config, toml.join("\n")).unwrap();
+    };
+    let render = |args: &[&str]| {
+        Command::new(bin)
+            .arg("--home")
+            .arg(home)
+            .arg("render")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // Dry run: everything checked, R1 rejected, nothing rendered.
+    let out = render(&["--dry-run"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(
+        text.contains("S1 short") && text.contains("valid, 16.3 s"),
+        "{text}"
+    );
+    assert!(text.contains("overlaps a redacted segment"), "{text}");
+    assert!(
+        text.contains("(suggested 00:00:03.000 to 00:00:10.000)"),
+        "{text}"
+    );
+    assert!(!dir.join("out").exists());
+
+    let short = dir.join("out/shorts/S1_welcome-and-plan");
+    let topic = dir.join("out/topics/T1_writing-the-parser");
+    let mut encoders = vec!["libx264"];
+    if nvenc_works() {
+        encoders.push("h264_nvenc");
+    }
+    for encoder in encoders {
+        set_encoder(encoder);
+        let out = render(&["--ids", "S1,T1", "--force"]);
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{encoder}: {text}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            text.contains("2 rendered, 0 up to date, 0 failed"),
+            "{text}"
+        );
+        for (item, expected) in [
+            (&short, 7.65 + 8.65),
+            // 319.75 to 340.4, then 539.75 to 590.4 at 4x.
+            (&topic, 20.65 + 50.65 / 4.0),
+        ] {
+            let meta = read(&item.join("meta.json"));
+            assert!((meta["expected_duration_s"].as_f64().unwrap() - expected).abs() < 0.001);
+            let (duration, _) = video_info(&item.join("clip.mp4"));
+            assert!(
+                (duration - expected).abs() <= 0.1 + 0.001,
+                "{encoder} {}: {duration} vs {expected}",
+                item.display()
+            );
+            assert!(item.join("thumb.jpg").exists());
+            assert!(meta["commands"][0].as_str().unwrap().contains(encoder));
+        }
+    }
+
+    // The short has speech (captions) but no typing; the topic has typing (keys overlay with
+    // alpha) and no captions from its 4x range.
+    let srt = fs::read_to_string(short.join("captions.srt")).unwrap();
+    assert!(srt.starts_with("1\n00:00:02,250 --> "), "{srt}");
+    assert!(srt.contains("hello everyone welcome back"));
+    assert!(!short.join("keys.mov").exists());
+    let meta = read(&short.join("meta.json"));
+    let warnings = meta["warnings"].to_string();
+    assert!(warnings.contains("no keystrokes"), "{warnings}");
+    let ass = fs::read_to_string(topic.join("keys.ass")).unwrap();
+    assert!(ass.contains("fn main() \\{\\}"), "{ass}");
+    let (keys_len, pix_fmt) = video_info(&topic.join("keys.mov"));
+    assert!(pix_fmt.starts_with("yuva"), "{pix_fmt}");
+    assert!(
+        (keys_len - (20.65 + 50.65 / 4.0)).abs() <= 0.1 + 0.001,
+        "{keys_len}"
+    );
+    let srt = fs::read_to_string(topic.join("captions.srt")).unwrap();
+    assert_eq!(srt.matches(" --> ").count(), 1, "{srt}");
+
+    // Unchanged: nothing to do.
+    let out = render(&["--ids", "S1,T1"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("0 rendered, 2 up to date, 0 failed"),
+        "{text}"
+    );
 }
