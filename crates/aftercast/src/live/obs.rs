@@ -21,6 +21,17 @@ pub enum ObsLink {
 }
 
 impl Controller {
+    /// Reloads (without cache) every OBS browser source showing one of our overlays.
+    pub(super) fn refresh_overlays(&self) {
+        if let (ObsLink::Real(tx), Ok(addr)) = (&self.obs, &self.server) {
+            let port = addr.port();
+            let prefixes = ["127.0.0.1", "localhost"]
+                .map(|host| format!("http://{host}:{port}/overlay/"))
+                .to_vec();
+            let _ = tx.send(Request::RefreshBrowsers(prefixes));
+        }
+    }
+
     pub(super) fn on_obs(&mut self, update: Update) {
         match update {
             Update::Connected(snapshot) => self.obs_connected(snapshot),
@@ -64,13 +75,7 @@ impl Controller {
         self.obs_scenes = Some(snap.scenes);
         let now = self.clock.now_ts();
         // Overlay pages OBS loaded while aftercast was down show an error and never retry.
-        if let (ObsLink::Real(tx), Ok(addr)) = (&self.obs, &self.server) {
-            let port = addr.port();
-            let prefixes = ["127.0.0.1", "localhost"]
-                .map(|host| format!("http://{host}:{port}/overlay/"))
-                .to_vec();
-            let _ = tx.send(Request::RefreshBrowsers(prefixes));
-        }
+        self.refresh_overlays();
 
         if let Some(scene) = snap.scene {
             self.scene_changed(scene, true);

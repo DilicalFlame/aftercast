@@ -96,6 +96,22 @@ Pages are transparent and reconnect by themselves when aftercast restarts. To re
 come from `[overlay]`. Other files in that folder (images, fonts, videos) are served at
 `/overlay/assets/<file>`, for a custom page such as a branded `brb.html`.
 
+**Rehearsal.** To try scenes and overlays without going live:
+
+```powershell
+aftercast rehearse
+```
+
+It is a normal session in the TUI (hotkeys, `b`, `p`, `:latency`, questions, key overlay) with
+your real OBS and overlay server, but YouTube is simulated: no broadcast, no API calls, no
+quota. A demo chat plays from `<home>ehearsal\chat.jsonl` (hello, `!q` questions, `!links`,
+a Super Chat, a mod `!chapter`, ...); edit it to replay what you want to see, one JSON line
+each: `{"after_ms": 3000, "author": "ana", "text": "hi", "mod": false, "member": false,
+"amount": "₹100.00"}`. Save any file in `<home>\overlays\` and OBS reloads the overlays a
+moment later, so you can restyle them while watching. Each rehearsal starts a fresh throwaway
+session in `<home>ehearsal\sessions\` and never uses an episode number, the "last session"
+or today's quota.
+
 ### 5. Check
 
 ```powershell
@@ -329,6 +345,7 @@ aftercast library rebuild        # index every session again from its files
 aftercast init               create the home folder
 aftercast doctor             check tools, config, clock, keyring, OBS
 aftercast setup              install the transcriber, model and OCR under <home>/tools
+aftercast rehearse           try scenes and overlays with OBS, without going live
 aftercast auth login | status | logout | obs
 aftercast shell-hook pwsh    print the PowerShell snippet for shell capture
 aftercast post [SESSION]     process a finished session (see above)

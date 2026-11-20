@@ -57,6 +57,9 @@ pub enum Command {
     },
     /// Check tools, config, clock and keyring
     Doctor,
+    /// Practice with real OBS and overlays: no YouTube broadcast, a demo chat, and overlay
+    /// files reload in OBS when saved
+    Rehearse,
     /// Install the transcriber (Python, faster-whisper, CUDA libraries, model) under <home>/tools with uv
     Setup,
     /// List sessions

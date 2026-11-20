@@ -1,0 +1,4 @@
+{
+  "kind": "youtube#channelListResponse",
+  "items": [ { "id": "UCrehearsal000000000000", "snippet": { "title": "Rehearsal" } } ]
+}

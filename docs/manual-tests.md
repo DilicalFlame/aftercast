@@ -179,6 +179,18 @@ viewer, and ideally a third account you made a moderator.
     The chapter list shows "Latency check" from step 16 and then your previous chapter title
     again from the third sample.
 
+### Rehearsal
+
+1. With OBS running and not streaming: `aftercast rehearse`. Expect: the TUI with
+   "Rehearsal (not live)", OBS connected, and within a minute demo chat messages, two
+   questions in the queue, a `!links` toast and a "Rehearsal chapter" chapter.
+2. `b`, `p`, `:latency`, `question show`: expect the same scenes and overlays as in a real
+   stream.
+3. Edit `<home>\overlays\overlay.css` (or a custom `brb.html`) and save. Expect: OBS shows the
+   change within a second, and the TUI says "overlays reloaded in OBS".
+4. Quit. Expect: no new folder under `sessions\`, `aftercast post` still means your last real
+   stream, and `aftercast auth status` shows no quota spent by the rehearsal.
+
 ### Overlays and API
 
 18. `b`: the `brb` overlay shows "Be right back" with a timer; `b` again hides it.

@@ -84,6 +84,9 @@ struct ScriptedChat {
     owner: bool,
     #[serde(default)]
     member: bool,
+    /// Makes the line a Super Chat, e.g. `"₹100.00"`.
+    #[serde(default)]
+    amount: Option<String>,
 }
 
 impl Mock {
@@ -117,9 +120,13 @@ impl Mock {
                 is_owner: line.owner,
                 is_moderator: line.is_mod,
                 is_member: line.member,
-                kind: ChatKind::Text,
+                kind: if line.amount.is_some() {
+                    ChatKind::Superchat
+                } else {
+                    ChatKind::Text
+                },
                 text: line.text,
-                amount: None,
+                amount: line.amount,
             }));
         }
     }

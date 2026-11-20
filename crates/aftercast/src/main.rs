@@ -32,7 +32,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<u8> {
     let home = Home::resolve(cli.home.clone())?;
-    let tui = cli.command.is_none() && !cli.no_tui;
+    let tui = matches!(cli.command, None | Some(Command::Rehearse)) && !cli.no_tui;
     ac_core::logging::init(&home.logs_dir(), cli.verbose, !tui);
     let config_path = cli.config.clone().unwrap_or_else(|| home.config_file());
     match cli.command {
@@ -89,7 +89,10 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Some(Command::Library { action }) => library(&home, &config_path, action),
-        None => runtime()?.block_on(live_session(&home, &config_path, &cli)),
+        Some(Command::Rehearse) => {
+            runtime()?.block_on(live_session(&home, &config_path, &cli, true))
+        }
+        None => runtime()?.block_on(live_session(&home, &config_path, &cli, false)),
         Some(_) => {
             eprintln!("not yet implemented");
             Ok(exit::GENERIC)
@@ -114,7 +117,12 @@ fn init(home: &Home) -> Result<u8> {
     Ok(exit::OK)
 }
 
-async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> Result<u8> {
+async fn live_session(
+    home: &Home,
+    config_path: &std::path::Path,
+    cli: &Cli,
+    rehearsal: bool,
+) -> Result<u8> {
     let handles = live::start(
         home,
         config_path,
@@ -122,6 +130,7 @@ async fn live_session(home: &Home, config_path: &std::path::Path, cli: &Cli) -> 
             link: cli.link.as_deref(),
             mock: cli.mock.as_deref(),
             allow_ended: cli.allow_ended,
+            rehearsal,
         },
     )
     .await?;

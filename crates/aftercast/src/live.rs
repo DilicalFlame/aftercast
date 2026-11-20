@@ -51,6 +51,8 @@ pub enum Msg {
     Spent(Spent),
     Broadcast(Result<Broadcast, String>),
     ReadmeChanged,
+    /// A file in `<home>/overlays` changed (rehearsal only).
+    OverlaysChanged,
     Obs(ac_obs::Update),
     Chat(ac_youtube::chat::ChatUpdate),
     /// The external current-quest file changed.
@@ -80,21 +82,104 @@ pub struct Options<'a> {
     pub link: Option<&'a str>,
     pub mock: Option<&'a Path>,
     pub allow_ended: bool,
+    /// `aftercast rehearse`: real OBS and overlays; simulated YouTube and chat; a throwaway
+    /// session under `<home>/rehearsal/`; overlay files reload in OBS when saved.
+    pub rehearsal: bool,
+}
+
+/// Video id of the simulated broadcast in a rehearsal.
+const REHEARSAL_VIDEO: &str = "rehearsal01";
+const REHEARSAL_FILES: [(&str, &str); 2] = [
+    (
+        "youtube/videos.list.json",
+        include_str!("../rehearsal/youtube/videos.list.json"),
+    ),
+    (
+        "youtube/channels.list.json",
+        include_str!("../rehearsal/youtube/channels.list.json"),
+    ),
+];
+const REHEARSAL_CHAT: &str = include_str!("../rehearsal/chat.jsonl");
+/// Overlay files are reloaded in OBS this long after the last change (editors write twice).
+const OVERLAY_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Fresh rehearsal folder: the simulated YouTube answers, the demo chat (kept if edited),
+/// no earlier rehearsal session. Sessions go there instead of `paths.sessions`.
+fn prepare_rehearsal(dir: &Path, config: &mut Config) -> Result<()> {
+    let sessions = dir.join("sessions");
+    if sessions.exists() {
+        fs::remove_dir_all(&sessions)?;
+    }
+    let requests = dir.join("requests");
+    if requests.exists() {
+        fs::remove_dir_all(&requests)?;
+    }
+    // Episode numbering starts over: every rehearsal is #1.
+    let state = dir.join("state.toml");
+    if state.exists() {
+        fs::remove_file(state)?;
+    }
+    for (rel, text) in REHEARSAL_FILES {
+        let path = dir.join(rel);
+        fs::create_dir_all(path.parent().expect("has a folder"))?;
+        fs::write(path, text)?;
+    }
+    let chat = dir.join("chat.jsonl");
+    if !chat.exists() {
+        fs::write(chat, REHEARSAL_CHAT)?;
+    }
+    config.paths.sessions = sessions;
+    Ok(())
+}
+
+/// Watches `<home>/overlays` so edited overlay files reload in OBS.
+fn watch_overlays(
+    dir: &Path,
+    tx: mpsc::UnboundedSender<Msg>,
+) -> notify::Result<notify::RecommendedWatcher> {
+    fs::create_dir_all(dir).map_err(notify::Error::io)?;
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        if res.is_ok_and(|e| e.kind.is_modify() || e.kind.is_create() || e.kind.is_remove()) {
+            let _ = tx.send(Msg::OverlaysChanged);
+        }
+    })?;
+    watcher.watch(dir, RecursiveMode::Recursive)?;
+    Ok(watcher)
 }
 
 /// Resolves the broadcast, opens or creates its session and starts the controller.
 pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result<Handles> {
-    let config = Config::load(config_path)?;
+    let mut config = Config::load(config_path)?;
     let clock = Arc::new(Clock::new());
     let (msg_tx, msg_rx) = mpsc::unbounded_channel();
+    let rehearsal_dir = home.join("rehearsal");
+    if opts.rehearsal {
+        prepare_rehearsal(&rehearsal_dir, &mut config)?;
+    }
 
     let video_id = match opts.link {
+        _ if opts.rehearsal => REHEARSAL_VIDEO.to_owned(),
         Some(link) => ac_youtube::video_id(link)
             .ok_or_else(|| AppError::Usage(format!("not a YouTube link or video id: {link}")))?,
         None => last_session_video(home)?,
     };
 
-    let mut yt = client(home, &config, opts.mock, clock.clone())?;
+    let mut yt = if opts.rehearsal {
+        // Its own quota file: a rehearsal never touches today's real quota.
+        let quota = QuotaGuard::open(
+            &rehearsal_dir.join("quota.json"),
+            config.youtube.daily_quota_reserve,
+            config.youtube.costs.clone(),
+        )?;
+        Client::mock(
+            &rehearsal_dir,
+            &rehearsal_dir.join("requests"),
+            quota,
+            clock.clone(),
+        )
+    } else {
+        client(home, &config, opts.mock, clock.clone())?
+    };
     let spent_tx = msg_tx.clone();
     yt.on_spent(move |spent| {
         let _ = spent_tx.send(Msg::Spent(spent));
@@ -122,11 +207,21 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
                 live_chat_id: broadcast.chat_id.clone(),
                 title: Some(broadcast.title.clone()),
             };
-            (Session::create(home, &config, new, clock.now_ts())?, false)
+            let state_file = if opts.rehearsal {
+                rehearsal_dir.join("state.toml")
+            } else {
+                home.state_file()
+            };
+            let session =
+                Session::create_with_state(home, &config, new, clock.now_ts(), &state_file)?;
+            (session, false)
         }
     };
     let mut state = State::load(&home.state_file())?;
-    if let Ok(rel) = session.dir.strip_prefix(home.root()) {
+    // A rehearsal is never the "last session" that post, render and resume default to.
+    if !opts.rehearsal
+        && let Ok(rel) = session.dir.strip_prefix(home.root())
+    {
         state.last_session = Some(rel.to_path_buf());
         state.save(&home.state_file())?;
     }
@@ -179,6 +274,14 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         });
     }
     let quest_watcher = watch_quest_file(home, &config, msg_tx.clone());
+    let overlay_watcher = opts
+        .rehearsal
+        .then(|| {
+            watch_overlays(&home.join("overlays"), msg_tx.clone())
+                .inspect_err(|e| tracing::warn!("overlay watcher unavailable: {e}"))
+                .ok()
+        })
+        .flatten();
     let chat_log = fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -254,7 +357,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     controller.render();
     let handle = tokio::spawn(async move {
         // Dropping a watcher stops it.
-        let _watchers = (watcher, quest_watcher);
+        let _watchers = (watcher, quest_watcher, overlay_watcher);
         if controller.config.youtube.push_on_start {
             controller.push(PushTrigger::Start, false).await;
         }
@@ -515,9 +618,16 @@ impl Controller {
     ) {
         let mut flush = interval(FLUSH_EVERY);
         let mut render_at: Option<Instant> = None;
+        let mut refresh_at: Option<Instant> = None;
         while !self.done {
             let render_due = async {
                 match render_at {
+                    Some(at) => sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
+            let refresh_due = async {
+                match refresh_at {
                     Some(at) => sleep_until(at).await,
                     None => std::future::pending().await,
                 }
@@ -536,6 +646,7 @@ impl Controller {
                     }),
                     Msg::Broadcast(result) => self.on_broadcast(result),
                     Msg::ReadmeChanged => render_at = Some(Instant::now() + README_DEBOUNCE),
+                    Msg::OverlaysChanged => refresh_at = Some(Instant::now() + OVERLAY_DEBOUNCE),
                     Msg::Obs(update) => self.on_obs(update),
                     Msg::Chat(update) => self.on_chat(update),
                     Msg::QuestFile => self.quest_file(),
@@ -550,6 +661,11 @@ impl Controller {
                 () = render_due => {
                     render_at = None;
                     self.render();
+                }
+                () = refresh_due => {
+                    refresh_at = None;
+                    self.refresh_overlays();
+                    self.notice = Some("overlays reloaded in OBS".into());
                 }
                 _ = flush.tick() => {
                     self.flush();

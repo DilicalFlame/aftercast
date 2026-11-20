@@ -82,8 +82,19 @@ impl Session {
     /// Creates the folder for a new stream: allocates the next episode number, copies the
     /// seed README and writes `session.toml`.
     pub fn create(home: &Home, config: &Config, new: NewSession, now: Timestamp) -> Result<Self> {
-        let state_path = home.state_file();
-        let mut state = State::load(&state_path)?;
+        Self::create_with_state(home, config, new, now, &home.state_file())
+    }
+
+    /// [`Session::create`] numbering episodes from the state file at `state_path` (a
+    /// rehearsal keeps its own, so it never uses up a real episode number).
+    pub fn create_with_state(
+        home: &Home,
+        config: &Config,
+        new: NewSession,
+        now: Timestamp,
+        state_path: &Path,
+    ) -> Result<Self> {
+        let mut state = State::load(state_path)?;
         let episode = state.next_episode;
         let local = now.datetime().with_timezone(&chrono::Local);
         let name = format!(
@@ -127,7 +138,7 @@ impl Session {
 
         state.next_episode = episode + 1;
         state.last_session = Some(config.paths.sessions.join(rel));
-        state.save(&state_path)?;
+        state.save(state_path)?;
         Ok(session)
     }
 

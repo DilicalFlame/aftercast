@@ -1,0 +1,24 @@
+{
+  "kind": "youtube#videoListResponse",
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "rehearsal01",
+      "snippet": {
+        "publishedAt": "@now",
+        "channelId": "UCrehearsal000000000000",
+        "title": "Rehearsal (not live)",
+        "description": "",
+        "categoryId": "28",
+        "liveBroadcastContent": "live",
+        "channelTitle": "Rehearsal",
+        "thumbnails": {}
+      },
+      "status": { "privacyStatus": "private" },
+      "liveStreamingDetails": {
+        "actualStartTime": "@now",
+        "activeLiveChatId": "rehearsal-chat"
+      }
+    }
+  ]
+}
