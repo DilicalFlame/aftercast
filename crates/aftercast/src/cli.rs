@@ -80,16 +80,22 @@ pub enum Command {
         #[arg(long)]
         language: Option<String>,
     },
-    /// Render suggested clips and topic videos
+    /// Render the items of ai/suggestions.json (default: latest session)
     Render {
         session: Option<String>,
         /// Comma-separated suggestion ids, e.g. 001,T01
         #[arg(long, value_delimiter = ',')]
         ids: Vec<String>,
+        /// Validate and show the adjusted ranges without rendering
         #[arg(long)]
         dry_run: bool,
+        /// Re-render items even when their inputs are unchanged
+        #[arg(long)]
+        force: bool,
+        /// Keystroke overlay (default: render.keys_overlay)
         #[arg(long)]
         keys: Option<KeysMode>,
+        /// Captions (default: render.captions)
         #[arg(long)]
         captions: Option<CaptionsMode>,
     },

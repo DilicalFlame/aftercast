@@ -54,6 +54,8 @@ pub struct Ctx {
     pub notes: Vec<String>,
     bar: Option<ProgressBar>,
     stage: Option<Stage>,
+    /// Log of a task outside the pipeline (see [`Ctx::begin_task`]).
+    task_log: Option<PathBuf>,
     tool_versions: BTreeMap<String, String>,
 }
 
@@ -77,6 +79,7 @@ impl Ctx {
             notes: Vec::new(),
             bar: None,
             stage: None,
+            task_log: None,
             tool_versions: BTreeMap::new(),
         })
     }
@@ -195,6 +198,16 @@ impl Ctx {
 
     pub(crate) fn begin(&mut self, stage: Stage) {
         self.stage = Some(stage);
+        self.start_bar(stage.name());
+    }
+
+    /// Progress bar and tool log for work outside the pipeline, such as rendering one item.
+    pub fn begin_task(&mut self, label: &str, log: PathBuf) {
+        self.task_log = Some(log);
+        self.start_bar(label);
+    }
+
+    fn start_bar(&mut self, label: &str) {
         if self.progress {
             let bar = ProgressBar::new(1000);
             bar.set_style(
@@ -202,17 +215,19 @@ impl Ctx {
                     .expect("valid template")
                     .progress_chars("=> "),
             );
-            bar.set_prefix(stage.name());
+            bar.set_prefix(label.to_owned());
             bar.enable_steady_tick(Duration::from_millis(200));
             self.bar = Some(bar);
         }
     }
 
-    pub(crate) fn end(&mut self) {
+    /// Ends a pipeline stage or a task.
+    pub fn end(&mut self) {
         if let Some(bar) = self.bar.take() {
             bar.finish();
         }
         self.stage = None;
+        self.task_log = None;
     }
 
     /// Progress of the running stage, 0.0 to 1.0.
@@ -230,6 +245,9 @@ impl Ctx {
 
     /// Log file of the running stage.
     pub fn log_file(&self) -> PathBuf {
+        if let Some(log) = &self.task_log {
+            return log.clone();
+        }
         let name = self.stage.map_or("post", |s| s.name());
         self.derived(&format!("logs/{name}.log"))
     }

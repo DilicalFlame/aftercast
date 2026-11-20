@@ -89,10 +89,22 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
 {
+    ffmpeg_in(ctx, None, args, total_s)
+}
+
+/// [`ffmpeg`] run in `dir`, so filter arguments can name files there without escaping.
+pub fn ffmpeg_in<I, S>(ctx: &mut Ctx, dir: Option<&Path>, args: I, total_s: f64) -> Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
     note_version(ctx, "ffmpeg");
     let log = ctx.log_file();
     let before = fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
     let mut cmd = Command::new("ffmpeg");
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
     cmd.args(["-hide_banner", "-nostats", "-y", "-progress", "pipe:1"]);
     cmd.args(args);
     let mut child = spawn_logged(ctx, &mut cmd)?;
@@ -130,11 +142,7 @@ fn spawn_logged(ctx: &Ctx, cmd: &mut Command) -> Result<std::process::Child> {
         .append(true)
         .open(&log_path)
         .map_err(|e| format!("{}: {e}", log_path.display()))?;
-    let line = std::iter::once(cmd.get_program())
-        .chain(cmd.get_args())
-        .map(quote)
-        .collect::<Vec<_>>()
-        .join(" ");
+    let line = command_line(cmd);
     tracing::info!("{line}");
     let _ = writeln!(log, "$ {line}");
     let _ = log.flush();
@@ -150,6 +158,15 @@ fn spawn_logged(ctx: &Ctx, cmd: &mut Command) -> Result<std::process::Child> {
                 format!("{program}: {e}")
             }
         })
+}
+
+/// The command as one shell-like line, for logs and `meta.json`.
+pub fn command_line(cmd: &Command) -> String {
+    std::iter::once(cmd.get_program())
+        .chain(cmd.get_args())
+        .map(quote)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn quote(arg: &OsStr) -> String {

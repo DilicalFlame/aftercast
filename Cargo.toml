@@ -15,6 +15,7 @@ ac-capture = { path = "crates/ac-capture" }
 ac-core = { path = "crates/ac-core" }
 ac-obs = { path = "crates/ac-obs" }
 ac-post = { path = "crates/ac-post" }
+ac-render = { path = "crates/ac-render" }
 ac-server = { path = "crates/ac-server" }
 ac-template = { path = "crates/ac-template" }
 ac-tui = { path = "crates/ac-tui" }

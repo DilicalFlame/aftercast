@@ -56,6 +56,33 @@ fn run(cli: Cli) -> Result<u8> {
             force,
             language,
         ),
+        Some(Command::Render {
+            session,
+            ids,
+            dry_run,
+            force,
+            keys,
+            captions,
+        }) => {
+            use ac_core::config::{Captions, KeysOverlay};
+            let config = Config::load(&config_path)?;
+            let opts = ac_render::Options {
+                ids,
+                dry_run,
+                force,
+                keys: keys.map_or(config.render.keys_overlay, |k| match k {
+                    cli::KeysMode::Burn => KeysOverlay::Burn,
+                    cli::KeysMode::Alpha => KeysOverlay::Alpha,
+                    cli::KeysMode::None => KeysOverlay::None,
+                }),
+                captions: captions.map_or(config.render.captions, |c| match c {
+                    cli::CaptionsMode::Burn => Captions::Burn,
+                    cli::CaptionsMode::Srt => Captions::Srt,
+                    cli::CaptionsMode::None => Captions::None,
+                }),
+            };
+            render(&home, config, session.as_deref(), &opts)
+        }
         None => runtime()?.block_on(live_session(&home, &config_path, &cli)),
         Some(_) => {
             eprintln!("not yet implemented");
@@ -228,6 +255,78 @@ fn post(
     }
     println!("index: {}", dir.join("derived").join("index.md").display());
     Ok(exit::OK)
+}
+
+fn render(
+    home: &Home,
+    config: Config,
+    session: Option<&str>,
+    opts: &ac_render::Options,
+) -> Result<u8> {
+    use ac_render::Outcome;
+    use error::AppError;
+    let dir = session_dir(home, &config, session)?;
+    let mut ctx = ac_post::Ctx::open(home.clone(), config, &dir).map_err(AppError::Usage)?;
+    println!("render {}", dir.display());
+    let report = ac_render::run(&mut ctx, opts).map_err(AppError::Usage)?;
+    let hms_ms = |t: f64| {
+        let ms = (t * 1000.0).round() as u64;
+        format!(
+            "{}.{:03}",
+            ac_core::time::hms((ms / 1000) as f64),
+            ms % 1000
+        )
+    };
+    let (mut rendered, mut skipped, mut failed) = (0, 0, 0);
+    for (c, outcome) in &report {
+        let item = &c.item;
+        let what = match outcome {
+            Outcome::Valid => format!("valid, {:.1} s", c.out_len()),
+            Outcome::Rendered { duration_s } => {
+                rendered += 1;
+                format!("rendered, {duration_s:.1} s")
+            }
+            Outcome::UpToDate => {
+                skipped += 1;
+                "up to date".to_owned()
+            }
+            Outcome::Failed(why) => {
+                failed += 1;
+                format!("FAILED: {why}")
+            }
+        };
+        println!(
+            "  {} {:<5} {}  {what}",
+            item.id,
+            item.kind.name(),
+            item.title
+        );
+        for cut in &c.cuts {
+            let [a, b] = cut.suggested;
+            let speed = if cut.speed == 1.0 {
+                String::new()
+            } else {
+                format!("  x{}", cut.speed)
+            };
+            println!(
+                "      {} to {}  (suggested {} to {}){speed}",
+                hms_ms(cut.start),
+                hms_ms(cut.end),
+                hms_ms(a),
+                hms_ms(b)
+            );
+        }
+        for w in &c.warnings {
+            println!("      warning: {w}");
+        }
+        if matches!(outcome, Outcome::Rendered { .. } | Outcome::UpToDate) {
+            println!("      {}", ac_render::out_dir(&dir, item).display());
+        }
+    }
+    if !opts.dry_run {
+        println!("{rendered} rendered, {skipped} up to date, {failed} failed");
+    }
+    Ok(if failed > 0 { exit::GENERIC } else { exit::OK })
 }
 
 /// A session folder from a path, a folder name like `2026-11-19_ep042`, or the last session.
