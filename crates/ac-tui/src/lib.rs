@@ -944,10 +944,21 @@ impl App {
                     self.home_act(item, view);
                 }
             }
-            // h/l: an input's volume by 1 dB, a source hidden or shown.
+            // h/l: Start and Quit side by side, an input's volume by 1 dB, a source hidden
+            // or shown.
             KeyCode::Char(c @ ('h' | 'l')) => {
                 let up = c == 'l';
                 match focused {
+                    Some(home::Item::Start | home::Item::Quit) => {
+                        let to = if up {
+                            home::Item::Quit
+                        } else {
+                            home::Item::Start
+                        };
+                        if let Some(i) = items.iter().position(|i| *i == to) {
+                            self.home_pick = i;
+                        }
+                    }
                     Some(home::Item::Audio(name)) => {
                         if let Some(a) = view.obs.audio(&name) {
                             let db = (a.volume_db + if up { 1.0 } else { -1.0 }).round();
@@ -2064,13 +2075,10 @@ impl App {
                 (" Help · any key closes ".into(), lines, 84, height)
             }
             Mode::Preflight => {
-                // The status bar's live part, without the episode chip the page already shows.
-                let mut status = self.status_line(view);
-                status.spans.remove(0);
                 home::draw(
                     frame,
                     view,
-                    status,
+                    self.clock.now_ts(),
                     self.spin(),
                     self.home_pick,
                     self.home_tab,
@@ -3810,8 +3818,8 @@ mute Mic/Aux
         assert!(text.contains("Start the session"), "{text}");
         assert!(text.contains("Enter start the session"), "{text}");
         assert!(text.contains("Quit, keep nothing"), "{text}");
-        // No status bar on Home: the page starts at the top.
-        assert!(text.lines().next().unwrap().contains("aftercast"), "{text}");
+        // No status bar on Home: the page starts at the top with the episode.
+        assert!(text.lines().next().unwrap().contains("#042"), "{text}");
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
         // Esc does not leave a draft Home.
         press(&mut app, KeyCode::Esc);
@@ -3948,22 +3956,33 @@ mute Mic/Aux
             let mut app = App::new(clock.clone(), rx, cmd_tx);
             let text = draw(&mut app, &view);
             // Passing checks are counted, never listed.
-            assert!(text.contains("✔ 1 of 2 checks pass"), "{layout:?}: {text}");
-            assert!(!text.contains("✔ OBS connected"), "{layout:?}: {text}");
+            assert!(text.contains("✔ 1 of 2 pass"), "{layout:?}: {text}");
+            assert!(!text.contains("OBS connected"), "{layout:?}: {text}");
             if layout == HomeLayout::Tabs {
+                // Checks (with Status), then Audio, then On air.
                 assert!(
-                    text.contains("Checks · 1 need you") && !text.contains("AUDIO"),
+                    text.contains("Checks · 1 need you") && text.contains("Status"),
                     "{text}"
                 );
-                app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view);
+                assert!(!text.contains("Mic/Aux"), "{text}");
+                let next = |app: &mut App| {
+                    app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view)
+                };
+                next(&mut app);
                 let text = draw(&mut app, &view);
                 assert!(
-                    text.contains("AUDIO") && text.contains("ON AIR · CODE"),
+                    text.contains("Mic/Aux") && !text.contains("Camera"),
+                    "{text}"
+                );
+                next(&mut app);
+                let text = draw(&mut app, &view);
+                assert!(
+                    text.contains("On air · Code") && text.contains("Camera"),
                     "{text}"
                 );
             } else {
                 assert!(
-                    text.contains("AUDIO") && text.contains("Camera"),
+                    text.contains("Mic/Aux") && text.contains("Camera") && text.contains("Status"),
                     "{layout:?}: {text}"
                 );
             }

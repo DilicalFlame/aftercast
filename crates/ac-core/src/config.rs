@@ -59,17 +59,19 @@ impl Default for Tui {
     }
 }
 
-/// Home's arrangement (`tui.home_layout`; `v` on Home cycles them).
+/// How Home arranges its cards (Checks, Status, Audio, On air) under the primary card
+/// (`tui.home_layout`; `v` on Home cycles them).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HomeLayout {
-    /// What needs you on the left; audio and the scene on air on the right.
+    /// A 2 by 2 grid: Checks and Status on top, On air and Audio below.
     Columns,
-    /// One full-width page: what needs you, audio, the scene on air.
+    /// The cards stacked, full width.
     Page,
-    /// Checks on the left; audio and the scene's sources, one per line, on the right.
-    Classic,
-    /// Two tabs, Checks and Studio, each with the whole page.
+    /// All four side by side, for wide terminals.
+    #[serde(alias = "classic")]
+    Row,
+    /// Three tabs: Checks (with Status), Audio, On air.
     Tabs,
 }
 
@@ -77,7 +79,7 @@ impl HomeLayout {
     pub const ALL: [HomeLayout; 4] = [
         HomeLayout::Columns,
         HomeLayout::Page,
-        HomeLayout::Classic,
+        HomeLayout::Row,
         HomeLayout::Tabs,
     ];
 
@@ -85,7 +87,7 @@ impl HomeLayout {
         match self {
             HomeLayout::Columns => "columns",
             HomeLayout::Page => "page",
-            HomeLayout::Classic => "classic",
+            HomeLayout::Row => "row",
             HomeLayout::Tabs => "tabs",
         }
     }
