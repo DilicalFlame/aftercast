@@ -191,7 +191,7 @@ fn ask(ctx: &mut Ctx, questions: &[Question]) -> Result<Vec<Answer>> {
     let script = tool::write_helpers(&ctx.home)?.join("correct.py");
     let tasks = ctx.derived("correct.tasks.json");
     let out = ctx.derived("correct.out.json");
-    let (context, _) = transcribe::context(ctx);
+    let context = transcribe::context(ctx);
     write_json(
         &tasks,
         &serde_json::json!({ "context": context, "questions": questions }),

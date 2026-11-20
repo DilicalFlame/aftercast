@@ -290,7 +290,9 @@ picks out of what you typed, the commands you ran, your commits, the README and 
 words Whisper does not already know make it (one token in its own vocabulary means it knows
 the word), so `ratatui`, `tokio` or `WezTerm` do and "world" or "moment" do not; template
 text, the bot's replies, `echo` text, `-Flags`, one-off typos and anything that looks like a
-secret are left out. Words that are English and jargon at once ("Rust", "clap", "nom") belong
+secret are left out. These go to Whisper as its starting prompt only, not as "hotwords"
+repeated in every window: on a real stream, hotwords made it drop whole sentences or loop.
+Words that are English and jargon at once ("Rust", "clap", "nom") belong
 in `post.vocabulary`. Whisper sometimes makes text up, such as a sentence repeated in a
 fraction of a second or its hint list read into silence; those segments (near-zero
 confidence, faster than speech, or a repeat of the one before) are dropped and `post` says

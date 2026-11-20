@@ -251,11 +251,9 @@ fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
     if models.exists() {
         args.extend(["--models".into(), models.into()]);
     }
-    let (prompt, hotwords) = context(ctx);
-    args.extend(["--prompt".into(), prompt.into()]);
-    if !hotwords.is_empty() {
-        args.extend(["--hotwords".into(), hotwords.into()]);
-    }
+    // No hotwords: repeated in every window, they made Whisper drop whole sentences (or loop)
+    // on the owner's recordings; the prompt alone kept every sentence.
+    args.extend(["--prompt".into(), context(ctx).into()]);
     let model = ctx.config.post.whisper_model.clone();
     ctx.note_tool("transcriber", format!("{backend} {model}"));
     ctx.set_message(format!("{backend} {model}"));
@@ -275,11 +273,11 @@ fn python(ctx: &mut Ctx, backend: &str) -> Result<Words> {
 /// Longest prompt passed to Whisper; it keeps only about 220 tokens of it.
 const PROMPT_MAX: usize = 800;
 
-/// The transcriber's context: a prompt (series, title, `post.vocabulary` and this
-/// stream's terms from `vocab.json`, chapter and quest titles) and the vocabulary as hotwords, applied to every 30 s window. Words only:
-/// Whisper reads the prompt as the speech before the recording, and descriptive sentences
-/// ("about the Rust language", "in English and Hindi") made it mishear more in tests.
-pub fn context(ctx: &Ctx) -> (String, String) {
+/// The transcriber's prompt: series, title, `post.vocabulary` and this stream's terms from
+/// `vocab.json`, chapter and quest titles. Words only: Whisper reads the prompt as the
+/// speech before the recording, and descriptive sentences ("about the Rust language", "in
+/// English and Hindi") made it mishear more in tests.
+pub fn context(ctx: &Ctx) -> String {
     use ac_core::event::EventKind;
     let mut topics: Vec<String> = Vec::new();
     for e in &ctx.events {
@@ -292,26 +290,13 @@ pub fn context(ctx: &Ctx) -> (String, String) {
         }
     }
     let terms = crate::vocab::all(ctx);
-    let prompt = build_prompt(
+    build_prompt(
         &ctx.config.channel.series,
         ctx.session.meta.title_at_start.as_deref().unwrap_or(""),
         &topics,
         &terms,
-    );
-    // Hotwords are repeated for every window; the strongest terms are enough.
-    (
-        prompt,
-        terms
-            .iter()
-            .take(HOTWORDS)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(" "),
     )
 }
-
-/// Terms passed as hotwords: `post.vocabulary` first, then the stream's strongest.
-const HOTWORDS: usize = 24;
 
 fn build_prompt(series: &str, title: &str, topics: &[String], vocabulary: &[String]) -> String {
     let mut parts = vec![format!("{series}, a live coding stream.")];
@@ -339,7 +324,7 @@ fn whisper_cpp(ctx: &mut Ctx) -> Result<Words> {
     }
     let base = ctx.derived("whisper");
     let language = ctx.language().to_owned();
-    let (prompt, _) = context(ctx);
+    let prompt = context(ctx);
     let args: Vec<OsString> = vec![
         "--prompt".into(),
         prompt.into(),
