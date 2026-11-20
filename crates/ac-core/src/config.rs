@@ -44,6 +44,8 @@ pub struct Tui {
     pub animations: bool,
     /// Every chat author gets their own color.
     pub name_colors: bool,
+    /// How Home arranges its sections.
+    pub home_layout: HomeLayout,
 }
 
 impl Default for Tui {
@@ -52,6 +54,39 @@ impl Default for Tui {
             wrap_lines: false,
             animations: true,
             name_colors: true,
+            home_layout: HomeLayout::Columns,
+        }
+    }
+}
+
+/// Home's arrangement (`tui.home_layout`; `v` on Home cycles them).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HomeLayout {
+    /// What needs you on the left; audio and the scene on air on the right.
+    Columns,
+    /// One full-width page: what needs you, audio, the scene on air.
+    Page,
+    /// Checks on the left; audio and the scene's sources, one per line, on the right.
+    Classic,
+    /// Two tabs, Checks and Studio, each with the whole page.
+    Tabs,
+}
+
+impl HomeLayout {
+    pub const ALL: [HomeLayout; 4] = [
+        HomeLayout::Columns,
+        HomeLayout::Page,
+        HomeLayout::Classic,
+        HomeLayout::Tabs,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            HomeLayout::Columns => "columns",
+            HomeLayout::Page => "page",
+            HomeLayout::Classic => "classic",
+            HomeLayout::Tabs => "tabs",
         }
     }
 }

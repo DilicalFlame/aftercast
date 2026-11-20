@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use ac_core::command::{Command, OutputAction};
+use ac_core::config::HomeLayout;
 use ac_core::obs::{Audio, Media};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
@@ -60,29 +61,38 @@ pub fn command(item: &Item, view: &View) -> Option<Command> {
     })
 }
 
+/// The tabs of the `tabs` layout.
+pub const TABS: [&str; 2] = ["Checks", "Studio"];
+
 /// Everything j/k can reach, in order: the decision, the fixes, audio, the scene on air.
-pub fn items(view: &View) -> Vec<Item> {
+/// In the `tabs` layout only the open tab's (`tab`) and the buttons.
+pub fn items(view: &View, tab: usize) -> Vec<Item> {
+    let tabs = view.config.tui.home_layout == HomeLayout::Tabs;
     let mut items = if view.begun {
         vec![Item::Dashboard]
     } else {
         vec![Item::Start, Item::Quit]
     };
-    items.extend(
-        sorted_checks(view)
-            .into_iter()
-            .filter_map(|c| fix_key(c).map(Item::Fix)),
-    );
-    items.extend(
-        sorted_audio(view)
-            .into_iter()
-            .map(|a| Item::Audio(a.name.clone())),
-    );
-    let scene = view.state.scene.as_deref().unwrap_or_default();
-    items.extend(
-        view.obs
-            .sources_in(scene)
-            .map(|i| Item::Source(i.source.clone())),
-    );
+    if !tabs || tab == 0 {
+        items.extend(
+            sorted_checks(view)
+                .into_iter()
+                .filter_map(|c| fix_key(c).map(Item::Fix)),
+        );
+    }
+    if !tabs || tab == 1 {
+        items.extend(
+            sorted_audio(view)
+                .into_iter()
+                .map(|a| Item::Audio(a.name.clone())),
+        );
+        let scene = view.state.scene.as_deref().unwrap_or_default();
+        items.extend(
+            view.obs
+                .sources_in(scene)
+                .map(|i| Item::Source(i.source.clone())),
+        );
+    }
     items
 }
 
@@ -170,8 +180,15 @@ fn sorted_audio(view: &View) -> Vec<&Audio> {
 /// Every section takes the full width and only as many rows as it needs, so nothing is
 /// cut mid-word; the sections below the header scroll as one page, only when they do not
 /// fit, keeping the focused row in view.
-pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static str, pick: usize) {
-    let items = items(view);
+pub fn draw(
+    frame: &mut Frame,
+    view: &View,
+    live: Line<'static>,
+    spin: &'static str,
+    pick: usize,
+    tab: usize,
+) {
+    let items = items(view, tab);
     let focus = items.get(pick).cloned();
     let area = frame.area();
     let outer = Rect {
@@ -220,36 +237,58 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
     frame.render_widget(Paragraph::new(who), who_area);
     frame.render_widget(Paragraph::new(explain), about);
 
-    // The sections, each as tall as its content. Very wide terminals get two columns.
+    // The sections, each as tall as its content, arranged as `tui.home_layout` says.
     let ctx = Ctx {
         view,
         focus: focus.as_ref(),
         spin,
     };
-    let mut more = (false, false);
-    if body.width >= 160 {
-        let [l, r] = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .areas(body);
-        // A gap of 3 between the columns.
-        let l = Rect {
-            width: l.width.saturating_sub(3),
-            ..l
-        };
-        let left = join(vec![ctx.needs_you(l.width), ctx.fine(l.width)]);
-        let right = join(vec![ctx.audio(r.width), ctx.on_air(r.width)]);
-        for (section, rect) in [(left, l), (right, r)] {
-            let m = page(frame, section, rect);
-            more = (more.0 || m.0, more.1 || m.1);
+    let more = match view.config.tui.home_layout {
+        HomeLayout::Page => page(
+            frame,
+            join(vec![
+                ctx.needs_you(body.width),
+                ctx.audio(body.width),
+                ctx.on_air(body.width),
+            ]),
+            body,
+        ),
+        HomeLayout::Columns => {
+            let [l, r] = columns(body, 50);
+            let left = page(frame, ctx.needs_you(l.width), l);
+            let right = page(
+                frame,
+                join(vec![ctx.audio(r.width), ctx.on_air(r.width)]),
+                r,
+            );
+            (left.0 || right.0, left.1 || right.1)
         }
-    } else {
-        let all = join(vec![
-            ctx.needs_you(body.width),
-            ctx.audio(body.width),
-            ctx.on_air(body.width),
-            ctx.fine(body.width),
-        ]);
-        more = page(frame, all, body);
-    }
+        HomeLayout::Classic => {
+            let [l, r] = columns(body, 55);
+            let left = page(frame, ctx.needs_you(l.width), l);
+            let right = page(
+                frame,
+                join(vec![ctx.audio(r.width), ctx.on_air_list(r.width)]),
+                r,
+            );
+            (left.0 || right.0, left.1 || right.1)
+        }
+        HomeLayout::Tabs => {
+            let [bar, _, rest] = Layout::vertical([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(1),
+            ])
+            .areas(body);
+            frame.render_widget(tab_bar(view, tab), bar);
+            let content = if tab == 0 {
+                ctx.needs_you(rest.width)
+            } else {
+                join(vec![ctx.audio(rest.width), ctx.on_air_list(rest.width)])
+            };
+            page(frame, content, rest)
+        }
+    };
 
     // The frame last: its bottom border says what Enter does and whether there is more.
     let mut block = frame_block()
@@ -273,6 +312,51 @@ pub fn draw(frame: &mut Frame, view: &View, live: Line<'static>, spin: &'static 
             .title_bottom(Span::styled(arrows, Style::new().fg(WARN)).into_right_aligned_line());
     }
     frame.render_widget(block, outer);
+}
+
+/// Two columns of `body`, the left `left` percent wide, with a gap of 3.
+fn columns(body: Rect, left: u16) -> [Rect; 2] {
+    let [l, r] = Layout::horizontal([
+        Constraint::Percentage(left),
+        Constraint::Percentage(100 - left),
+    ])
+    .areas(body);
+    [
+        Rect {
+            width: l.width.saturating_sub(3),
+            ..l
+        },
+        r,
+    ]
+}
+
+/// The `tabs` layout's tab bar: the open tab lit, each with what it holds.
+fn tab_bar(view: &View, tab: usize) -> Line<'static> {
+    let open = view
+        .preflight
+        .iter()
+        .filter(|c| c.state != CheckState::Ok)
+        .count();
+    let counts = [
+        if open == 0 {
+            "all fine".to_owned()
+        } else {
+            format!("{open} need you")
+        },
+        format!("{} audio", view.obs.audio.len()),
+    ];
+    let mut spans = vec![Span::raw(" ")];
+    for (i, name) in TABS.iter().enumerate() {
+        let style = if i == tab {
+            Style::new().fg(Color::Black).bg(ACCENT).bold()
+        } else {
+            Style::new().fg(TEXT).bg(RAISED)
+        };
+        spans.push(Span::styled(format!("  {name} · {}  ", counts[i]), style));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled("  [ ] switch", Style::new().fg(FAINT)));
+    Line::from(spans)
 }
 
 /// A section's rows (already wrapped to its width) and the row holding the focus.
@@ -392,10 +476,21 @@ impl Ctx<'_> {
             .into_iter()
             .filter(|c| c.state != CheckState::Ok)
             .collect();
-        let mut lines = vec![section(&format!("Needs you · {}", open.len()))];
+        // Passing checks are counted, not listed: only what is not fine takes room.
+        let (ok, _, total) = counts(&self.view.preflight);
+        let mut lines = vec![Line::from(vec![
+            Span::styled(
+                format!(" NEEDS YOU · {}", open.len()),
+                Style::new().fg(MUTED).bold(),
+            ),
+            Span::styled(
+                format!("     ✔ {ok} of {total} checks pass"),
+                Style::new().fg(OK),
+            ),
+        ])];
         if open.is_empty() {
             lines.push(Line::styled(
-                " ✔ Nothing. Every check is fine.",
+                " Nothing. Every check passes.",
                 Style::new().fg(OK),
             ));
             return (lines, None);
@@ -469,10 +564,11 @@ impl Ctx<'_> {
             .max()
             .unwrap_or(0)
             .min(20);
-        // " name  " + "▕bar▏" + "  -38 dB" + "   vol -12" + "   muted"
+        // " name  " + "▕bar▏" + " -38dB" + "  vol-12" + "  muted": the meter gives way
+        // first, so the row fits narrow columns too.
         let bar = usize::from(width)
-            .saturating_sub(name_width + 34)
-            .clamp(8, 60);
+            .saturating_sub(name_width + 26)
+            .clamp(4, 24);
         let mut focus = None;
         for a in audio {
             let level = levels.get(&a.name).copied();
@@ -486,17 +582,17 @@ impl Ctx<'_> {
             spans.extend(meter(level, a.muted, bar));
             spans.push(Span::styled(
                 match level {
-                    Some(db) if db > -60.0 && !a.muted => format!("  {db:>3.0} dB"),
-                    _ => "     …  ".to_owned(),
+                    Some(db) if db > -60.0 && !a.muted => format!(" {db:>3.0}dB"),
+                    _ => "    … ".to_owned(),
                 },
                 Style::new().fg(MUTED),
             ));
             spans.push(Span::styled(
-                format!("   vol {:+.0}", a.volume_db),
+                format!("  vol{:+.0}", a.volume_db),
                 Style::new().fg(FAINT),
             ));
             if a.muted {
-                spans.push(Span::styled("   muted", Style::new().fg(ACCENT).bold()));
+                spans.push(Span::styled("  muted", Style::new().fg(ACCENT).bold()));
             }
             let on = self.focus == Some(&Item::Audio(a.name.clone()));
             if on {
@@ -547,34 +643,35 @@ impl Ctx<'_> {
         (lines, focus)
     }
 
-    /// Checks that are fine, folded into rows of whole chips.
-    fn fine(&self, width: u16) -> Section {
-        let fine: Vec<&Check> = self
-            .view
-            .preflight
-            .iter()
-            .filter(|c| c.state == CheckState::Ok)
-            .collect();
-        if fine.is_empty() {
+    /// The scene on air: its sources one per line, each with its switch.
+    fn on_air_list(&self, width: u16) -> Section {
+        let scene = self.view.state.scene.clone().unwrap_or_default();
+        if scene.is_empty() {
             return (Vec::new(), None);
         }
-        let chips = fine
-            .iter()
-            .map(|c| {
-                (
-                    vec![
-                        Span::styled(" ✔ ", Style::new().fg(OK)),
-                        Span::styled(format!("{} ", c.label), Style::new().fg(MUTED)),
-                    ],
-                    false,
-                )
-            })
-            .collect();
-        let head = Span::styled(
-            format!(" FINE · {}   ", fine.len()),
-            Style::new().fg(MUTED).bold(),
-        );
-        (pack(head, chips, usize::from(width)).0, None)
+        let mut lines = vec![section(&format!("On air · {scene}"))];
+        let mut focus = None;
+        for item in self.view.obs.sources_in(&scene) {
+            let (mark, style) = if item.enabled {
+                ("━━●", Style::new().fg(OK))
+            } else {
+                ("●━━", Style::new().fg(FAINT))
+            };
+            let line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(format!("{mark} "), style),
+                Span::styled(
+                    item.source.clone(),
+                    Style::new().fg(if item.enabled { TEXT } else { MUTED }),
+                ),
+            ]);
+            let on = self.focus == Some(&Item::Source(item.source.clone()));
+            if on {
+                focus = Some(lines.len());
+            }
+            lines.push(lit(line, on, width));
+        }
+        (lines, focus)
     }
 }
 
@@ -707,17 +804,20 @@ pub fn hints(view: &View) -> Vec<(String, String)> {
         (false, true) => "quit, keep nothing",
         _ => "quit",
     };
-    [
-        ("j/k", "move"),
-        ("Tab", "next group"),
-        ("Enter", "do it"),
+    let mut pairs = vec![("j/k", "move"), ("Tab", "next group"), ("Enter", "do it")];
+    if view.config.tui.home_layout == HomeLayout::Tabs {
+        pairs.push(("[ ]", "tab"));
+    }
+    pairs.extend([
+        ("v", "layout"),
         ("q", quit),
         (",", "settings"),
         (":", "command"),
-    ]
-    .into_iter()
-    .map(|(k, l)| (k.to_owned(), l.to_owned()))
-    .collect()
+    ]);
+    pairs
+        .into_iter()
+        .map(|(k, l)| (k.to_owned(), l.to_owned()))
+        .collect()
 }
 
 /// How often the page redraws to keep meters fluid.

@@ -197,3 +197,4 @@ current_quest_file = ""         # e.g. "P:/quests/current.json"
 wrap_lines = false              # wrap long chat lines instead of cutting them with ...
 animations = true               # pulsing dots, spinners, gliding panes
 name_colors = true              # a color per chat author
+home_layout = "columns"         # columns | page | classic | tabs (v on Home cycles them)

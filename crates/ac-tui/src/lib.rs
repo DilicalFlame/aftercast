@@ -343,8 +343,9 @@ struct App {
     picked: bool,
     /// Audio meters were asked of OBS (a page showing them is open).
     meters: bool,
-    /// The focused item on Home.
+    /// The focused item on Home, and its open tab (`tabs` layout).
     home_pick: usize,
+    home_tab: usize,
     /// Palette lines run before, oldest first (`<home>/state/history`), read on first use.
     history: Option<Vec<String>>,
     filter: Filter,
@@ -386,6 +387,7 @@ impl App {
             picked: false,
             meters: false,
             home_pick: 0,
+            home_tab: 0,
             history: None,
             filter: Filter::All,
             split: [0.45, 0.6, 0.5],
@@ -914,7 +916,7 @@ impl App {
 
     /// A key on Home. Before the session starts, Esc and 0 stay (Home is the only way in).
     fn home_input(&mut self, code: KeyCode, view: &View) {
-        let items = home::items(view);
+        let items = home::items(view, self.home_tab);
         let last = items.len().saturating_sub(1);
         self.home_pick = self.home_pick.min(last);
         let focused = items.get(self.home_pick).cloned();
@@ -958,6 +960,35 @@ impl App {
                         visible: Some(up),
                     }),
                     _ => {}
+                }
+            }
+            // The tabs layout: [ and ] switch tabs (the buttons keep the focus).
+            KeyCode::Char(c @ ('[' | ']'))
+                if view.config.tui.home_layout == ac_core::config::HomeLayout::Tabs =>
+            {
+                let n = home::TABS.len();
+                self.home_tab = (self.home_tab + if c == ']' { 1 } else { n - 1 }) % n;
+                self.home_pick = 0;
+            }
+            // v: the next layout, saved like any setting.
+            KeyCode::Char('v') => {
+                use ac_core::config::HomeLayout;
+                let all = HomeLayout::ALL;
+                let now = all
+                    .iter()
+                    .position(|l| *l == view.config.tui.home_layout)
+                    .unwrap_or(0);
+                let next = all[(now + 1) % all.len()];
+                self.home_pick = 0;
+                self.home_tab = 0;
+                let value = ac_core::config::Value::Text(next.name().into());
+                match ac_core::config::set_value(&view.config_path, "tui.home_layout", Some(value))
+                {
+                    Ok(()) => {
+                        self.message = Some(format!("Home layout: {}", next.name()));
+                        self.send(Command::Reload);
+                    }
+                    Err(e) => self.message = Some(e.to_string()),
                 }
             }
             KeyCode::Esc | KeyCode::Char('0') if view.begun => self.mode = Mode::Normal,
@@ -2036,7 +2067,14 @@ impl App {
                 // The status bar's live part, without the episode chip the page already shows.
                 let mut status = self.status_line(view);
                 status.spans.remove(0);
-                home::draw(frame, view, status, self.spin(), self.home_pick);
+                home::draw(
+                    frame,
+                    view,
+                    status,
+                    self.spin(),
+                    self.home_pick,
+                    self.home_tab,
+                );
                 return;
             }
             Mode::ConfirmStreamStop => (
@@ -3869,6 +3907,71 @@ mute Mic/Aux
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Enter);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
+    }
+
+    #[test]
+    fn every_home_layout_draws_tabs_switch_and_v_cycles_the_layout() {
+        use ac_core::config::HomeLayout;
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.state.scene = Some("Code".into());
+        let dir = tempfile::tempdir().unwrap();
+        view.config_path = dir.path().join("aftercast.toml");
+        std::fs::write(&view.config_path, "").unwrap();
+        let draw = |app: &mut App, view: &View| {
+            let mut t =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 24)).unwrap();
+            t.draw(|f| app.draw(f, view)).unwrap();
+            let b = t.backend().buffer().clone();
+            (0..b.area.height)
+                .map(|y| {
+                    (0..b.area.width)
+                        .map(|x| b[(x, y)].symbol())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+                .join(
+                    "
+",
+                )
+        };
+        for layout in HomeLayout::ALL {
+            let mut config = ac_core::config::Config::default();
+            config.tui.home_layout = layout;
+            view.config = Arc::new(config);
+            let (_tx, rx) = watch::channel(view.clone());
+            let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+            let mut app = App::new(clock.clone(), rx, cmd_tx);
+            let text = draw(&mut app, &view);
+            // Passing checks are counted, never listed.
+            assert!(text.contains("✔ 1 of 2 checks pass"), "{layout:?}: {text}");
+            assert!(!text.contains("✔ OBS connected"), "{layout:?}: {text}");
+            if layout == HomeLayout::Tabs {
+                assert!(
+                    text.contains("Checks · 1 need you") && !text.contains("AUDIO"),
+                    "{text}"
+                );
+                app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view);
+                let text = draw(&mut app, &view);
+                assert!(
+                    text.contains("AUDIO") && text.contains("ON AIR · CODE"),
+                    "{text}"
+                );
+            } else {
+                assert!(
+                    text.contains("AUDIO") && text.contains("Camera"),
+                    "{layout:?}: {text}"
+                );
+            }
+        }
+        // v writes the next layout and asks for a reload.
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.key(KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE), &view);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Reload);
+        let file = std::fs::read_to_string(&view.config_path).unwrap();
+        assert!(file.contains("home_layout = \"columns\""), "{file}");
     }
 
     #[test]

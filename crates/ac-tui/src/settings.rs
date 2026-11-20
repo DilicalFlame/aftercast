@@ -127,6 +127,15 @@ pub fn all() -> Vec<Setting> {
             Now,
             |c| Value::Bool(c.tui.name_colors),
         ),
+        s(
+            0,
+            "tui.home_layout",
+            "Home layout",
+            "columns: what needs you beside audio and the scene on air. page: one full-width page. classic: checks beside audio and sources listed one per line. tabs: Checks and Studio, switched with [ and ]. v on Home cycles them.",
+            Choice(&["columns", "page", "classic", "tabs"]),
+            Now,
+            |c| text(c.tui.home_layout.name()),
+        ),
         // Stream
         s(
             1,
