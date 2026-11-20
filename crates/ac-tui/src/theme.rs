@@ -51,6 +51,11 @@ impl UserColors {
         let next = self.0.len();
         *self.0.entry(id.to_owned()).or_insert_with(|| nth(next))
     }
+
+    /// The color already handed to `id` (gray for someone not seen yet).
+    pub fn peek(&self, id: &str) -> Color {
+        self.0.get(id).copied().unwrap_or(MUTED)
+    }
 }
 
 fn nth(i: usize) -> Color {

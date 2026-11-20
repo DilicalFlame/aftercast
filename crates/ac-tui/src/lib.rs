@@ -247,8 +247,8 @@ struct App {
     focus: Pane,
     chapters: ListState,
     questions: ListState,
-    log_scroll: usize,
-    chat_scroll: usize,
+    chat_feed: Feed,
+    log_feed: Feed,
     /// The `!title` last answered, so a stale snapshot does not ask again.
     title_answered: Option<String>,
     message: Option<String>,
@@ -288,8 +288,8 @@ impl App {
             focus: Pane::Chapters,
             chapters: ListState::default(),
             questions: ListState::default(),
-            log_scroll: 0,
-            chat_scroll: 0,
+            chat_feed: Feed::default(),
+            log_feed: Feed::default(),
             title_answered: None,
             message: None,
             end_prompted: false,
@@ -570,10 +570,10 @@ impl App {
             KeyCode::Char(c) if Pane::from_key(c).is_some() => {
                 self.focus = Pane::from_key(c).unwrap_or(self.focus)
             }
-            // Back to the newest line (chat, log) or the last chapter.
+            // Back to the newest line (chat, log, following again) or the last chapter.
             KeyCode::End | KeyCode::Char('G') => match self.focus {
-                Pane::Chat => self.chat_scroll = 0,
-                Pane::Log => self.log_scroll = 0,
+                Pane::Chat => self.chat_feed = Feed::default(),
+                Pane::Log => self.log_feed = Feed::default(),
                 _ => self.move_selection(isize::MAX / 2, view),
             },
             KeyCode::Home | KeyCode::Char('g') => self.move_selection(-isize::MAX / 2, view),
@@ -626,12 +626,12 @@ impl App {
             }
             // The log and chat show newest at the bottom; "down" moves towards newer lines.
             Pane::Log => {
-                let max = view.state.log.len().saturating_sub(1);
-                self.log_scroll = self.log_scroll.saturating_add_signed(-delta).min(max)
+                let ids: Vec<&str> = view.state.log.iter().map(|e| e.id.as_str()).collect();
+                self.log_feed.step(delta, &ids)
             }
             Pane::Chat => {
-                let max = view.chat.len().saturating_sub(1);
-                self.chat_scroll = self.chat_scroll.saturating_add_signed(-delta).min(max)
+                let ids: Vec<&str> = view.chat.iter().map(|m| m.id.as_str()).collect();
+                self.chat_feed.step(delta, &ids)
             }
         }
     }
@@ -954,25 +954,24 @@ impl App {
             self.users.get(&m.author_channel_id);
         }
         let (width, height) = inner(area);
-        let len = view.chat.len();
-        let scroll = self.chat_scroll.min(len);
-        let end = len - scroll;
-        let now = self.clock.now_ts();
-        let entries: Vec<(Line, usize)> = view
-            .chat
-            .range(end.saturating_sub(height)..end)
-            .map(|m| {
-                let fresh = now.secs_since(m.t_received) < FRESH_S;
-                let line = chat_line(m, self.users.get(&m.author_channel_id), fresh);
-                let indent = line
-                    .width()
-                    .saturating_sub(Span::raw(m.text.as_str()).width());
-                (line, indent)
-            })
-            .collect();
         let focused = self.focus == Pane::Chat;
-        let block = pane_block(Pane::Chat, "Chat", scrolled_hint(scroll), focused);
-        if entries.is_empty() {
+        let now = self.clock.now_ts();
+        let ids: Vec<&str> = view.chat.iter().map(|m| m.id.as_str()).collect();
+        let users = &self.users;
+        let make = |i: usize| {
+            let m = &view.chat[i];
+            let fresh = now.secs_since(m.t_received) < FRESH_S;
+            let line = chat_line(m, users.peek(&m.author_channel_id), fresh);
+            let indent = line
+                .width()
+                .saturating_sub(Span::raw(m.text.as_str()).width());
+            (line, indent)
+        };
+        let (rows, newer) =
+            self.chat_feed
+                .layout(&ids, make, focused, self.wrap_all, (width, height));
+        let block = pane_block(Pane::Chat, "Chat", scrolled_hint(newer), focused);
+        if rows.is_empty() {
             let connected = view.state.services.get("chat") == Some(&ServiceStatus::Ok);
             let text = if connected {
                 "No messages yet.".to_owned()
@@ -982,8 +981,6 @@ impl App {
             frame.render_widget(empty_state(&[&text]).block(block), area);
             return;
         }
-        let open = focused.then(|| entries.len() - 1);
-        let rows = feed_rows(entries, open, self.wrap_all, width, height);
         frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
@@ -1052,35 +1049,32 @@ impl App {
         frame.render_stateful_widget(list, area, &mut self.questions);
     }
 
-    fn draw_log(&self, frame: &mut Frame, area: Rect, view: &View) {
+    fn draw_log(&mut self, frame: &mut Frame, area: Rect, view: &View) {
         let (width, height) = inner(area);
-        let events: Vec<&Event> = view.state.log.iter().collect();
-        let scroll = self.log_scroll.min(events.len());
-        let end = events.len() - scroll;
-        let start = end.saturating_sub(height);
-        let entries: Vec<(Line, usize)> = events[start..end]
-            .iter()
-            .map(|e| {
-                let time =
-                    e.t.datetime()
-                        .with_timezone(&Local)
-                        .format("%H:%M:%S")
-                        .to_string();
-                let (text, dim) = summary(e);
-                let (icon, color) = event_icon(e);
-                let style = Style::new().fg(if dim { MUTED } else { TEXT });
-                let line = Line::from(vec![
-                    Span::styled(format!("{time} "), Style::new().fg(FAINT)),
-                    Span::styled(format!("{icon} "), Style::new().fg(color)),
-                    Span::styled(text, style),
-                ]);
-                (line, 11)
-            })
-            .collect();
         let focused = self.focus == Pane::Log;
-        let block = pane_block(Pane::Log, "Event log", scrolled_hint(scroll), focused);
-        let open = focused.then(|| entries.len().checked_sub(1)).flatten();
-        let rows = feed_rows(entries, open, self.wrap_all, width, height);
+        let events: Vec<&Event> = view.state.log.iter().collect();
+        let ids: Vec<&str> = events.iter().map(|e| e.id.as_str()).collect();
+        let make = |i: usize| {
+            let e = events[i];
+            let time =
+                e.t.datetime()
+                    .with_timezone(&Local)
+                    .format("%H:%M:%S")
+                    .to_string();
+            let (text, dim) = summary(e);
+            let (icon, color) = event_icon(e);
+            let style = Style::new().fg(if dim { MUTED } else { TEXT });
+            let line = Line::from(vec![
+                Span::styled(format!("{time} "), Style::new().fg(FAINT)),
+                Span::styled(format!("{icon} "), Style::new().fg(color)),
+                Span::styled(text, style),
+            ]);
+            (line, 11)
+        };
+        let (rows, newer) =
+            self.log_feed
+                .layout(&ids, make, focused, self.wrap_all, (width, height));
+        let block = pane_block(Pane::Log, "Event log", scrolled_hint(newer), focused);
         frame.render_widget(Paragraph::new(rows).block(block), area);
     }
 
@@ -1494,6 +1488,78 @@ fn selected_style(focused: bool) -> Style {
         Style::new().bg(SELECTED).fg(TEXT).bold()
     } else {
         Style::new().bg(RAISED)
+    }
+}
+
+/// Scroll state of a feed that grows at the bottom (chat, event log), kept by entry id
+/// so new entries arriving while you read back do not move the cursor or the view.
+#[derive(Debug, Default)]
+struct Feed {
+    /// The entry under the cursor; `None` follows the newest.
+    cursor: Option<String>,
+    /// The last entry on screen while reading back.
+    last: Option<String>,
+}
+
+impl Feed {
+    fn position(id: &Option<String>, ids: &[&str]) -> Option<usize> {
+        let id = id.as_deref()?;
+        ids.iter().position(|i| *i == id)
+    }
+
+    /// Moves the cursor; reaching the newest entry follows the feed again.
+    fn step(&mut self, delta: isize, ids: &[&str]) {
+        let Some(newest) = ids.len().checked_sub(1) else {
+            return;
+        };
+        let current = Self::position(&self.cursor, ids).unwrap_or(newest);
+        let next = current.saturating_add_signed(delta).min(newest);
+        self.cursor = (next < newest).then(|| ids[next].to_owned());
+    }
+
+    /// Rows to draw and how many entries are newer than the cursor. The view only moves
+    /// when the cursor would leave it, like an editor: `j/k` move the highlight, and the
+    /// lines scroll once it reaches an edge. The cursor line opens in full when focused.
+    fn layout(
+        &mut self,
+        ids: &[&str],
+        make: impl Fn(usize) -> (Line<'static>, usize),
+        focused: bool,
+        wrap_all: bool,
+        (width, height): (usize, usize),
+    ) -> (Vec<Line<'static>>, usize) {
+        let len = ids.len();
+        if len == 0 || height == 0 {
+            return (Vec::new(), 0);
+        }
+        // A cursor whose entry left the buffer falls back to the oldest one kept.
+        let cursor = match &self.cursor {
+            None => len - 1,
+            Some(_) => Self::position(&self.cursor, ids).unwrap_or(0),
+        };
+        let open = focused.then_some(cursor);
+        let rows_of = |i: usize| {
+            if wrap_all || open == Some(i) {
+                let (line, indent) = make(i);
+                wrap(line, width, indent).len()
+            } else {
+                1
+            }
+        };
+        let mut end = match &self.cursor {
+            None => len,
+            Some(_) => Self::position(&self.last, ids).map_or(len, |p| p + 1),
+        };
+        end = end.clamp(cursor + 1, len);
+        // Scroll up just enough to keep the cursor's rows on screen.
+        while end > cursor + 1 && (cursor..end).map(rows_of).sum::<usize>() > height {
+            end -= 1;
+        }
+        self.last = self.cursor.as_ref().map(|_| ids[end - 1].to_owned());
+        let start = end.saturating_sub(height);
+        let entries = (start..end).map(make).collect();
+        let rows = feed_rows(entries, open.map(|o| o - start), wrap_all, width, height);
+        (rows, len - 1 - cursor)
     }
 }
 
@@ -2468,6 +2534,57 @@ mod tests {
             "the open entry pushes older ones off the top"
         );
         assert_eq!(text(&rows[2]).trim_end(), "     project");
+    }
+
+    #[test]
+    fn feed_cursor_moves_inside_a_still_view_and_holds_while_new_lines_arrive() {
+        let ids: Vec<String> = (0..10).map(|i| format!("m{i}")).collect();
+        let make = |i: usize| (Line::raw(format!("message {i}")), 0);
+        let text = |l: &Line| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        };
+        let shown = |feed: &mut Feed, ids: &[String]| {
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            let (rows, newer) = feed.layout(&ids, make, true, false, (20, 4));
+            let rows: Vec<String> = rows.iter().map(|r| text(r).trim_end().to_owned()).collect();
+            (rows, newer)
+        };
+        let mut feed = Feed::default();
+        let (rows, newer) = shown(&mut feed, &ids);
+        assert_eq!(rows, ["message 6", "message 7", "message 8", "message 9"]);
+        assert_eq!(newer, 0);
+
+        // k moves the cursor up; the lines stay where they are until it reaches the top.
+        let step = |feed: &mut Feed, ids: &[String], d| {
+            let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+            feed.step(d, &ids)
+        };
+        step(&mut feed, &ids, -3);
+        let (rows, newer) = shown(&mut feed, &ids);
+        assert_eq!(rows[0], "message 6");
+        assert_eq!(newer, 3);
+        assert_eq!(feed.cursor.as_deref(), Some("m6"));
+        step(&mut feed, &ids, -1);
+        assert_eq!(
+            shown(&mut feed, &ids).0[0],
+            "message 5",
+            "scrolls at the edge"
+        );
+
+        // New chat while reading back moves neither the cursor nor the view.
+        let mut more = ids.clone();
+        more.extend(["m10".into(), "m11".into()]);
+        let (rows, newer) = shown(&mut feed, &more);
+        assert_eq!(rows, ["message 5", "message 6", "message 7", "message 8"]);
+        assert_eq!(newer, 6);
+
+        // Walking back down to the newest follows the feed again.
+        step(&mut feed, &more, 100);
+        assert_eq!(feed.cursor, None);
+        assert_eq!(shown(&mut feed, &more).0[3], "message 11");
     }
 
     #[test]
