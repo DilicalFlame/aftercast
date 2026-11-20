@@ -196,8 +196,12 @@ viewer, and ideally a third account you made a moderator.
    moderator: the TUI shows the chapter and the page says the README changed; `:push` updates
    the page's description. Send a Super Chat as a member and `!q` as a viewer: check the
    overlays in the player.
-6. Quit. Expect: no new folder under `sessions\`, `aftercast post` still means your last real
-   stream, and `aftercast auth status` shows no quota spent by the rehearsal.
+6. Record in OBS for a few minutes during the rehearsal (talk, type, `p`, `b`, a commit), then
+   quit. Expect: `sessions\<year>\<date>_ep000`, `aftercast post` without a session still
+   means your last real stream, and `aftercast auth status` shows no quota spent.
+7. `aftercast post rehearsal`, then ask Claude to "find clips in the rehearsal session" and
+   `aftercast render rehearsal`. Expect: Phases 5 to 7 work on it like on a real stream.
+8. `aftercast rehearse` again. Expect: the old ep000 folder is gone, a new one is created.
 
 ### Overlays and API
 

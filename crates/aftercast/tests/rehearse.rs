@@ -1,6 +1,7 @@
-//! `aftercast rehearse`: simulated YouTube and chat in a throwaway session under
-//! `<home>/rehearsal/`, without touching real sessions, the last-session pointer or today's
-//! quota. (OBS points at a closed port here; with OBS running it connects for real.)
+//! `aftercast rehearse`: simulated YouTube and chat in session episode 0 next to the real
+//! ones, replaced by the next rehearsal, without using an episode number, the last-session
+//! pointer or today's quota. (OBS points at a closed port here; with OBS running it
+//! connects for real.)
 
 use std::fs;
 use std::io::Write;
@@ -73,47 +74,63 @@ fn rehearsal_is_isolated_from_real_sessions_and_quota() {
     );
     assert!(out.contains(" session.start "), "{out}");
 
+    // The rehearsal is episode 0 next to the real sessions.
     let rehearsal = home.join("rehearsal");
-    let year = fs::read_dir(rehearsal.join("sessions"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let session = fs::read_dir(year).unwrap().next().unwrap().unwrap().path();
+    let session = only_session(&home);
+    let name = session.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(name.ends_with("_ep000"), "{name}");
     let chat = fs::read_to_string(session.join("chat.jsonl")).unwrap();
     assert!(chat.contains("what are we building today"), "{chat}");
     assert!(chat.contains("why rust over go"), "{chat}");
     assert!(rehearsal.join("chat.jsonl").exists());
     assert!(rehearsal.join("quota.json").exists());
 
-    // Nothing real: no session, no last-session pointer, no quota spent.
-    let real = fs::read_dir(home.join("sessions")).map_or(0, |d| d.count());
-    assert_eq!(real, 0);
+    // No episode number used, no last-session pointer, no quota spent.
     let state = fs::read_to_string(home.join("state/state.toml")).unwrap_or_default();
     assert!(!state.contains("last_session"), "{state}");
+    assert!(
+        !state.contains("next_episode") || state.contains("next_episode = 1"),
+        "{state}"
+    );
     assert!(!home.join("state/quota.json").exists());
 
-    // An edited demo chat is kept; a second rehearsal starts with a fresh session.
+    // Commands find it as `rehearsal` (render reads its suggestions, which do not exist yet).
+    let out = Command::new(bin)
+        .arg("--home")
+        .arg(&home)
+        .args(["render", "rehearsal", "--dry-run"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(&name) && err.contains("suggestions.json"),
+        "{err}"
+    );
+
+    // An edited demo chat is kept; a second rehearsal replaces the first.
     fs::write(
         rehearsal.join("chat.jsonl"),
         "{\"after_ms\": 500, \"author\": \"zed\", \"text\": \"custom line\"}\n",
     )
     .unwrap();
     rehearse(bin, &home, "", Duration::from_secs(2));
-    let year = fs::read_dir(rehearsal.join("sessions"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let sessions: Vec<_> = fs::read_dir(year).unwrap().flatten().collect();
-    assert_eq!(sessions.len(), 1);
-    let chat = fs::read_to_string(sessions[0].path().join("chat.jsonl")).unwrap();
+    let chat = fs::read_to_string(only_session(&home).join("chat.jsonl")).unwrap();
     assert!(
         chat.contains("custom line") && !chat.contains("building today"),
         "{chat}"
     );
+}
+
+/// The one session folder under `<home>/sessions/<year>/`.
+fn only_session(home: &std::path::Path) -> std::path::PathBuf {
+    let years: Vec<_> = fs::read_dir(home.join("sessions"))
+        .unwrap()
+        .flatten()
+        .collect();
+    assert_eq!(years.len(), 1);
+    let sessions: Vec<_> = fs::read_dir(years[0].path()).unwrap().flatten().collect();
+    assert_eq!(sessions.len(), 1, "{sessions:?}");
+    sessions[0].path()
 }
 
 /// Minimal HTTP/1.1 request to the local server; returns status and body.
@@ -235,14 +252,7 @@ fn rehearsal_page_serves_the_feed_and_takes_chat() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let year = fs::read_dir(home.join("rehearsal/sessions"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let session = fs::read_dir(year).unwrap().next().unwrap().unwrap().path();
-    let events = fs::read_to_string(session.join("events.jsonl")).unwrap();
+    let events = fs::read_to_string(only_session(&home).join("events.jsonl")).unwrap();
     assert!(
         events.contains("\"title\":\"From the page\""),
         "mod chapter from the page"

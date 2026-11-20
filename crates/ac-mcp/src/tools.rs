@@ -22,7 +22,7 @@ const OCR_SNIPPET: usize = 200;
 
 /// Tool definitions for `tools/list`.
 pub fn list() -> Value {
-    let session = json!({ "type": "string", "description": "folder name (2026-11-19_ep042), episode (42, ep042) or latest" });
+    let session = json!({ "type": "string", "description": "folder name (2026-11-19_ep042), episode (42, ep042), rehearsal (episode 0, a practice run) or latest (newest real stream)" });
     let time = |what: &str| json!({ "type": ["number", "string"], "description": format!("{what}: seconds on the master timeline or HH:MM:SS(.mmm)") });
     let tool = |name: &str, description: &str, props: Value, required: &[&str]| {
         json!({ "name": name, "description": description,
@@ -155,26 +155,14 @@ fn name(dir: &Path) -> String {
         .into_owned()
 }
 
-/// A session by folder name, episode (`42`, `ep042`) or `latest`.
+/// A session by folder name, episode (`42`, `ep042`), `rehearsal` (episode 0) or `latest`
+/// (the newest real stream).
 fn session_dir(home: &Home, config: &Config, arg: &str) -> R<PathBuf> {
-    let dirs = ac_library::session_dirs(home, config);
     if arg.is_empty() || arg == "latest" {
-        return dirs.last().cloned().ok_or_else(|| "no sessions yet".into());
+        return ac_library::latest_session(home, config).ok_or_else(|| "no sessions yet".into());
     }
-    if let Some(d) = dirs.iter().find(|d| name(d) == arg) {
-        return Ok(d.clone());
-    }
-    if let Ok(n) = arg
-        .trim_start_matches(|c: char| c.is_ascii_alphabetic())
-        .parse::<u32>()
-        && let Some(d) = dirs
-            .iter()
-            .rev()
-            .find(|d| Session::open(d).is_ok_and(|s| s.meta.episode == n))
-    {
-        return Ok(d.clone());
-    }
-    Err(format!("no session {arg:?}; list_sessions shows them"))
+    ac_library::find_session(home, config, arg)
+        .ok_or_else(|| format!("no session {arg:?}; list_sessions shows them"))
 }
 
 /// A session's pipeline context plus what every tool needs.
@@ -333,6 +321,7 @@ fn list_sessions(home: &Home, config: &Config, args: &Value) -> R<Value> {
             "title": title,
             "processed": dir.join("derived/index.md").exists(),
             "has_suggestions": dir.join("ai/suggestions.json").exists(),
+            "rehearsal": s.meta.episode == ac_core::session::REHEARSAL_EPISODE,
         }));
         if out.len() >= limit(args, 50) {
             break;

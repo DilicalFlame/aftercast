@@ -407,7 +407,8 @@ fn open_rehearsal_page(port: u16) {
     }
 }
 
-/// A session folder from a path, a folder name like `2026-11-19_ep042`, or the last session.
+/// A session folder from a path, a folder name like `2026-11-19_ep042`, an episode (`42`,
+/// `ep042`), `rehearsal`, or the last real session.
 fn session_dir(home: &Home, config: &Config, session: Option<&str>) -> Result<PathBuf> {
     use error::AppError;
     let Some(arg) = session else {
@@ -421,17 +422,10 @@ fn session_dir(home: &Home, config: &Config, session: Option<&str>) -> Result<Pa
     if path.join("session.toml").exists() {
         return Ok(path);
     }
-    let sessions = ac_core::session::sessions_dir(home, config);
-    let found = std::fs::read_dir(&sessions)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|year| year.path().join(arg))
-        .find(|p| p.join("session.toml").exists());
-    found.ok_or_else(|| {
+    ac_library::find_session(home, config, arg).ok_or_else(|| {
         AppError::Usage(format!(
-            "no session {arg:?} (a folder name under {}, or a path)",
-            sessions.display()
+            "no session {arg:?} (a folder name under {}, an episode like 42, rehearsal, or a path)",
+            ac_core::session::sessions_dir(home, config).display()
         ))
     })
 }

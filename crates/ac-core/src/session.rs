@@ -78,24 +78,59 @@ pub struct Session {
     pub meta: SessionMeta,
 }
 
+/// Episode number of the rehearsal session (`aftercast rehearse`).
+pub const REHEARSAL_EPISODE: u32 = 0;
+
 impl Session {
     /// Creates the folder for a new stream: allocates the next episode number, copies the
     /// seed README and writes `session.toml`.
     pub fn create(home: &Home, config: &Config, new: NewSession, now: Timestamp) -> Result<Self> {
-        Self::create_with_state(home, config, new, now, &home.state_file())
+        let state_path = home.state_file();
+        let mut state = State::load(&state_path)?;
+        let (session, rel) = Self::create_at(home, config, new, now, state.next_episode)?;
+        state.next_episode = session.meta.episode + 1;
+        state.last_session = Some(config.paths.sessions.join(rel));
+        state.save(&state_path)?;
+        Ok(session)
     }
 
-    /// [`Session::create`] numbering episodes from the state file at `state_path` (a
-    /// rehearsal keeps its own, so it never uses up a real episode number).
-    pub fn create_with_state(
+    /// The rehearsal session: episode 0 next to the real ones. It never uses up an episode
+    /// number and never becomes the last session.
+    pub fn create_rehearsal(
         home: &Home,
         config: &Config,
         new: NewSession,
         now: Timestamp,
-        state_path: &Path,
     ) -> Result<Self> {
-        let mut state = State::load(state_path)?;
-        let episode = state.next_episode;
+        Self::create_at(home, config, new, now, REHEARSAL_EPISODE).map(|(s, _)| s)
+    }
+
+    /// Deletes every earlier rehearsal session (episode 0); returns how many.
+    pub fn remove_rehearsals(home: &Home, config: &Config) -> Result<usize> {
+        let mut removed = 0;
+        let years = fs::read_dir(sessions_dir(home, config))
+            .into_iter()
+            .flatten()
+            .flatten();
+        for dir in years.flat_map(|y| fs::read_dir(y.path()).into_iter().flatten().flatten()) {
+            let dir = dir.path();
+            if Self::open(&dir).is_ok_and(|s| s.meta.episode == REHEARSAL_EPISODE) {
+                fs::remove_dir_all(&dir).map_err(Error::io(&dir))?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// Creates the folder for episode `episode`; returns it with its path under the
+    /// sessions folder (`<year>/<name>`).
+    fn create_at(
+        home: &Home,
+        config: &Config,
+        new: NewSession,
+        now: Timestamp,
+        episode: u32,
+    ) -> Result<(Self, PathBuf)> {
         let local = now.datetime().with_timezone(&chrono::Local);
         let name = format!(
             "{}_{}{:0pad$}",
@@ -135,11 +170,7 @@ impl Session {
             },
         };
         session.save()?;
-
-        state.next_episode = episode + 1;
-        state.last_session = Some(config.paths.sessions.join(rel));
-        state.save(state_path)?;
-        Ok(session)
+        Ok((session, rel))
     }
 
     /// Opens an existing session folder.

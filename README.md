@@ -118,9 +118,13 @@ Type into the chat as a viewer, member, moderator or yourself (the owner), with 
 send a Super Chat; command chips fill in `!q`, `!chapter`, `!lat` and the rest. Bot replies
 appear in the chat like on YouTube. The video has no sound; listen in OBS.
 
-Each rehearsal starts a fresh throwaway
-session in `<home>\rehearsal\sessions\` and never uses an episode number, the "last session"
-or today's quota.
+The rehearsal is a real session, **episode 0** (`sessions\<year>\<date>_ep000`), so record in
+OBS during it and the whole pipeline works on it like on a stream: `aftercast post rehearsal`,
+`aftercast render rehearsal`, and Claude through the MCP server (session `rehearsal`). Each
+rehearsal replaces the previous one. It never uses up an episode number, never becomes the
+last session (`aftercast post` without a session, `latest` in MCP and resuming with plain
+`aftercast` still mean your last real stream) and never spends today's YouTube quota.
+Sessions can also be named by episode everywhere: `aftercast post 42` or `ep042`.
 
 ### 5. Check
 

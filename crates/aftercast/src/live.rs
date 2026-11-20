@@ -103,22 +103,18 @@ const REHEARSAL_CHAT: &str = include_str!("../rehearsal/chat.jsonl");
 /// Overlay files are reloaded in OBS this long after the last change (editors write twice).
 const OVERLAY_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Fresh rehearsal folder: the simulated YouTube answers, the demo chat (kept if edited),
-/// no earlier rehearsal session. Sessions go there instead of `paths.sessions`.
-fn prepare_rehearsal(dir: &Path, config: &mut Config) -> Result<()> {
-    let sessions = dir.join("sessions");
-    if sessions.exists() {
-        fs::remove_dir_all(&sessions)?;
+/// Fresh rehearsal: the simulated YouTube answers and demo chat (kept if edited) in
+/// `<home>/rehearsal`, and no earlier rehearsal session (episode 0) in `sessions`.
+fn prepare_rehearsal(home: &Home, config: &Config, dir: &Path) -> Result<()> {
+    Session::remove_rehearsals(home, config)?;
+    // `sessions` and `state.toml` there are from the first rehearsal version.
+    for old in ["requests", "sessions"] {
+        let old = dir.join(old);
+        if old.exists() {
+            fs::remove_dir_all(&old)?;
+        }
     }
-    let requests = dir.join("requests");
-    if requests.exists() {
-        fs::remove_dir_all(&requests)?;
-    }
-    // Episode numbering starts over: every rehearsal is #1.
-    let state = dir.join("state.toml");
-    if state.exists() {
-        fs::remove_file(state)?;
-    }
+    let _ = fs::remove_file(dir.join("state.toml"));
     for (rel, text) in REHEARSAL_FILES {
         let path = dir.join(rel);
         fs::create_dir_all(path.parent().expect("has a folder"))?;
@@ -128,7 +124,6 @@ fn prepare_rehearsal(dir: &Path, config: &mut Config) -> Result<()> {
     if !chat.exists() {
         fs::write(chat, REHEARSAL_CHAT)?;
     }
-    config.paths.sessions = sessions;
     Ok(())
 }
 
@@ -154,12 +149,12 @@ fn watch_overlays(
 
 /// Resolves the broadcast, opens or creates its session and starts the controller.
 pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result<Handles> {
-    let mut config = Config::load(config_path)?;
+    let config = Config::load(config_path)?;
     let clock = Arc::new(Clock::new());
     let (msg_tx, msg_rx) = mpsc::unbounded_channel();
     let rehearsal_dir = home.join("rehearsal");
     if opts.rehearsal {
-        prepare_rehearsal(&rehearsal_dir, &mut config)?;
+        prepare_rehearsal(home, &config, &rehearsal_dir)?;
     }
 
     let video_id = match opts.link {
@@ -212,13 +207,11 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
                 live_chat_id: broadcast.chat_id.clone(),
                 title: Some(broadcast.title.clone()),
             };
-            let state_file = if opts.rehearsal {
-                rehearsal_dir.join("state.toml")
+            let session = if opts.rehearsal {
+                Session::create_rehearsal(home, &config, new, clock.now_ts())?
             } else {
-                home.state_file()
+                Session::create(home, &config, new, clock.now_ts())?
             };
-            let session =
-                Session::create_with_state(home, &config, new, clock.now_ts(), &state_file)?;
             (session, false)
         }
     };
