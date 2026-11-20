@@ -44,6 +44,17 @@ pub struct Item {
     pub enabled: bool,
 }
 
+/// The hardware behind a capture input: the mic's or camera's device name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Device {
+    /// The OBS input using it.
+    pub input: String,
+    /// A camera (video capture); otherwise a mic (audio input capture).
+    pub video: bool,
+    /// The device's name, as OBS lists it.
+    pub name: String,
+}
+
 /// Scenes, audio and sources, as listed after connecting or a change in OBS.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Media {
@@ -51,6 +62,8 @@ pub struct Media {
     pub scenes: Vec<String>,
     pub audio: Vec<Audio>,
     pub items: Vec<Item>,
+    /// Mics and cameras with their device names.
+    pub devices: Vec<Device>,
 }
 
 impl Media {

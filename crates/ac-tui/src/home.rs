@@ -88,6 +88,14 @@ pub fn cards(view: &View, tab: usize) -> Vec<Card> {
     cards
 }
 
+/// The number key that jumps to `card` (columns layout; tabs are numbered instead).
+pub fn number(view: &View, card: Card) -> Option<usize> {
+    cards(view, 0)
+        .iter()
+        .position(|c| *c == card)
+        .filter(|n| *n > 0)
+}
+
 /// The scene the Mixer and Sources show: the chosen one if OBS still has it, else the
 /// scene on air, else the first.
 pub fn scene(view: &View, chosen: Option<&str>) -> String {
@@ -312,10 +320,13 @@ pub fn draw(
                 0 => {
                     ctx.card(frame, Card::Checks, left, false);
                     let status = ctx.status(right.width);
+                    let devices = ctx.devices(right.width);
                     let session = ctx.session(right.width);
                     let mics = ctx.mic_levels(right.width);
-                    let [s1, _, s2, _, s3] = Layout::vertical([
+                    let [s1, _, s2, _, s3, _, s4] = Layout::vertical([
                         Constraint::Length(status.len() as u16 + 1),
+                        Constraint::Length(1),
+                        Constraint::Length(devices.len() as u16 + 1),
                         Constraint::Length(1),
                         Constraint::Length(session.len() as u16 + 1),
                         Constraint::Length(1),
@@ -323,8 +334,9 @@ pub fn draw(
                     ])
                     .areas(right);
                     ctx.info(frame, s1, "Status", status);
-                    ctx.info(frame, s2, "Session", session);
-                    ctx.info(frame, s3, "Mic", mics);
+                    ctx.info(frame, s2, "Devices", devices);
+                    ctx.info(frame, s3, "Session", session);
+                    ctx.info(frame, s4, "Mic", mics);
                 }
                 tab => {
                     let card = if tab == 1 { Card::Mixer } else { Card::Sources };
@@ -355,7 +367,7 @@ fn tab_bar(view: &View, tab: usize) -> Line<'static> {
         if open == 0 {
             " ✔".to_owned()
         } else {
-            format!(" {open}")
+            format!(" ✖{open}")
         },
         String::new(),
         String::new(),
@@ -367,7 +379,10 @@ fn tab_bar(view: &View, tab: usize) -> Line<'static> {
         } else {
             Style::new().fg(MUTED).bg(RAISED)
         };
-        spans.push(Span::styled(format!("  {name}{}  ", marks[i]), style));
+        spans.push(Span::styled(
+            format!(" {} {name}{}  ", i + 1, marks[i]),
+            style,
+        ));
         spans.push(Span::raw(" "));
     }
     Line::from(spans)
@@ -519,7 +534,17 @@ impl Ctx<'_> {
     fn card(&self, frame: &mut Frame, card: Card, area: Rect, scene_tabs: bool) {
         let view = self.view;
         let lit = self.focus.card == card;
-        let mut title = vec![Span::styled(
+        let mut title = Vec::new();
+        if let Some(n) = number(view, card).filter(|_| scene_tabs) {
+            let chip = if lit {
+                Style::new().fg(Color::Black).bg(ACCENT).bold()
+            } else {
+                Style::new().fg(MUTED).bg(RAISED)
+            };
+            title.push(Span::raw(" "));
+            title.push(Span::styled(format!(" {n} "), chip));
+        }
+        title.push(Span::styled(
             match card {
                 Card::Checks => " Checks ",
                 Card::Mixer => " Mixer ",
@@ -527,7 +552,7 @@ impl Ctx<'_> {
                 Card::Buttons => "",
             },
             Style::new().fg(if lit { TEXT } else { MUTED }).bold(),
-        )];
+        ));
         if scene_tabs && matches!(card, Card::Mixer | Card::Sources) {
             title.extend(self.scene_tabs(area.width.saturating_sub(14)));
         }
@@ -942,6 +967,28 @@ impl Ctx<'_> {
         lines
     }
 
+    /// The mics' and cameras' hardware, as OBS names it.
+    fn devices(&self, width: u16) -> Vec<Line<'static>> {
+        let mut devices: Vec<_> = self.view.obs.devices.iter().collect();
+        devices.sort_by_key(|d| d.video);
+        if devices.is_empty() {
+            return vec![Line::styled(" ·", Style::new().fg(FAINT))];
+        }
+        devices
+            .into_iter()
+            .map(|d| {
+                let line = Line::from(vec![
+                    Span::styled(
+                        format!(" {:<9}", if d.video { "Camera" } else { "Mic" }),
+                        Style::new().fg(MUTED),
+                    ),
+                    Span::styled(d.name.clone(), Style::new().fg(TEXT)),
+                ]);
+                crate::truncate(line, usize::from(width))
+            })
+            .collect()
+    }
+
     /// Description size, chapters, last push, overlay address.
     fn session(&self, width: u16) -> Vec<Line<'static>> {
         let view = self.view;
@@ -1080,26 +1127,21 @@ pub fn meter(level: Option<f32>, muted: bool, cells: usize) -> Vec<Span<'static>
 }
 
 /// Footer hints: the same keys whatever is focused, so the line never shifts.
-pub fn hints(view: &View) -> Vec<(String, String)> {
-    let mut pairs = vec![
+pub fn hints() -> Vec<(String, String)> {
+    [
+        ("1-3", "go"),
         ("Tab", "card"),
         ("j/k", "move"),
         ("⏎", "do"),
         ("^j/k", "scene"),
-    ];
-    if view.config.tui.home_layout == HomeLayout::Tabs {
-        pairs.push(("[ ]", "tab"));
-    }
-    pairs.extend([
         ("v", "layout"),
         ("q", "quit"),
         (",", "settings"),
         (":", "cmd"),
-    ]);
-    pairs
-        .into_iter()
-        .map(|(k, l)| (k.to_owned(), l.to_owned()))
-        .collect()
+    ]
+    .into_iter()
+    .map(|(k, l)| (k.to_owned(), l.to_owned()))
+    .collect()
 }
 
 /// How often the page redraws to keep meters fluid.

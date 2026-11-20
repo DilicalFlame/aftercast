@@ -283,12 +283,13 @@ sources with show/hide.
 | Layout | Arrangement |
 |---|---|
 | `columns` (default) | Checks (what needs you) across the top; Sources beside the Mixer, each with the scenes as tabs in its top border (shortest unique names, `●` on air) |
-| `tabs` | Checks (failing, then passing) beside Status, Session and Mic · Mixer · Sources, the last two beside a list of every scene; `[` `]` switch tabs |
+| `tabs` | Checks (failing, then passing) beside Status, Devices (the mic and camera hardware, as OBS names them), Session and Mic · Mixer · Sources, the last two beside a list of every scene; `[` `]` switch tabs |
 
 Choose one in Settings › Display › Home layout (`tui.home_layout`) or switch with `v`.
 
 | Key | On Home |
 |---|---|
+| `1` `2` `3` | Straight to a card (columns) or a tab (tabs), as numbered on screen |
 | `Tab` / `Shift+Tab` | Next / previous card (the buttons are one) |
 | `j/k` | Move inside the card, wrapping |
 | `Ctrl+j/k`, `Ctrl`+arrows | Previous / next scene in the Mixer and Sources |

@@ -511,6 +511,7 @@ mod tests {
                 id: 1,
                 enabled: true,
             }],
+            devices: Vec::new(),
         }
     }
 

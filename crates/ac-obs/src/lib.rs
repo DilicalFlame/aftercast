@@ -432,11 +432,56 @@ async fn media(client: &obws::Client) -> obws::error::Result<Media> {
             volume_db,
         });
     }
+    let mut devices = Vec::new();
+    for input in client.inputs().list(None).await? {
+        // The setting holding the device, per capture kind.
+        let (video, property) = match input.kind.as_str() {
+            "dshow_input" => (true, "video_device_id"),
+            "av_capture_input" | "macos-avcapture" | "av_capture_input_v2" => (true, "device"),
+            "v4l2_input" => (true, "device_id"),
+            kind if kind.contains("input_capture") => (false, "device_id"),
+            _ => continue,
+        };
+        let name = input.id.name;
+        if let Some(device) = device_name(client, &name, property).await {
+            devices.push(ac_core::obs::Device {
+                input: name,
+                video,
+                name: device,
+            });
+        }
+    }
     Ok(Media {
         scenes,
         audio,
         items,
+        devices,
     })
+}
+
+/// The name OBS shows for the device `input` uses: the list item matching its setting.
+async fn device_name(client: &obws::Client, input: &str, property: &str) -> Option<String> {
+    let settings = client
+        .inputs()
+        .settings::<serde_json::Value>(input.into())
+        .await
+        .ok()?
+        .settings;
+    // Unset means OBS's default device.
+    let value = settings
+        .get(property)
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("default".into()));
+    let items = client
+        .inputs()
+        .properties_list_property_items(input.into(), property)
+        .await
+        .ok()?;
+    items
+        .into_iter()
+        .find(|i| i.value == value)
+        .map(|i| i.name)
+        .filter(|n| !n.is_empty())
 }
 
 /// Adds or removes the high-volume audio meters event from the default subscriptions.

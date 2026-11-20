@@ -1035,6 +1035,18 @@ impl App {
                     _ => {}
                 }
             }
+            // 1-3: straight to a card (columns) or a tab (tabs).
+            KeyCode::Char(c @ '1'..='3') => {
+                let n = c as usize - '0' as usize;
+                if view.config.tui.home_layout == ac_core::config::HomeLayout::Tabs {
+                    self.home.tab = n - 1;
+                    let cards = home::cards(view, self.home.tab);
+                    self.home.card = cards.get(1).copied().unwrap_or(Card::Buttons);
+                } else if let Some(card) = cards.get(n) {
+                    self.home.card = *card;
+                }
+                self.home.pick = 0;
+            }
             // The tabs layout: [ and ] switch tabs; the tab's card takes the focus.
             KeyCode::Char(c @ ('[' | ']'))
                 if view.config.tui.home_layout == ac_core::config::HomeLayout::Tabs =>
@@ -1360,7 +1372,7 @@ impl App {
         .areas(info);
         frame.render_widget(readme_line(view), a);
         frame.render_widget(notice, b);
-        frame.render_widget(Line::from(self.keys_line(view)), keys);
+        frame.render_widget(Line::from(self.keys_line()), keys);
         self.draw_modal(frame, view);
     }
 
@@ -1888,10 +1900,10 @@ impl App {
         Some(Line::from(spans))
     }
 
-    fn keys_line(&self, view: &View) -> Vec<Span<'static>> {
+    fn keys_line(&self) -> Vec<Span<'static>> {
         if self.mode == Mode::Preflight {
             let mut spans = vec![Span::raw(" ")];
-            for (k, label) in home::hints(view) {
+            for (k, label) in home::hints() {
                 spans.extend(hint(&k, &label));
             }
             return spans;
@@ -3192,6 +3204,18 @@ mod tests {
                     id: 1,
                     enabled: true,
                 }],
+                devices: vec![
+                    ac_core::obs::Device {
+                        input: "Mic/Aux".into(),
+                        video: false,
+                        name: "Microphone (Shure MV7)".into(),
+                    },
+                    ac_core::obs::Device {
+                        input: "Camera".into(),
+                        video: true,
+                        name: "Logitech BRIO".into(),
+                    },
+                ],
             }),
             meta: SessionMeta {
                 schema_version: 1,
@@ -4036,6 +4060,11 @@ mute Mic/Aux
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.home.card, home::Card::Buttons);
+        // Numbers jump straight to a card.
+        press(&mut app, KeyCode::Char('3'));
+        assert_eq!(app.home.card, home::Card::Mixer);
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.home.card, home::Card::Checks);
     }
 
     #[test]
@@ -4068,6 +4097,15 @@ mute Mic/Aux
         let text = text_at(&mut app, &view, 110, 26);
         assert!(text.contains("✔ OBS connected"), "{text}");
         assert!(text.contains("SESSION") && text.contains("MIC"), "{text}");
+        // The mic's and camera's hardware.
+        assert!(
+            text.contains("Microphone (Shure MV7)") && text.contains("Logitech BRIO"),
+            "{text}"
+        );
+        // A number opens its tab.
+        app.key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE), &view);
+        assert_eq!(app.home.card, home::Card::Sources);
+        app.key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE), &view);
         let next =
             |app: &mut App| app.key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE), &view);
         // Mixer, with every scene listed on the right.

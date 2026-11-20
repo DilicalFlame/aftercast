@@ -495,6 +495,7 @@ fn connect_obs(
                 id: 1,
                 enabled: true,
             }],
+            devices: Vec::new(),
         };
         let _ = msgs.send(Msg::Obs(ac_obs::Update::Connected(ac_obs::Snapshot {
             scene: Some(config.obs.scenes.main.clone()),
