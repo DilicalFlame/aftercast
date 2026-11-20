@@ -286,6 +286,9 @@ pub struct Obs {
     /// Secret: `"keyring:<name>"`, `"env:<NAME>"` or a plain value.
     pub password: String,
     pub require_recording: bool,
+    /// While a session runs, OBS records into its `media` folder (the previous folder is
+    /// restored on exit), so the master lives with the session and a quit draft keeps none.
+    pub record_into_session: bool,
     pub scenes: ObsScenes,
 }
 
@@ -295,6 +298,7 @@ impl Default for Obs {
             url: "ws://127.0.0.1:4455".into(),
             password: "keyring:obs".into(),
             require_recording: true,
+            record_into_session: true,
             scenes: ObsScenes::default(),
         }
     }

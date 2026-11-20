@@ -303,6 +303,15 @@ pub fn all() -> Vec<Setting> {
         ),
         s(
             4,
+            "obs.record_into_session",
+            "Record into the session folder",
+            "While aftercast runs, OBS records into the session's media folder, so the master lives with the session and quitting a draft keeps no recording. OBS's own folder is restored on exit.",
+            Bool,
+            Restart,
+            |c| Value::Bool(c.obs.record_into_session),
+        ),
+        s(
+            4,
             "obs.scenes.main",
             "Main scene",
             "The scene BRB and privacy return to.",

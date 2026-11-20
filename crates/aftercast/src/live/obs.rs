@@ -102,6 +102,7 @@ impl Controller {
                     );
                 }
             }
+            Update::RecordDirectory(dir) => self.record_dir = Some(dir),
             Update::Levels(levels) => {
                 if let Ok(mut map) = self.obs_levels.lock() {
                     map.clear();
@@ -109,7 +110,13 @@ impl Controller {
                 }
             }
             Update::Stream(state) => self.stream_changed(state),
-            Update::Record { state, path } => self.record_changed(state, path),
+            Update::Record { state, path } => {
+                self.record_changed(state, path);
+                // Quitting a draft waited for this: OBS has let go of the file.
+                if self.quit_by.is_some() && state == OutputState::Stopped {
+                    self.done = true;
+                }
+            }
             Update::Failed(error) => {
                 self.pending_scenes.pop_front();
                 self.notice = Some(format!("OBS: {error}"));
@@ -376,7 +383,7 @@ impl Controller {
     }
 
     /// Sends a request to OBS; the mock echoes what OBS would report back.
-    fn obs_request(&mut self, request: Request) {
+    pub(super) fn obs_request(&mut self, request: Request) {
         let sent = match &self.obs {
             ObsLink::Real(tx) => tx.send(request).is_ok(),
             ObsLink::Fake { msgs, .. } => {

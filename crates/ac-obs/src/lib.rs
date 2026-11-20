@@ -62,6 +62,8 @@ pub enum Update {
     },
     /// Audio peaks in dBFS per input (only while meters are on).
     Levels(Vec<(String, f32)>),
+    /// Where OBS records now (after aftercast set it).
+    RecordDirectory(String),
     Stream(OutputState),
     Record {
         state: OutputState,
@@ -96,6 +98,9 @@ pub enum Request {
     Stream(bool),
     /// Receive audio levels (a high-volume event OBS only sends on request).
     Meters(bool),
+    /// Record into this folder from now on, and after every reconnect. The folder OBS had
+    /// before is put back when the request channel closes (aftercast exits).
+    RecordDirectory(String),
 }
 
 /// Where OBS listens.
@@ -142,13 +147,15 @@ pub async fn run(
     send: impl Fn(Update),
 ) {
     let mut backoff = BACKOFF_MIN;
-    // Survives reconnects: meters stay on if a page still shows them.
+    // Survive reconnects: meters stay on if a page still shows them, and the record folder
+    // aftercast asked for (with the one OBS had before) is set again.
     let mut meters = false;
+    let mut folder = RecordFolder::default();
     loop {
         let error = match connect(&target).await {
             Ok(client) => {
                 backoff = BACKOFF_MIN;
-                match serve(&client, &mut requests, &send, &mut meters).await {
+                match serve(&client, &mut requests, &send, &mut meters, &mut folder).await {
                     Ok(()) => return,
                     Err(e) => e,
                 }
@@ -166,6 +173,7 @@ pub async fn run(
                 () = &mut wait => break,
                 req = requests.recv() => match req {
                     Some(Request::Meters(on)) => meters = on,
+                    Some(Request::RecordDirectory(dir)) => folder.wanted = Some(dir),
                     Some(_) => send(Update::Failed("OBS is not connected".into())),
                     None => return,
                 },
@@ -189,11 +197,54 @@ async fn connect(target: &Target) -> Result<obws::Client, String> {
 
 /// Reports the snapshot, then forwards events and performs requests until the connection
 /// drops (`Err`) or the request channel closes (`Ok`).
+/// The record folder aftercast wants, and the one OBS had before (to put back).
+#[derive(Default)]
+struct RecordFolder {
+    wanted: Option<String>,
+    original: Option<String>,
+}
+
+impl RecordFolder {
+    /// Points OBS at the wanted folder, remembering OBS's own the first time.
+    async fn apply(&mut self, client: &obws::Client, send: &impl Fn(Update)) {
+        let Some(dir) = self.wanted.clone() else {
+            return;
+        };
+        if self.original.is_none() {
+            match client.config().record_directory().await {
+                Ok(original) => self.original = Some(original),
+                Err(e) => {
+                    send(Update::Failed(format!(
+                        "reading the record folder: {}",
+                        error_chain(&e)
+                    )));
+                    return;
+                }
+            }
+        }
+        match client.config().set_record_directory(&dir).await {
+            Ok(()) => send(Update::RecordDirectory(dir)),
+            Err(e) => send(Update::Failed(format!(
+                "recording into {dir}: {} (needs OBS 30.2 or newer)",
+                error_chain(&e)
+            ))),
+        }
+    }
+
+    /// Puts OBS's own folder back.
+    async fn restore(&mut self, client: &obws::Client) {
+        if let Some(original) = self.original.take() {
+            let _ = client.config().set_record_directory(&original).await;
+        }
+    }
+}
+
 async fn serve(
     client: &obws::Client,
     requests: &mut mpsc::UnboundedReceiver<Request>,
     send: &impl Fn(Update),
     meters: &mut bool,
+    folder: &mut RecordFolder,
 ) -> Result<(), String> {
     // Subscribe before reading the snapshot so no change falls in between.
     let mut events = client.events().map_err(|e| error_chain(&e))?;
@@ -202,6 +253,7 @@ async fn serve(
             .await
             .map_err(|e| error_chain(&e))?;
     }
+    folder.apply(client, send).await;
     // Levels arrive about 20 times a second; pass on at most 10.
     let mut last_levels = tokio::time::Instant::now();
     send(Update::Connected(
@@ -266,6 +318,10 @@ async fn serve(
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
                     }
                 }
+                Some(Request::RecordDirectory(dir)) => {
+                    folder.wanted = Some(dir);
+                    folder.apply(client, send).await;
+                }
                 Some(Request::Meters(on)) => {
                     *meters = on;
                     if let Err(e) = subscribe_meters(client, on).await {
@@ -300,7 +356,11 @@ async fn serve(
                         send(Update::Failed(format!("refreshing overlays: {}", error_chain(&e))));
                     }
                 }
-                None => return Ok(()),
+                // aftercast is exiting: give OBS its own record folder back.
+                None => {
+                    folder.restore(client).await;
+                    return Ok(());
+                }
             },
         }
     }

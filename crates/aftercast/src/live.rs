@@ -261,7 +261,20 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         ));
     }
 
-    let obs = connect_obs(&config, opts.mock.is_some(), &msg_tx);
+    let (obs, obs_task) = connect_obs(&config, opts.mock.is_some(), &msg_tx);
+    // The master recording lives with the session: OBS records into its media folder.
+    let record_dir = session.dir.join("media");
+    if config.obs.record_into_session
+        && let obs::ObsLink::Real(tx) = &obs
+    {
+        match fs::create_dir_all(&record_dir) {
+            Ok(()) => {
+                let dir = record_dir.to_string_lossy().replace('\\', "/");
+                let _ = tx.send(ac_obs::Request::RecordDirectory(dir));
+            }
+            Err(e) => tracing::warn!("{}: {e}", record_dir.display()),
+        }
+    }
 
     let chat_id = session
         .meta
@@ -354,6 +367,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         overlay_sent: BTreeMap::new(),
         capture,
         begun: false,
+        quit_by: None,
+        record_dir: None,
         resumed,
         rehearsal: opts.rehearsal,
         discard: false,
@@ -371,12 +386,15 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             controller.begin().await;
         }
         let discard = controller.run(cmd_rx, msg_rx).await;
-        // A draft quit before it started: remove it once every file in it is closed.
+        // The OBS link sees its channel close and puts OBS's record folder back.
+        if let Some(task) = obs_task {
+            let _ = tokio::time::timeout(Duration::from_secs(3), task).await;
+        }
+        // A draft quit before it started: remove it once every file in it is closed (OBS
+        // may need a moment after stopping to let go of its recording).
         drop(watchers);
-        if let Some(dir) = discard
-            && let Err(e) = fs::remove_dir_all(&dir)
-        {
-            tracing::warn!("removing the unstarted session {}: {e}", dir.display());
+        if let Some(dir) = discard {
+            remove_draft(&dir).await;
         }
     });
 
@@ -388,6 +406,20 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         events: events_rx,
         controller: handle,
     })
+}
+
+/// Deletes a draft session folder, retrying while a file in it is still held open.
+async fn remove_draft(dir: &Path) {
+    for attempt in 0..20 {
+        match fs::remove_dir_all(dir) {
+            Ok(()) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) if attempt == 19 => {
+                tracing::warn!("removing the unstarted session {}: {e}", dir.display());
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(250)).await,
+        }
+    }
 }
 
 /// The YouTube client: mock fixtures, or the signed-in profile.
@@ -411,7 +443,13 @@ fn client(home: &Home, config: &Config, mock: Option<&Path>, clock: Arc<Clock>) 
 }
 
 /// Starts the OBS service (or, with `--mock`, a fake OBS that has the configured scenes).
-fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -> obs::ObsLink {
+/// Starts the OBS service (and returns its task, awaited on exit so OBS gets its record
+/// folder back), or with `--mock` a fake OBS.
+fn connect_obs(
+    config: &Config,
+    mock: bool,
+    msgs: &mpsc::UnboundedSender<Msg>,
+) -> (obs::ObsLink, Option<tokio::task::JoinHandle<()>>) {
     if mock {
         let scenes: Vec<String> = config
             .obs
@@ -447,10 +485,13 @@ fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -
             media,
             ..Default::default()
         })));
-        return obs::ObsLink::Fake {
-            scenes,
-            msgs: msgs.clone(),
-        };
+        return (
+            obs::ObsLink::Fake {
+                scenes,
+                msgs: msgs.clone(),
+            },
+            None,
+        );
     }
     let (tx, rx) = mpsc::unbounded_channel();
     let password = crate::secret::resolve(&config.obs.password)
@@ -460,9 +501,10 @@ fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -
     match ac_obs::Target::parse(&config.obs.url, password) {
         Ok(target) => {
             let msgs = msgs.clone();
-            tokio::spawn(ac_obs::run(target, rx, move |u| {
+            let task = tokio::spawn(ac_obs::run(target, rx, move |u| {
                 let _ = msgs.send(Msg::Obs(u));
             }));
+            return (obs::ObsLink::Real(tx), Some(task));
         }
         Err(error) => {
             let _ = msgs.send(Msg::Obs(ac_obs::Update::Down {
@@ -471,7 +513,7 @@ fn connect_obs(config: &Config, mock: bool, msgs: &mpsc::UnboundedSender<Msg>) -
             }));
         }
     }
-    obs::ObsLink::Real(tx)
+    (obs::ObsLink::Real(tx), None)
 }
 
 /// Starts the overlay and local API server on `127.0.0.1:[overlay].port`. A failure
@@ -661,6 +703,10 @@ struct Controller {
     capture: capture::Capture,
     /// The session was started from Home (or at once, headless).
     begun: bool,
+    /// Quitting is waiting (until then) for OBS to stop recording.
+    quit_by: Option<Instant>,
+    /// Where OBS records, once it confirmed the session's media folder.
+    record_dir: Option<String>,
     /// The session existed before this run.
     resumed: bool,
     rehearsal: bool,
@@ -714,6 +760,13 @@ impl Controller {
         let mut render_at: Option<Instant> = None;
         let mut refresh_at: Option<Instant> = None;
         while !self.done {
+            // Quitting waits for OBS to stop recording, but not forever.
+            let quit_due = async {
+                match self.quit_by {
+                    Some(at) => sleep_until(at).await,
+                    None => std::future::pending().await,
+                }
+            };
             let render_due = async {
                 match render_at {
                     Some(at) => sleep_until(at).await,
@@ -752,6 +805,7 @@ impl Controller {
                     Msg::KeysHook(result) => self.keys_hook(result),
                     Msg::ShellPoll => self.shell_poll(),
                 },
+                () = quit_due => self.done = true,
                 () = render_due => {
                     render_at = None;
                     self.render();
@@ -860,10 +914,23 @@ impl Controller {
             Command::Sync => self.push(PushTrigger::Manual, false).await,
             Command::Finalize => self.finalize().await,
             Command::Reload => self.reload(),
-            // Quitting a draft that never started keeps nothing.
+            // Quitting a draft that never started keeps nothing: a recording in it is
+            // stopped first (its file is deleted with the draft once OBS lets go of it).
             Command::Quit if !self.begun && !self.resumed => {
                 self.discard = true;
-                self.done = true;
+                let recording = matches!(
+                    self.state.obs_record,
+                    Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
+                );
+                if recording && matches!(self.obs, obs::ObsLink::Real(_)) {
+                    self.obs_request(ac_obs::Request::Record(
+                        ac_core::command::OutputAction::Stop,
+                    ));
+                    self.quit_by = Some(Instant::now() + Duration::from_secs(8));
+                    self.notice = Some("stopping the recording, then quitting".into());
+                } else {
+                    self.done = true;
+                }
             }
             Command::Quit => {
                 self.emit(
@@ -1270,6 +1337,21 @@ impl Controller {
             output(recording, obs.require_recording),
             String::new(),
         ));
+        if obs.record_into_session && matches!(self.obs, obs::ObsLink::Real(_)) {
+            list.push(match (&self.record_dir, connected) {
+                (Some(dir), _) => check("Recording into the session", CheckState::Ok, dir.clone()),
+                (None, true) => check(
+                    "Recording into the session",
+                    CheckState::Pending,
+                    "OBS keeps its own folder".into(),
+                ),
+                (None, false) => check(
+                    "Recording into the session",
+                    CheckState::Pending,
+                    String::new(),
+                ),
+            });
+        }
         // The mic OBS hears: muted is the classic silent stream.
         let mic = self.obs_media.audio.iter().find(|a| a.is_mic());
         list.push(match (connected, mic) {
@@ -1352,6 +1434,9 @@ impl Controller {
                     "start recording in OBS: clips are cut from it (also :record start)".into()
                 }
                 ("Mic live", true) if mic.is_some() => "unmute the mic (also :unmute)".into(),
+                ("Recording into the session", true) => {
+                    "needs OBS 30.2 or newer; or turn it off in Settings › OBS".into()
+                }
                 ("Mic live", true) => "add your mic as an audio input in OBS".into(),
                 ("Quota remaining >= reserve", _) => {
                     "wait for the daily reset (midnight Pacific) or lower the reserve in \

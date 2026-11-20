@@ -43,6 +43,7 @@ chat_idle_max_s = 30
 url = "ws://127.0.0.1:4455"
 password = "keyring:obs"
 require_recording = true        # pre-flight warns loudly if OBS is not recording
+record_into_session = true      # OBS records into <session>/media while aftercast runs
 
 [obs.scenes]
 main = "Code"
