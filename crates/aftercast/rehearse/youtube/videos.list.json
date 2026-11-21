@@ -3,21 +3,21 @@
   "items": [
     {
       "kind": "youtube#video",
-      "id": "rehearsal01",
+      "id": "rehearse01",
       "snippet": {
         "publishedAt": "@now",
-        "channelId": "UCrehearsal000000000000",
-        "title": "Rehearsal (not live)",
+        "channelId": "UCrehearse000000000000",
+        "title": "Rehearse (not live)",
         "description": "",
         "categoryId": "28",
         "liveBroadcastContent": "live",
-        "channelTitle": "Rehearsal",
+        "channelTitle": "Rehearse",
         "thumbnails": {}
       },
       "status": { "privacyStatus": "private" },
       "liveStreamingDetails": {
         "actualStartTime": "@now",
-        "activeLiveChatId": "rehearsal-chat"
+        "activeLiveChatId": "rehearse-chat"
       }
     }
   ]

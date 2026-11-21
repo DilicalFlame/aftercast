@@ -436,7 +436,7 @@ mod tests {
                 seg(463.3, 463.7, "So now, I should end the stream now.", 0.8),
                 seg(470.0, 470.3, "I will test it and push the readme file", 0.9),
                 seg(480.0, 483.0, "What was the point?", 0.9),
-                seg(488.7, 499.8, "WezTerm world mock git Rehearsal", 0.02),
+                seg(488.7, 499.8, "WezTerm world mock git Rehearse", 0.02),
                 seg(500.0, 502.0, "okay bye", 0.9),
             ],
         };

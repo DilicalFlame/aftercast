@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::Shared;
 
-const PAGE: &str = include_str!("../overlays/rehearsal.html");
+const PAGE: &str = include_str!("../overlays/rehearse.html");
 const MAX_TEXT: usize = 200;
 const MAX_NAME: usize = 40;
 
@@ -35,14 +35,14 @@ pub struct Feed {
     pub chat: Arc<VecDeque<ChatMessage>>,
 }
 
-pub struct Rehearsal {
+pub struct Rehearse {
     pub feed: watch::Receiver<Feed>,
     /// Typed messages go into the simulated chat stream.
     pub chat: mpsc::UnboundedSender<ChatMessage>,
     next_id: AtomicU64,
 }
 
-impl Rehearsal {
+impl Rehearse {
     pub fn new(feed: watch::Receiver<Feed>, chat: mpsc::UnboundedSender<ChatMessage>) -> Self {
         Self {
             feed,
@@ -55,13 +55,13 @@ impl Rehearsal {
 fn off() -> Response {
     (
         StatusCode::NOT_FOUND,
-        "the rehearsal page exists only during `aftercast rehearse`",
+        "the rehearse page exists only during `aftercast rehearse`",
     )
         .into_response()
 }
 
 pub(crate) async fn page(State(s): State<Arc<Shared>>) -> Response {
-    if s.rehearsal.is_none() {
+    if s.rehearse.is_none() {
         return off();
     }
     let html = PAGE.replace("/* theme */", &s.theme);
@@ -69,7 +69,7 @@ pub(crate) async fn page(State(s): State<Arc<Shared>>) -> Response {
 }
 
 pub(crate) async fn feed(State(s): State<Arc<Shared>>) -> Response {
-    let Some(r) = &s.rehearsal else { return off() };
+    let Some(r) = &s.rehearse else { return off() };
     let f = r.feed.borrow().clone();
     let chat: Vec<_> = f
         .chat
@@ -104,7 +104,7 @@ pub(crate) struct Typed {
 }
 
 pub(crate) async fn chat(State(s): State<Arc<Shared>>, Json(t): Json<Typed>) -> Response {
-    let Some(r) = &s.rehearsal else { return off() };
+    let Some(r) = &s.rehearse else { return off() };
     let text = t.text.trim();
     let author = t.author.trim();
     if text.is_empty() || author.is_empty() {

@@ -46,8 +46,8 @@ pub fn find_session(home: &Home, config: &Config, arg: &str) -> Option<PathBuf> 
     if let Some(d) = dirs.iter().find(|d| name(d) == arg) {
         return Some(d.clone());
     }
-    let episode = if arg.eq_ignore_ascii_case("rehearsal") {
-        ac_core::session::REHEARSAL_EPISODE
+    let episode = if arg.eq_ignore_ascii_case("rehearse") {
+        ac_core::session::REHEARSE_EPISODE
     } else {
         arg.trim_start_matches(|c: char| c.is_ascii_alphabetic())
             .parse()
@@ -64,7 +64,7 @@ pub fn latest_session(home: &Home, config: &Config) -> Option<PathBuf> {
     dirs.iter()
         .rev()
         .find(|d| {
-            Session::open(d).is_ok_and(|s| s.meta.episode != ac_core::session::REHEARSAL_EPISODE)
+            Session::open(d).is_ok_and(|s| s.meta.episode != ac_core::session::REHEARSE_EPISODE)
         })
         .or(dirs.last())
         .cloned()
@@ -378,7 +378,7 @@ mod tests {
     use ac_core::time::Timestamp;
 
     #[test]
-    fn rehearsal_is_episode_zero_and_never_latest() {
+    fn rehearse_is_episode_zero_and_never_latest() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::new(tmp.path());
         home.init().unwrap();
@@ -389,15 +389,15 @@ mod tests {
         };
         let t: Timestamp = "2026-11-20T10:00:00Z".parse().unwrap();
         let real = Session::create(&home, &config, new("realvideo01"), t).unwrap();
-        let rehearsal = Session::create_rehearsal(&home, &config, new("rehearsal01"), t).unwrap();
-        assert_eq!(rehearsal.meta.episode, 0);
-        assert!(name(&rehearsal.dir).ends_with("_ep000"));
+        let rehearse = Session::create_rehearse(&home, &config, new("rehearse01"), t).unwrap();
+        assert_eq!(rehearse.meta.episode, 0);
+        assert!(name(&rehearse.dir).ends_with("_ep000"));
 
         assert_eq!(latest_session(&home, &config), Some(real.dir.clone()));
-        for arg in ["rehearsal", "0", "ep000"] {
+        for arg in ["rehearse", "0", "ep000"] {
             assert_eq!(
                 find_session(&home, &config, arg),
-                Some(rehearsal.dir.clone()),
+                Some(rehearse.dir.clone()),
                 "{arg}"
             );
         }
@@ -409,7 +409,7 @@ mod tests {
         // The next real stream is still #2; wiping removes only the rehearsal.
         let state = ac_core::state::State::load(&home.state_file()).unwrap();
         assert_eq!(state.next_episode, 2);
-        assert_eq!(Session::remove_rehearsals(&home, &config).unwrap(), 1);
+        assert_eq!(Session::remove_rehearses(&home, &config).unwrap(), 1);
         assert_eq!(session_dirs(&home, &config), [real.dir]);
     }
 

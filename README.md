@@ -98,7 +98,7 @@ Pages are transparent and reconnect by themselves when aftercast restarts. To re
 come from `[overlay]`. Other files in that folder (images, fonts, videos) are served at
 `/overlay/assets/<file>`, for a custom page such as a branded `brb.html`.
 
-**Rehearsal.** To try scenes and overlays without going live:
+**Rehearse.** To try scenes and overlays without going live:
 
 ```powershell
 aftercast rehearse
@@ -106,14 +106,14 @@ aftercast rehearse
 
 It is a normal session in the TUI (hotkeys, `b`, `p`, `:latency`, questions, key overlay) with
 your real OBS and overlay server, but YouTube is simulated: no broadcast, no API calls, no
-quota. A demo chat plays from `<home>\rehearsal\chat.jsonl` (hello, `!q` questions, `!links`,
+quota. A demo chat plays from `<home>\rehearse\chat.jsonl` (hello, `!q` questions, `!links`,
 a Super Chat, a mod `!chapter`, ...); edit it to replay what you want to see, one JSON line
 each: `{"after_ms": 3000, "author": "ana", "text": "hi", "mod": false, "member": false,
 "amount": "₹100.00"}`. Save any file in `<home>\overlays\` and OBS reloads the overlays a
 moment later, so you can restyle them while watching.
 
 The rehearsal also opens **the rehearsal page** in your browser
-(`http://127.0.0.1:7878/rehearsal`), a stand-in for the stream page: your OBS output (through
+(`http://127.0.0.1:7878/rehearse`), a stand-in for the stream page: your OBS output (through
 OBS Virtual Camera, which aftercast starts; allow camera access once), the title and live timer,
 the description as last pushed (with a note when the README changed since), and the live chat.
 Type into the chat as a viewer, member, moderator or yourself (the owner), with any name, or
@@ -121,8 +121,8 @@ send a Super Chat; command chips fill in `!q`, `!chapter`, `!lat` and the rest. 
 appear in the chat like on YouTube. The video has no sound; listen in OBS.
 
 The rehearsal is a real session, **episode 0** (`sessions\<year>\<date>_ep000`), so record in
-OBS during it and the whole pipeline works on it like on a stream: `aftercast post rehearsal`,
-`aftercast render rehearsal`, and Claude through the MCP server (session `rehearsal`). Each
+OBS during it and the whole pipeline works on it like on a stream: `aftercast post rehearse`,
+`aftercast render rehearse`, and Claude through the MCP server (session `rehearse`). Each
 rehearsal replaces the previous one. It never uses up an episode number, never becomes the
 last session (`aftercast post` without a session, `latest` in MCP and resuming with plain
 `aftercast` still mean your last real stream) and never spends today's YouTube quota.

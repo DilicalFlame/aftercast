@@ -183,7 +183,7 @@ viewer, and ideally a third account you made a moderator.
     The chapter list shows "Latency check" from step 16 and then your previous chapter title
     again from the third sample.
 
-### Rehearsal
+### Rehearse
 
 1. With OBS running and not streaming: `aftercast rehearse`. Expect: the TUI with
    "Rehearsal (not live)", OBS connected, and within a minute demo chat messages, two
@@ -204,8 +204,8 @@ viewer, and ideally a third account you made a moderator.
 6. Record in OBS for a few minutes during the rehearsal (talk, type, `p`, `b`, a commit), then
    quit. Expect: `sessions\<year>\<date>_ep000`, `aftercast post` without a session still
    means your last real stream, and `aftercast auth status` shows no quota spent.
-7. `aftercast post rehearsal`, then ask Claude to "find clips in the rehearsal session" and
-   `aftercast render rehearsal`. Expect: Phases 5 to 7 work on it like on a real stream.
+7. `aftercast post rehearse`, then ask Claude to "find clips in the rehearsal session" and
+   `aftercast render rehearse`. Expect: Phases 5 to 7 work on it like on a real stream.
 8. `aftercast rehearse` again. Expect: the old ep000 folder is gone, a new one is created.
 
 ### Overlays and API

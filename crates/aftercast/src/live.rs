@@ -86,32 +86,32 @@ pub struct Options<'a> {
     pub allow_ended: bool,
     /// `aftercast rehearse`: real OBS and overlays; simulated YouTube and chat; a throwaway
     /// session under `<home>/rehearsal/`; overlay files reload in OBS when saved.
-    pub rehearsal: bool,
+    pub rehearse: bool,
     /// Start the session at once (headless, scripts). Otherwise the TUI's Home starts it;
     /// until then a new session is a draft that quitting deletes.
     pub begin: bool,
 }
 
 /// Video id of the simulated broadcast in a rehearsal.
-const REHEARSAL_VIDEO: &str = "rehearsal01";
-const REHEARSAL_FILES: [(&str, &str); 2] = [
+const REHEARSE_VIDEO: &str = "rehearse01";
+const REHEARSE_FILES: [(&str, &str); 2] = [
     (
         "youtube/videos.list.json",
-        include_str!("../rehearsal/youtube/videos.list.json"),
+        include_str!("../rehearse/youtube/videos.list.json"),
     ),
     (
         "youtube/channels.list.json",
-        include_str!("../rehearsal/youtube/channels.list.json"),
+        include_str!("../rehearse/youtube/channels.list.json"),
     ),
 ];
-const REHEARSAL_CHAT: &str = include_str!("../rehearsal/chat.jsonl");
+const REHEARSE_CHAT: &str = include_str!("../rehearse/chat.jsonl");
 /// Overlay files are reloaded in OBS this long after the last change (editors write twice).
 const OVERLAY_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Fresh rehearsal: the simulated YouTube answers and demo chat (kept if edited) in
 /// `<home>/rehearsal`, and no earlier rehearsal session (episode 0) in `sessions`.
-fn prepare_rehearsal(home: &Home, config: &Config, dir: &Path) -> Result<()> {
-    Session::remove_rehearsals(home, config)?;
+fn prepare_rehearse(home: &Home, config: &Config, dir: &Path) -> Result<()> {
+    Session::remove_rehearses(home, config)?;
     // `sessions` and `state.toml` there are from the first rehearsal version.
     for old in ["requests", "sessions"] {
         let old = dir.join(old);
@@ -120,14 +120,14 @@ fn prepare_rehearsal(home: &Home, config: &Config, dir: &Path) -> Result<()> {
         }
     }
     let _ = fs::remove_file(dir.join("state.toml"));
-    for (rel, text) in REHEARSAL_FILES {
+    for (rel, text) in REHEARSE_FILES {
         let path = dir.join(rel);
         fs::create_dir_all(path.parent().expect("has a folder"))?;
         fs::write(path, text)?;
     }
     let chat = dir.join("chat.jsonl");
     if !chat.exists() {
-        fs::write(chat, REHEARSAL_CHAT)?;
+        fs::write(chat, REHEARSE_CHAT)?;
     }
     Ok(())
 }
@@ -157,28 +157,28 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let config = Config::load(config_path)?;
     let clock = Arc::new(Clock::new());
     let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-    let rehearsal_dir = home.join("rehearsal");
-    if opts.rehearsal {
-        prepare_rehearsal(home, &config, &rehearsal_dir)?;
+    let rehearse_dir = home.join("rehearse");
+    if opts.rehearse {
+        prepare_rehearse(home, &config, &rehearse_dir)?;
     }
 
     let video_id = match opts.link {
-        _ if opts.rehearsal => REHEARSAL_VIDEO.to_owned(),
+        _ if opts.rehearse => REHEARSE_VIDEO.to_owned(),
         Some(link) => ac_youtube::video_id(link)
             .ok_or_else(|| AppError::Usage(format!("not a YouTube link or video id: {link}")))?,
         None => String::new(), // found below, once the client exists
     };
 
-    let mut yt = if opts.rehearsal {
+    let mut yt = if opts.rehearse {
         // Its own quota file: a rehearsal never touches today's real quota.
         let quota = QuotaGuard::open(
-            &rehearsal_dir.join("quota.json"),
+            &rehearse_dir.join("quota.json"),
             config.youtube.daily_quota_reserve,
             config.youtube.costs.clone(),
         )?;
         Client::mock(
-            &rehearsal_dir,
-            &rehearsal_dir.join("requests"),
+            &rehearse_dir,
+            &rehearse_dir.join("requests"),
             quota,
             clock.clone(),
         )
@@ -218,8 +218,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
                 title: Some(broadcast.title.clone()),
             };
             // A draft until the session starts: no episode number used, not the last session.
-            let session = if opts.rehearsal {
-                Session::create_rehearsal(home, &config, new, clock.now_ts())?
+            let session = if opts.rehearse {
+                Session::create_rehearse(home, &config, new, clock.now_ts())?
             } else {
                 Session::create_draft(home, &config, new, clock.now_ts())?
             };
@@ -241,7 +241,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let (events_tx, events_rx) = broadcast::channel(4096);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     // Rehearsal page: the chat box feeds the simulated chat; the session feeds the page.
-    let injector = if opts.rehearsal {
+    let injector = if opts.rehearse {
         yt.chat_injector()
     } else {
         None
@@ -249,7 +249,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let (feed_tx, page) = match injector {
         Some(inject) => {
             let (tx, rx) = watch::channel(ac_server::Feed::default());
-            (Some(tx), Some(ac_server::Rehearsal::new(rx, inject)))
+            (Some(tx), Some(ac_server::Rehearse::new(rx, inject)))
         }
         None => (None, None),
     };
@@ -262,15 +262,15 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     // A rehearsal goes "live" only when the session starts: until then its simulated
     // broadcast is upcoming and its demo chat waits. A real stream is watched at once.
     let mut broadcast = broadcast;
-    let rehearsal_live = opts.rehearsal.then(|| broadcast.clone());
-    if opts.rehearsal {
+    let rehearse_live = opts.rehearse.then(|| broadcast.clone());
+    if opts.rehearse {
         broadcast.content = LiveContent::Upcoming;
         broadcast.actual_start = None;
     }
     let mut on_air: Vec<Box<dyn FnOnce() + Send>> = Vec::new();
     if broadcast.actual_end.is_none() {
         let (yt, id, tx) = (yt.clone(), video_id.clone(), msg_tx.clone());
-        let content = rehearsal_live
+        let content = rehearse_live
             .as_ref()
             .map_or(broadcast.content, |b| b.content);
         on_air.push(Box::new(move || {
@@ -312,7 +312,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             });
         }));
     }
-    if !opts.rehearsal {
+    if !opts.rehearse {
         on_air.drain(..).for_each(|start| start());
         // The pre-flight shows YouTube's side from the start.
         let (yt, id, tx) = (yt.clone(), video_id.clone(), msg_tx.clone());
@@ -323,7 +323,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     }
     let quest_watcher = watch_quest_file(home, &config, msg_tx.clone());
     let overlay_watcher = opts
-        .rehearsal
+        .rehearse
         .then(|| {
             watch_overlays(&home.join("overlays"), msg_tx.clone())
                 .inspect_err(|e| tracing::warn!("overlay watcher unavailable: {e}"))
@@ -390,9 +390,9 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         started,
         latency_run: None,
         chat_fast,
-        rehearsal_feed: feed_tx,
+        rehearse_feed: feed_tx,
         on_air,
-        rehearsal_live,
+        rehearse_live,
         title: broadcast.title.clone(),
         pushed_text,
         pending_title: None,
@@ -403,7 +403,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         quit_by: None,
         record_dir: None,
         resumed,
-        rehearsal: opts.rehearsal,
+        rehearse: opts.rehearse,
         discard: false,
     };
     let (view_tx, view_rx) = watch::channel(controller.snapshot());
@@ -559,7 +559,7 @@ async fn serve(
     state: watch::Receiver<SessionState>,
     commands: &mpsc::UnboundedSender<Command>,
     clock: &Arc<Clock>,
-    rehearsal: Option<ac_server::Rehearsal>,
+    rehearse: Option<ac_server::Rehearse>,
 ) -> std::result::Result<SocketAddr, String> {
     let token_file = home.join("state/api-token");
     let token =
@@ -572,7 +572,7 @@ async fn serve(
         token,
         dir: home.join("overlays"),
         theme: ac_server::theme(&config.overlay),
-        rehearsal,
+        rehearse,
     };
     let port = config.overlay.port;
     let (addr, server) = ac_server::bind(port, shared)
@@ -833,7 +833,7 @@ struct Controller {
     /// Tells the chat reader a latency measurement runs (reopen chat without waiting).
     chat_fast: watch::Sender<bool>,
     /// `aftercast rehearse`: what the rehearsal page shows.
-    rehearsal_feed: Option<watch::Sender<ac_server::Feed>>,
+    rehearse_feed: Option<watch::Sender<ac_server::Feed>>,
     /// The broadcast title (as set at start or by `!title`).
     title: String,
     /// The description as last pushed to YouTube.
@@ -851,14 +851,14 @@ struct Controller {
     /// chat (a real stream's run from the first moment).
     on_air: Vec<Box<dyn FnOnce() + Send>>,
     /// The rehearsal's simulated broadcast, reported live when the session starts.
-    rehearsal_live: Option<ac_youtube::Broadcast>,
+    rehearse_live: Option<ac_youtube::Broadcast>,
     /// Quitting is waiting (until then) for OBS to stop recording.
     quit_by: Option<Instant>,
     /// Where OBS records, once it confirmed the session's media folder.
     record_dir: Option<String>,
     /// The session existed before this run.
     resumed: bool,
-    rehearsal: bool,
+    rehearse: bool,
     /// Quit before a new session started: its folder is deleted.
     discard: bool,
 }
@@ -876,11 +876,11 @@ impl Controller {
         for start in self.on_air.drain(..) {
             start();
         }
-        if let Some(mut live) = self.rehearsal_live.take() {
+        if let Some(mut live) = self.rehearse_live.take() {
             live.actual_start = Some(self.clock.now_ts());
             self.on_broadcast(Ok(live));
         }
-        if !self.rehearsal
+        if !self.rehearse
             && let Err(e) = self.session.commit(&self.home, &self.config)
         {
             tracing::error!("saving state.toml: {e}");
@@ -925,7 +925,7 @@ impl Controller {
             return;
         }
         self.begin().await;
-        if !self.rehearsal {
+        if !self.rehearse {
             let recording = matches!(
                 self.state.obs_record,
                 Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
@@ -1567,7 +1567,7 @@ impl Controller {
             output(recording, obs.require_recording),
             note(recording),
         ));
-        if !self.rehearsal {
+        if !self.rehearse {
             let begun = self.begun;
             let going = self.going_live;
             let (ready, receiving) = match &self.yt_status {
@@ -1722,11 +1722,11 @@ impl Controller {
 
     /// Go Live is on offer: a real broadcast that has not started yet.
     fn go_live_armed(&self) -> bool {
-        !self.begun && !self.rehearsal && self.state.stream == Some(StreamStatus::Upcoming)
+        !self.begun && !self.rehearse && self.state.stream == Some(StreamStatus::Upcoming)
     }
 
     fn publish(&mut self) {
-        if let Some(feed) = &self.rehearsal_feed {
+        if let Some(feed) = &self.rehearse_feed {
             let rendered = self.description.as_ref().map(|d| d.text.clone());
             feed.send_replace(ac_server::Feed {
                 title: self.title.clone(),

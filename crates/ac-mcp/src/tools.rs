@@ -22,7 +22,7 @@ const OCR_SNIPPET: usize = 200;
 
 /// Tool definitions for `tools/list`.
 pub fn list() -> Value {
-    let session = json!({ "type": "string", "description": "folder name (2026-11-19_ep042), episode (42, ep042), rehearsal (episode 0, a practice run) or latest (newest real stream)" });
+    let session = json!({ "type": "string", "description": "folder name (2026-11-19_ep042), episode (42, ep042), rehearse (episode 0, a practice run) or latest (newest real stream)" });
     let time = |what: &str| json!({ "type": ["number", "string"], "description": format!("{what}: seconds on the master timeline or HH:MM:SS(.mmm)") });
     let tool = |name: &str, description: &str, props: Value, required: &[&str]| {
         json!({ "name": name, "description": description,
@@ -321,7 +321,7 @@ fn list_sessions(home: &Home, config: &Config, args: &Value) -> R<Value> {
             "title": title,
             "processed": dir.join("derived/index.md").exists(),
             "has_suggestions": dir.join("ai/suggestions.json").exists(),
-            "rehearsal": s.meta.episode == ac_core::session::REHEARSAL_EPISODE,
+            "rehearse": s.meta.episode == ac_core::session::REHEARSE_EPISODE,
         }));
         if out.len() >= limit(args, 50) {
             break;

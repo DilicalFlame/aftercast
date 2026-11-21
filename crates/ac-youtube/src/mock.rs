@@ -68,7 +68,7 @@ impl Mock {
                 t_received: self.now_or_start(),
                 t_published: None,
                 author_channel_id: "UC-channel".into(),
-                author_name: "Rehearsal".into(),
+                author_name: "Rehearse".into(),
                 is_owner: true,
                 is_moderator: false,
                 is_member: false,

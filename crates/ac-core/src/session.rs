@@ -79,7 +79,7 @@ pub struct Session {
 }
 
 /// Episode number of the rehearsal session (`aftercast rehearse`).
-pub const REHEARSAL_EPISODE: u32 = 0;
+pub const REHEARSE_EPISODE: u32 = 0;
 
 impl Session {
     /// Creates the folder for a new stream: allocates the next episode number, copies the
@@ -143,17 +143,17 @@ impl Session {
 
     /// The rehearsal session: episode 0 next to the real ones. It never uses up an episode
     /// number and never becomes the last session.
-    pub fn create_rehearsal(
+    pub fn create_rehearse(
         home: &Home,
         config: &Config,
         new: NewSession,
         now: Timestamp,
     ) -> Result<Self> {
-        Self::create_at(home, config, new, now, REHEARSAL_EPISODE).map(|(s, _)| s)
+        Self::create_at(home, config, new, now, REHEARSE_EPISODE).map(|(s, _)| s)
     }
 
     /// Deletes every earlier rehearsal session (episode 0); returns how many.
-    pub fn remove_rehearsals(home: &Home, config: &Config) -> Result<usize> {
+    pub fn remove_rehearses(home: &Home, config: &Config) -> Result<usize> {
         let mut removed = 0;
         let years = fs::read_dir(sessions_dir(home, config))
             .into_iter()
@@ -161,7 +161,7 @@ impl Session {
             .flatten();
         for dir in years.flat_map(|y| fs::read_dir(y.path()).into_iter().flatten().flatten()) {
             let dir = dir.path();
-            if Self::open(&dir).is_ok_and(|s| s.meta.episode == REHEARSAL_EPISODE) {
+            if Self::open(&dir).is_ok_and(|s| s.meta.episode == REHEARSE_EPISODE) {
                 fs::remove_dir_all(&dir).map_err(Error::io(&dir))?;
                 removed += 1;
             }

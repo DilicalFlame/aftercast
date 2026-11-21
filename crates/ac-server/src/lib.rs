@@ -2,9 +2,9 @@
 //! `127.0.0.1` only. Overlay pages for OBS browser sources, a WebSocket that pushes
 //! [`OverlayMsg`]s, `GET /api/state` and token-protected `POST /api/command`.
 
-mod rehearsal;
+mod rehearse;
 
-pub use rehearsal::{Feed, Rehearsal};
+pub use rehearse::{Feed, Rehearse};
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -92,7 +92,7 @@ pub struct Shared {
     /// `:root { --bg: ... }` from `[overlay]`.
     pub theme: String,
     /// `aftercast rehearse`: serves the rehearsal page at `/rehearsal`.
-    pub rehearsal: Option<Rehearsal>,
+    pub rehearse: Option<Rehearse>,
 }
 
 /// Binds `127.0.0.1:port` (0 picks a free port) and returns the address and the server
@@ -109,9 +109,9 @@ pub async fn bind(
         .route("/ws", get(ws))
         .route("/api/state", get(state))
         .route("/api/command", post(command))
-        .route("/rehearsal", get(rehearsal::page))
-        .route("/rehearsal/feed", get(rehearsal::feed))
-        .route("/rehearsal/chat", post(rehearsal::chat))
+        .route("/rehearse", get(rehearse::page))
+        .route("/rehearse/feed", get(rehearse::feed))
+        .route("/rehearse/chat", post(rehearse::chat))
         .with_state(Arc::new(shared));
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
@@ -289,7 +289,7 @@ mod tests {
             token: "secret".into(),
             dir: dir.to_path_buf(),
             theme: theme(&config::Overlay::default()),
-            rehearsal: None,
+            rehearse: None,
         };
         let (addr, server) = bind(0, shared).await.unwrap();
         tokio::spawn(server);

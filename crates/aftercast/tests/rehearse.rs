@@ -41,7 +41,7 @@ fn rehearse(bin: &str, home: &std::path::Path, script: &str, wait: Duration) -> 
 }
 
 #[test]
-fn rehearsal_is_isolated_from_real_sessions_and_quota() {
+fn rehearse_is_isolated_from_real_sessions_and_quota() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("Streams");
     let bin = env!("CARGO_BIN_EXE_aftercast");
@@ -75,15 +75,15 @@ fn rehearsal_is_isolated_from_real_sessions_and_quota() {
     assert!(out.contains(" session.start "), "{out}");
 
     // The rehearsal is episode 0 next to the real sessions.
-    let rehearsal = home.join("rehearsal");
+    let rehearse_dir = home.join("rehearse");
     let session = only_session(&home);
     let name = session.file_name().unwrap().to_string_lossy().into_owned();
     assert!(name.ends_with("_ep000"), "{name}");
     let chat = fs::read_to_string(session.join("chat.jsonl")).unwrap();
     assert!(chat.contains("what are we building today"), "{chat}");
     assert!(chat.contains("why rust over go"), "{chat}");
-    assert!(rehearsal.join("chat.jsonl").exists());
-    assert!(rehearsal.join("quota.json").exists());
+    assert!(rehearse_dir.join("chat.jsonl").exists());
+    assert!(rehearse_dir.join("quota.json").exists());
 
     // No episode number used, no last-session pointer, no quota spent.
     let state = fs::read_to_string(home.join("state/state.toml")).unwrap_or_default();
@@ -98,7 +98,7 @@ fn rehearsal_is_isolated_from_real_sessions_and_quota() {
     let out = Command::new(bin)
         .arg("--home")
         .arg(&home)
-        .args(["render", "rehearsal", "--dry-run"])
+        .args(["render", "rehearse", "--dry-run"])
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
@@ -109,7 +109,7 @@ fn rehearsal_is_isolated_from_real_sessions_and_quota() {
 
     // An edited demo chat is kept; a second rehearsal replaces the first.
     fs::write(
-        rehearsal.join("chat.jsonl"),
+        rehearse_dir.join("chat.jsonl"),
         "{\"after_ms\": 500, \"author\": \"zed\", \"text\": \"custom line\"}\n",
     )
     .unwrap();
@@ -151,7 +151,7 @@ fn http(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
 }
 
 #[test]
-fn rehearsal_page_serves_the_feed_and_takes_chat() {
+fn rehearse_page_serves_the_feed_and_takes_chat() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().join("Streams");
     let bin = env!("CARGO_BIN_EXE_aftercast");
@@ -176,8 +176,8 @@ fn rehearsal_page_serves_the_feed_and_takes_chat() {
         .replace("password = \"keyring:obs\"", "password = \"\"");
     fs::write(&config, toml).unwrap();
     // No demo chat: only what the page sends.
-    fs::create_dir_all(home.join("rehearsal")).unwrap();
-    fs::write(home.join("rehearsal/chat.jsonl"), "").unwrap();
+    fs::create_dir_all(home.join("rehearse")).unwrap();
+    fs::write(home.join("rehearse/chat.jsonl"), "").unwrap();
 
     let mut child = Command::new(bin)
         .arg("--home")
@@ -195,16 +195,16 @@ fn rehearsal_page_serves_the_feed_and_takes_chat() {
     });
     assert!(ready, "server did not start");
 
-    let (status, page) = http(port, "GET", "/rehearsal", "");
+    let (status, page) = http(port, "GET", "/rehearse", "");
     assert_eq!(status, 200);
     assert!(
-        page.contains("REHEARSAL") && page.contains("--accent"),
+        page.contains("REHEARSE") && page.contains("--accent"),
         "{page}"
     );
 
     let send = |role: &str, author: &str, text: &str| {
         let body = serde_json::json!({ "author": author, "role": role, "text": text }).to_string();
-        http(port, "POST", "/rehearsal/chat", &body)
+        http(port, "POST", "/rehearse/chat", &body)
     };
     // `!links` first: the bot's 3 s global cooldown would drop it after another command.
     assert_eq!(send("viewer", "dan", "!links").0, 204);
@@ -212,7 +212,7 @@ fn rehearsal_page_serves_the_feed_and_takes_chat() {
     assert_eq!(send("guest", "x", "hi").0, 400);
     let sc = serde_json::json!({ "author": "eve", "role": "member", "text": "thanks", "amount": "₹50.00" });
     assert_eq!(
-        http(port, "POST", "/rehearsal/chat", &sc.to_string()).0,
+        http(port, "POST", "/rehearse/chat", &sc.to_string()).0,
         204
     );
 
@@ -220,7 +220,7 @@ fn rehearsal_page_serves_the_feed_and_takes_chat() {
     let feed = (0..50)
         .find_map(|_| {
             std::thread::sleep(Duration::from_millis(100));
-            let (_, body) = http(port, "GET", "/rehearsal/feed", "");
+            let (_, body) = http(port, "GET", "/rehearse/feed", "");
             let feed: serde_json::Value = serde_json::from_str(&body).unwrap();
             let chat = feed["chat"].as_array().unwrap();
             chat.iter()
@@ -230,10 +230,10 @@ fn rehearsal_page_serves_the_feed_and_takes_chat() {
         .unwrap_or_else(|| {
             panic!(
                 "bot reply not echoed into chat: {}",
-                http(port, "GET", "/rehearsal/feed", "").1
+                http(port, "GET", "/rehearse/feed", "").1
             )
         });
-    assert_eq!(feed["title"], "Rehearsal (not live)");
+    assert_eq!(feed["title"], "Rehearse (not live)");
     assert!(!feed["description"].as_str().unwrap().is_empty(), "{feed}");
     let chat = feed["chat"].as_array().unwrap();
     let mo = chat.iter().find(|m| m["author"] == "mo").unwrap();

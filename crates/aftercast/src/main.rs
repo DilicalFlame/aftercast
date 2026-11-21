@@ -121,7 +121,7 @@ async fn live_session(
     home: &Home,
     config_path: &std::path::Path,
     cli: &Cli,
-    rehearsal: bool,
+    rehearse: bool,
 ) -> Result<u8> {
     let handles = live::start(
         home,
@@ -130,7 +130,7 @@ async fn live_session(
             link: cli.link.as_deref(),
             mock: cli.mock.as_deref(),
             allow_ended: cli.allow_ended,
-            rehearsal,
+            rehearse,
             // Headless runs start at once; the TUI starts the session from Home.
             begin: cli.no_tui && !cli.draft,
         },
@@ -150,8 +150,8 @@ async fn live_session(
     } = handles;
     let (external_tx, external) = std::sync::mpsc::channel();
     let config = ac_core::Config::load(config_path)?;
-    if rehearsal {
-        open_rehearsal_page(config.overlay.port);
+    if rehearse {
+        open_rehearse_page(config.overlay.port);
     }
     if let Err(e) = hotkeys(
         &config.hotkeys,
@@ -398,8 +398,8 @@ fn library(home: &Home, config_path: &std::path::Path, action: cli::LibraryActio
 }
 
 /// Opens the rehearsal page in the default browser.
-fn open_rehearsal_page(port: u16) {
-    let url = format!("http://127.0.0.1:{port}/rehearsal");
+fn open_rehearse_page(port: u16) {
+    let url = format!("http://127.0.0.1:{port}/rehearse");
     #[cfg(windows)]
     let opened = std::process::Command::new("cmd")
         .args(["/C", "start", "", &url])
@@ -430,7 +430,7 @@ fn session_dir(home: &Home, config: &Config, session: Option<&str>) -> Result<Pa
     }
     ac_library::find_session(home, config, arg).ok_or_else(|| {
         AppError::Usage(format!(
-            "no session {arg:?} (a folder name under {}, an episode like 42, rehearsal, or a path)",
+            "no session {arg:?} (a folder name under {}, an episode like 42, rehearse, or a path)",
             ac_core::session::sessions_dir(home, config).display()
         ))
     })

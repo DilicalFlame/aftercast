@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>aftercast rehearsal</title>
+<title>aftercast rehearse</title>
 <style>
 /* theme */
 :root {
@@ -76,7 +76,7 @@ label.sc-toggle { display: flex; align-items: center; gap: 6px; color: var(--dim
 </head>
 <body>
 <header>
-  <b>aftercast</b><span class="pill">REHEARSAL</span>
+  <b>aftercast</b><span class="pill">REHEARSE</span>
   <span class="hint">Nothing here is live: video from OBS Virtual Camera, YouTube and chat simulated</span>
 </header>
 <main>
@@ -91,7 +91,7 @@ label.sc-toggle { display: flex; align-items: center; gap: 6px; color: var(--dim
       </div>
       <select class="cam" id="cams" hidden title="Video source"></select>
     </div>
-    <h1 id="title">Rehearsal</h1>
+    <h1 id="title">Rehearse</h1>
     <div class="meta">
       <span class="live">LIVE</span>
       <span id="elapsed"></span>
@@ -224,9 +224,9 @@ function addMsg(m) {
 }
 async function poll() {
   try {
-    const f = await (await fetch("/rehearsal/feed", { cache: "no-store" })).json();
+    const f = await (await fetch("/rehearse/feed", { cache: "no-store" })).json();
     $("title").textContent = f.title;
-    document.title = f.title + " · aftercast rehearsal";
+    document.title = f.title + " · aftercast rehearse";
     $("desc").innerHTML = descHtml(f.description || "(no description pushed yet)");
     $("draft").hidden = !f.draft;
     $("scene").textContent = f.scene ? "scene: " + f.scene : "";
@@ -235,7 +235,7 @@ async function poll() {
     for (const m of f.chat) if (!seen.has(m.id)) { seen.add(m.id); addMsg(m); }
     $("err").textContent = "";
   } catch (e) {
-    $("err").textContent = "aftercast is not answering (rehearsal ended?)";
+    $("err").textContent = "aftercast is not answering (rehearse ended?)";
   }
 }
 setInterval(poll, 700);
@@ -265,7 +265,7 @@ $("form").onsubmit = async (e) => {
   if (!text) return;
   const body = { author: $("name").value.trim() || defaults[$("role").value], role: $("role").value, text,
                  amount: $("sc").checked ? ($("amount").value.trim() || "₹100.00") : null };
-  const r = await fetch("/rehearsal/chat", { method: "POST", headers: { "content-type": "application/json" },
+  const r = await fetch("/rehearse/chat", { method: "POST", headers: { "content-type": "application/json" },
                                               body: JSON.stringify(body) }).catch(() => null);
   if (r && r.ok) { $("text").value = ""; poll(); }
   else $("err").textContent = r ? await r.text() : "aftercast is not answering";
