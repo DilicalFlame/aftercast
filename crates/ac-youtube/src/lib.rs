@@ -277,6 +277,32 @@ impl Client {
         })
     }
 
+    /// The id of this channel's broadcast to work on: one already live, else the soonest
+    /// upcoming one (`liveBroadcasts.list`, 1 unit each). `None` when nothing is ready.
+    pub async fn find_broadcast(&self) -> Result<Option<String>> {
+        for status in ["active", "upcoming"] {
+            let response = self
+                .call(
+                    Request {
+                        method: Method::LiveBroadcastsList,
+                        http: Http::Get,
+                        path: "liveBroadcasts",
+                        query: vec![
+                            ("part", "id,snippet".into()),
+                            ("broadcastStatus", status.into()),
+                        ],
+                        body: None,
+                    },
+                    false,
+                )
+                .await?;
+            if let Some(id) = soonest_broadcast(&response) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
     /// Replaces the video description, sending the full current snippet back so the
     /// title, category, tags and languages are preserved. `critical` calls may use the
     /// quota reserve (the final push).
@@ -425,6 +451,21 @@ async fn send(http: &reqwest::Client, auth: &Auth, request: &Request) -> Result<
     }
 }
 
+/// The id of the item with the earliest `scheduledStartTime` (RFC 3339 UTC sorts as text).
+fn soonest_broadcast(response: &Value) -> Option<String> {
+    response["items"]
+        .as_array()?
+        .iter()
+        .filter_map(|i| {
+            Some((
+                i["snippet"]["scheduledStartTime"].as_str().unwrap_or(""),
+                i["id"].as_str()?,
+            ))
+        })
+        .min()
+        .map(|(_, id)| id.to_owned())
+}
+
 /// Maps a Google API error body to [`Error::Api`].
 fn api_error(status: u16, body: &Value) -> Error {
     let error = &body["error"];
@@ -483,6 +524,17 @@ mod tests {
         );
         assert_eq!(b.actual_end, None);
         assert!(Broadcast::from_response("x", &json!({ "items": [] })).is_err());
+    }
+
+    #[test]
+    fn soonest_broadcast_picks_earliest_start() {
+        let r = json!({ "items": [
+            { "id": "bbbbbbbbbbb", "snippet": { "scheduledStartTime": "2026-11-22T10:00:00Z" } },
+            { "id": "aaaaaaaaaaa", "snippet": { "scheduledStartTime": "2026-11-21T10:00:00Z" } },
+        ]});
+        assert_eq!(soonest_broadcast(&r).as_deref(), Some("aaaaaaaaaaa"));
+        assert_eq!(soonest_broadcast(&json!({})), None);
+        assert_eq!(soonest_broadcast(&json!({ "items": [] })), None);
     }
 
     #[test]

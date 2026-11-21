@@ -164,7 +164,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         _ if opts.rehearsal => REHEARSAL_VIDEO.to_owned(),
         Some(link) => ac_youtube::video_id(link)
             .ok_or_else(|| AppError::Usage(format!("not a YouTube link or video id: {link}")))?,
-        None => last_session_video(home)?,
+        None => String::new(), // found below, once the client exists
     };
 
     let mut yt = if opts.rehearsal {
@@ -188,6 +188,11 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         let _ = spent_tx.send(Msg::Spent(spent));
     });
 
+    let video_id = if video_id.is_empty() {
+        find_stream(&yt, home).await?
+    } else {
+        video_id
+    };
     let broadcast = yt.video(&video_id).await?;
     if broadcast.content == LiveContent::None && !opts.allow_ended {
         return Err(AppError::Usage(format!(
@@ -599,6 +604,59 @@ fn watch_quest_file(
         .inspect_err(|e| tracing::warn!("watching {}: {e}", dir.display()))
         .ok()?;
     Some(watcher)
+}
+
+/// No link given: take the channel's live or upcoming broadcast. With none ready, copy the
+/// Studio link to the clipboard and wait for one to appear. If YouTube can't be asked, fall
+/// back to resuming the last session.
+async fn find_stream(yt: &Client, home: &Home) -> Result<String> {
+    match yt.find_broadcast().await {
+        Ok(Some(id)) => return Ok(id),
+        Ok(None) => {}
+        Err(e) => return last_session_video(home).or(Err(e.into())),
+    }
+    let studio = format!(
+        "https://studio.youtube.com/channel/{}/livestreaming",
+        yt.my_channel().await?.id
+    );
+    let copied = copy_to_clipboard(&studio);
+    eprintln!(
+        "No stream is ready to start. Create one in YouTube Studio:
+  {studio}"
+    );
+    if copied {
+        eprintln!("(link copied to the clipboard)");
+    }
+    eprintln!("Waiting for it; Ctrl+C to quit.");
+    loop {
+        sleep(Duration::from_secs(20)).await;
+        if let Some(id) = yt.find_broadcast().await? {
+            return Ok(id);
+        }
+    }
+}
+
+/// Puts `text` on the system clipboard with the platform's own tool; false if there is none.
+fn copy_to_clipboard(text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let tools: &[(&str, &[&str])] = if cfg!(windows) {
+        &[("clip", &[])]
+    } else if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else {
+        &[("wl-copy", &[]), ("xclip", &["-selection", "clipboard"])]
+    };
+    tools.iter().any(|(tool, args)| {
+        let Ok(mut child) = Command::new(tool).args(*args).stdin(Stdio::piped()).spawn() else {
+            return false;
+        };
+        let wrote = child
+            .stdin
+            .take()
+            .is_some_and(|mut stdin| stdin.write_all(text.as_bytes()).is_ok());
+        wrote && child.wait().is_ok_and(|s| s.success())
+    })
 }
 
 /// No link given: resume the last session.
