@@ -211,10 +211,7 @@ fn rehearse_page_serves_the_feed_and_takes_chat() {
     assert_eq!(send("moderator", "mo", "!chapter From the page").0, 204);
     assert_eq!(send("guest", "x", "hi").0, 400);
     let sc = serde_json::json!({ "author": "eve", "role": "member", "text": "thanks", "amount": "₹50.00" });
-    assert_eq!(
-        http(port, "POST", "/rehearse/chat", &sc.to_string()).0,
-        204
-    );
+    assert_eq!(http(port, "POST", "/rehearse/chat", &sc.to_string()).0, 204);
 
     // The bot's chat reply to !links comes back through the chat, from the channel.
     let feed = (0..50)

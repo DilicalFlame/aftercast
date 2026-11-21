@@ -12,6 +12,7 @@ use std::sync::Arc;
 use ac_core::time::{Clock, Timestamp};
 use serde_json::{Map, Value, json};
 
+pub use ac_core::youtube::LiveStatus;
 use auth::Auth;
 use mock::Mock;
 use quota::{Method, QuotaGuard, Spent};
@@ -133,17 +134,6 @@ impl Broadcast {
             actual_end: time(&details["actualEndTime"]),
         })
     }
-}
-
-/// A broadcast's lifecycle and ingest, as YouTube reports them.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LiveStatus {
-    /// `created`, `ready`, `testing`, `live`, `complete`, ...
-    pub life_cycle: String,
-    /// `inactive`, `ready` or `active` (YouTube is receiving video); `None` if no stream is bound.
-    pub stream: Option<String>,
-    /// `good`, `ok`, `bad` or `noData`.
-    pub health: Option<String>,
 }
 
 /// The authenticated channel.
@@ -329,7 +319,7 @@ impl Client {
                 list(
                     Method::LiveBroadcastsList,
                     "liveBroadcasts",
-                    "status,contentDetails",
+                    "status,contentDetails,snippet",
                     id,
                 ),
                 false,
@@ -340,21 +330,39 @@ impl Client {
             .as_str()
             .ok_or_else(|| Error::Broadcast(format!("{id} is not a broadcast of this channel")))?
             .to_owned();
+        let text = |v: &Value| v.as_str().map(str::to_owned);
+        let details = &item["contentDetails"];
         let mut status = LiveStatus {
             life_cycle,
-            stream: None,
-            health: None,
+            privacy: text(&item["status"]["privacyStatus"]),
+            scheduled_start: item["snippet"]["scheduledStartTime"]
+                .as_str()
+                .and_then(|s| s.parse().ok()),
+            latency: text(&details["latencyPreference"]),
+            dvr: details["enableDvr"].as_bool(),
+            auto_start: details["enableAutoStart"].as_bool(),
+            auto_stop: details["enableAutoStop"].as_bool(),
+            ..LiveStatus::default()
         };
         if let Some(bound) = item["contentDetails"]["boundStreamId"].as_str() {
             let response = self
                 .call(
-                    list(Method::LiveStreamsList, "liveStreams", "status", bound),
+                    list(Method::LiveStreamsList, "liveStreams", "status,cdn", bound),
                     false,
                 )
                 .await?;
-            let s = &response["items"][0]["status"];
-            status.stream = s["streamStatus"].as_str().map(str::to_owned);
-            status.health = s["healthStatus"]["status"].as_str().map(str::to_owned);
+            let item = &response["items"][0];
+            let s = &item["status"];
+            status.stream = text(&s["streamStatus"]);
+            status.health = text(&s["healthStatus"]["status"]);
+            status.resolution = text(&item["cdn"]["resolution"]).filter(|r| r != "variable");
+            status.frame_rate = text(&item["cdn"]["frameRate"]).filter(|r| r != "variable");
+            status.issues = s["healthStatus"]["configurationIssues"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|i| text(&i["description"]).or_else(|| text(&i["reason"])))
+                .collect();
         }
         Ok(status)
     }

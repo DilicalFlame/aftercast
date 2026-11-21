@@ -278,14 +278,21 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
 
     match view.config.tui.home_layout {
         HomeLayout::Columns => {
-            let checks = ctx.checks(body.width.saturating_sub(4), false).0.len() as u16 + 2;
-            let [top, rest] = Layout::vertical([
-                Constraint::Length(checks.min(body.height / 2)),
-                Constraint::Min(3),
-            ])
-            .areas(body);
+            // Checks on the left, YouTube side of the stream on the right.
+            let [checks_pane, youtube_pane] = halves(body);
+            let youtube = ctx.youtube(youtube_pane.width);
+            let checks = ctx
+                .checks(checks_pane.width.saturating_sub(4), false)
+                .0
+                .len() as u16
+                + 2;
+            let height = checks.max(youtube.len() as u16 + 1).min(body.height / 2);
+            let [top, rest] =
+                Layout::vertical([Constraint::Length(height), Constraint::Min(3)]).areas(body);
             let [left, right] = halves(rest);
-            ctx.card(frame, Card::Checks, top, true);
+            let [top_left, top_right] = halves(top);
+            ctx.card(frame, Card::Checks, top_left, true);
+            ctx.info(frame, top_right, "YouTube", youtube);
             ctx.card(frame, Card::Sources, left, true);
             ctx.card(frame, Card::Mixer, right, true);
         }
@@ -301,10 +308,13 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
             match focus.tab {
                 0 => {
                     ctx.card(frame, Card::Checks, left, false);
+                    let youtube = ctx.youtube(right.width);
                     let status = ctx.status(right.width);
                     let devices = ctx.devices(right.width);
                     let session = ctx.session(right.width);
-                    let [s1, _, s2, _, s3] = Layout::vertical([
+                    let [s0, _, s1, _, s2, _, s3] = Layout::vertical([
+                        Constraint::Length(youtube.len() as u16 + 1),
+                        Constraint::Length(1),
                         Constraint::Length(status.len() as u16 + 1),
                         Constraint::Length(1),
                         Constraint::Length(devices.len() as u16 + 1),
@@ -312,6 +322,7 @@ pub fn draw(frame: &mut Frame, view: &View, now: Timestamp, spin: &'static str, 
                         Constraint::Fill(1),
                     ])
                     .areas(right);
+                    ctx.info(frame, s0, "YouTube", youtube);
                     ctx.info(frame, s1, "Status", status);
                     ctx.info(frame, s2, "Devices", devices);
                     ctx.info(frame, s3, "Session", session);
@@ -842,6 +853,102 @@ impl Ctx<'_> {
             lines.push(Line::styled("no sources", Style::new().fg(FAINT)));
         }
         (lines, focus)
+    }
+
+    /// YouTube side: the broadcast state and visibility, whether video arrives and how
+    /// healthy it is, and what YouTube flags.
+    fn youtube(&self, width: u16) -> Vec<Line<'static>> {
+        let row = |label: &str, value: Vec<Span<'static>>| {
+            let mut spans = vec![Span::styled(
+                format!(" {label:<11}"),
+                Style::new().fg(MUTED),
+            )];
+            spans.extend(value);
+            crate::truncate(Line::from(spans), usize::from(width))
+        };
+        let dot = |color: Color, text: String| Span::styled(text, Style::new().fg(color));
+        let Some(yt) = &self.view.youtube else {
+            return vec![row(
+                "Broadcast",
+                vec![dot(MUTED, format!("{} asking", self.spin))],
+            )];
+        };
+        let broadcast = match yt.life_cycle.as_str() {
+            "live" | "liveStarting" => dot(ACCENT, "● live".into()),
+            "testing" | "testStarting" => dot(INFO, "● testing".into()),
+            "ready" => dot(OK, "● ready".into()),
+            "created" => dot(WARN, "○ created, no stream bound".into()),
+            "complete" => dot(MUTED, "■ ended".into()),
+            other => dot(MUTED, other.to_owned()),
+        };
+        let mut lines = vec![row("Broadcast", vec![broadcast])];
+        if let Some(p) = &yt.privacy {
+            let color = match p.as_str() {
+                "public" => OK,
+                "unlisted" => INFO,
+                _ => WARN,
+            };
+            lines.push(row("Visibility", vec![dot(color, p.clone())]));
+        }
+        if let Some(start) = yt.scheduled_start
+            && !matches!(yt.life_cycle.as_str(), "live" | "complete")
+        {
+            let mins = (start.secs_since(self.now) / 60.0).round() as i64;
+            let at = start
+                .datetime()
+                .with_timezone(&chrono::Local)
+                .format("%H:%M")
+                .to_string();
+            let when = match mins {
+                m if m > 0 => format!("{at}  in {m} min"),
+                0 => format!("{at}  now"),
+                m => format!("{at}  {} min ago", -m),
+            };
+            lines.push(row("Scheduled", vec![dot(TEXT, when)]));
+        }
+        let ingest = match (yt.stream.as_deref(), yt.health.as_deref()) {
+            (None, _) => dot(WARN, "no stream bound".into()),
+            (Some("active"), Some("good")) => dot(OK, "● receiving · good".into()),
+            (Some("active"), Some("ok")) => dot(OK, "● receiving · ok".into()),
+            (Some("active"), Some("bad")) => dot(ACCENT, "✖ receiving · bad".into()),
+            (Some("active"), _) => dot(WARN, "● receiving · no data yet".into()),
+            _ => dot(MUTED, "○ waiting for video".into()),
+        };
+        lines.push(row("Ingest", vec![ingest]));
+        let video: Vec<&str> = [yt.resolution.as_deref(), yt.frame_rate.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
+        if !video.is_empty() {
+            lines.push(row("Video", vec![dot(TEXT, video.join(" · "))]));
+        }
+        let mut options = Vec::new();
+        if let Some(l) = &yt.latency {
+            options.push(format!("{l} latency"));
+        }
+        if let Some(dvr) = yt.dvr {
+            options.push(format!("DVR {}", if dvr { "on" } else { "off" }));
+        }
+        if !options.is_empty() {
+            lines.push(row("Options", vec![dot(TEXT, options.join(" · "))]));
+        }
+        let auto: Vec<String> = [("start", yt.auto_start), ("stop", yt.auto_stop)]
+            .into_iter()
+            .filter_map(|(name, on)| Some(format!("{name} {}", if on? { "on" } else { "off" })))
+            .collect();
+        if !auto.is_empty() {
+            lines.push(row("Auto", vec![dot(TEXT, auto.join(" · "))]));
+        }
+        for issue in &yt.issues {
+            lines.push(crate::truncate(
+                Line::from(vec![
+                    Span::styled(" ⚠ ", Style::new().fg(WARN)),
+                    Span::styled(issue.clone(), Style::new().fg(WARN)),
+                ]),
+                usize::from(width),
+            ));
+        }
+        lines
     }
 
     /// What is live: stream, OBS, services, keys, quota and latency.

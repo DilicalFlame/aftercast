@@ -254,6 +254,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         None => (None, None),
     };
     let yt = Arc::new(yt);
+    let begun_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let started = clock.now_ts();
 
     let watcher = watch_readme(&session.dir, msg_tx.clone())
@@ -312,14 +313,20 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             });
         }));
     }
-    if !opts.rehearse {
+    if opts.rehearse {
+        let _ = msg_tx.send(Msg::YtStatus(
+            Ok(fake_status(started, "ready", "inactive", None)),
+            None,
+        ));
+    } else {
         on_air.drain(..).for_each(|start| start());
         // The pre-flight shows YouTube's side from the start.
-        let (yt, id, tx) = (yt.clone(), video_id.clone(), msg_tx.clone());
-        tokio::spawn(async move {
-            let status = yt.live_status(&id).await.map_err(|e| e.to_string());
-            let _ = tx.send(Msg::YtStatus(status, None));
-        });
+        tokio::spawn(watch_status(
+            yt.clone(),
+            video_id.clone(),
+            begun_flag.clone(),
+            msg_tx.clone(),
+        ));
     }
     let quest_watcher = watch_quest_file(home, &config, msg_tx.clone());
     let overlay_watcher = opts
@@ -361,6 +368,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         clock: clock.clone(),
         yt,
         msg_tx: msg_tx.clone(),
+        begun_flag,
         yt_status: None,
         going_live: false,
         session,
@@ -679,20 +687,59 @@ fn last_session_video(home: &Home) -> Result<String> {
     Ok(Session::open(&home.root().join(rel))?.meta.video_id)
 }
 
+/// What a rehearse shows for YouTube: an unlisted test broadcast whose stream arrives.
+fn fake_status(
+    now: Timestamp,
+    life: &str,
+    stream: &str,
+    health: Option<&str>,
+) -> ac_youtube::LiveStatus {
+    ac_youtube::LiveStatus {
+        life_cycle: life.into(),
+        privacy: Some("unlisted".into()),
+        scheduled_start: Some(now.add_secs(600.0)),
+        latency: Some("low".into()),
+        dvr: Some(true),
+        auto_start: Some(false),
+        auto_stop: Some(true),
+        stream: Some(stream.into()),
+        health: health.map(Into::into),
+        resolution: (stream == "active").then(|| "1080p".into()),
+        frame_rate: (stream == "active").then(|| "60fps".into()),
+        issues: Vec::new(),
+    }
+}
+
+/// A rehearse goes live in a few seconds, with no YouTube behind it.
+async fn fake_take_live(now: Timestamp, tx: mpsc::UnboundedSender<Msg>) {
+    for (wait, life, stream, health) in [
+        (1, "ready", "active", Some("noData")),
+        (2, "testing", "active", Some("good")),
+        (2, "live", "active", Some("good")),
+    ] {
+        sleep(Duration::from_secs(wait)).await;
+        let status = fake_status(now, life, stream, health);
+        if tx.send(Msg::YtStatus(Ok(status), None)).is_err() {
+            return;
+        }
+    }
+}
+
 /// Takes the broadcast live: waits until YouTube receives the video, then moves it to
-/// `testing` and `live` (a broadcast without a monitor stream goes straight to live). Keeps
-/// reporting the broadcast and stream health every minute afterwards, until the UI is gone.
+/// `testing` and `live` (a broadcast without a monitor stream goes straight to live), then
+/// ends; `watch_status` keeps reporting.
 async fn take_live(yt: Arc<Client>, id: String, tx: mpsc::UnboundedSender<Msg>) {
     let giveup = Instant::now() + Duration::from_secs(180);
     let mut transitions = 0;
     loop {
         let status = yt.live_status(&id).await;
         let mut note = None;
-        let mut wait = 60;
+        let mut done = false;
         if let Ok(s) = &status
-            && s.life_cycle != "live"
+            && s.life_cycle == "live"
         {
-            wait = 5;
+            done = true;
+        } else if let Ok(s) = &status {
             if s.stream.as_deref() == Some("active") && transitions < 6 {
                 let target = match s.life_cycle.as_str() {
                     "ready" => Some("testing"),
@@ -718,16 +765,40 @@ async fn take_live(yt: Arc<Client>, id: String, tx: mpsc::UnboundedSender<Msg>) 
                     s.life_cycle,
                     s.stream.as_deref().unwrap_or("not bound")
                 ));
-                wait = 60;
+                done = true;
             }
         }
         if tx
             .send(Msg::YtStatus(status.map_err(|e| e.to_string()), note))
             .is_err()
+            || done
         {
             return;
         }
-        sleep(Duration::from_secs(wait)).await;
+        sleep(Duration::from_secs(5)).await;
+    }
+}
+
+/// Reports the broadcast and stream health: every 30 s while the session has not started
+/// (the streaming may start early), every 60 s after. Ends with the UI.
+async fn watch_status(
+    yt: Arc<Client>,
+    id: String,
+    begun: Arc<std::sync::atomic::AtomicBool>,
+    tx: mpsc::UnboundedSender<Msg>,
+) {
+    use std::sync::atomic::Ordering;
+    loop {
+        let status = yt.live_status(&id).await.map_err(|e| e.to_string());
+        if tx.send(Msg::YtStatus(status, None)).is_err() {
+            return;
+        }
+        sleep(Duration::from_secs(if begun.load(Ordering::Relaxed) {
+            60
+        } else {
+            30
+        }))
+        .await;
     }
 }
 
@@ -790,6 +861,8 @@ struct Controller {
     clock: Arc<Clock>,
     yt: Arc<Client>,
     msg_tx: mpsc::UnboundedSender<Msg>,
+    /// Set when the session starts (slows `watch_status`).
+    begun_flag: Arc<std::sync::atomic::AtomicBool>,
     /// Last `live_status`, `None` until YouTube answered.
     yt_status: Option<ac_youtube::LiveStatus>,
     /// Go Live is running: the broadcast is being moved to live.
@@ -872,6 +945,8 @@ impl Controller {
             return;
         }
         self.begun = true;
+        self.begun_flag
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         // A rehearsal goes live now: its broadcast starts and its demo chat plays.
         for start in self.on_air.drain(..) {
             start();
@@ -917,7 +992,7 @@ impl Controller {
         let blockers: Vec<String> = self
             .preflight()
             .into_iter()
-            .filter(|c| c.state == CheckState::Fail)
+            .filter(|c| c.state == CheckState::Fail && c.label != "OBS streaming")
             .map(|c| c.label)
             .collect();
         if !blockers.is_empty() {
@@ -925,25 +1000,29 @@ impl Controller {
             return;
         }
         self.begin().await;
-        if !self.rehearse {
-            let recording = matches!(
-                self.state.obs_record,
-                Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
-            );
-            if !recording {
-                self.record(ac_core::command::OutputAction::Start);
-            }
-            if self.state.obs_stream != Some(OutputState::Started) {
-                self.stream(true);
-            }
-            self.going_live = true;
-            let (yt, id, tx) = (
-                self.yt.clone(),
-                self.session.meta.video_id.clone(),
-                self.msg_tx.clone(),
-            );
-            tokio::spawn(take_live(yt, id, tx));
+        let recording = matches!(
+            self.state.obs_record,
+            Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
+        );
+        if !recording {
+            self.record(ac_core::command::OutputAction::Start);
         }
+        self.going_live = true;
+        if self.rehearse {
+            // Rehearse is all pretend on YouTube: OBS records, nothing is streamed.
+            tokio::spawn(fake_take_live(self.clock.now_ts(), self.msg_tx.clone()));
+            self.notice = Some("rehearse: recording starts, YouTube goes live (pretend)".into());
+            return;
+        }
+        if self.state.obs_stream != Some(OutputState::Started) {
+            self.stream(true);
+        }
+        let (yt, id, tx) = (
+            self.yt.clone(),
+            self.session.meta.video_id.clone(),
+            self.msg_tx.clone(),
+        );
+        tokio::spawn(take_live(yt, id, tx));
         self.notice = Some("going live: recording and streaming start, then YouTube".into());
     }
 
@@ -1462,6 +1541,7 @@ impl Controller {
             quota_remaining: self.yt.quota().remaining(self.clock.now_ts()),
             notice: self.notice.clone(),
             preflight: self.preflight(),
+            youtube: self.yt_status.clone(),
             chat: self.chat_pane(),
             pending_title: self.pending_title.clone(),
             latency_running: self.latency_run.is_some(),
@@ -1539,8 +1619,19 @@ impl Controller {
             (false, true) if required => CheckState::Fail,
             _ => CheckState::Pending,
         };
-        // Before Go Live the outputs are not failures: Go Live starts them.
+        // Streaming may start early (a connection costs nothing until the broadcast goes
+        // live), so it is only a warning. The recording starts together with Go Live.
         let armed = self.go_live_armed();
+        let streaming = self.state.obs_stream == Some(OutputState::Started);
+        list.push(check(
+            "OBS streaming",
+            output(streaming, true),
+            if streaming {
+                String::new()
+            } else {
+                "may start early; Go Live starts it too".into()
+            },
+        ));
         let output = |active: bool, required: bool| match (active, armed) {
             (false, true) => CheckState::Pending,
             _ => output(active, required),
@@ -1552,12 +1643,6 @@ impl Controller {
                 String::new()
             }
         };
-        let streaming = self.state.obs_stream == Some(OutputState::Started);
-        list.push(check(
-            "OBS streaming",
-            output(streaming, true),
-            note(streaming),
-        ));
         let recording = matches!(
             self.state.obs_record,
             Some(OutputState::Started | OutputState::Resumed)
@@ -1567,7 +1652,7 @@ impl Controller {
             output(recording, obs.require_recording),
             note(recording),
         ));
-        if !self.rehearse {
+        {
             let begun = self.begun;
             let going = self.going_live;
             let (ready, receiving) = match &self.yt_status {
@@ -1695,7 +1780,7 @@ impl Controller {
                 ("liveChatId present", _) => "turn on live chat in YouTube Studio".into(),
                 ("OBS connected", _) => "start OBS, enable its WebSocket server".into(),
                 ("OBS scenes exist", true) => "create them in OBS, or rename in Settings".into(),
-                ("OBS streaming", true) if !armed => "start streaming".into(),
+                ("OBS streaming", true) => "start streaming".into(),
                 ("OBS recording", true) if !armed => "start recording".into(),
                 ("YouTube broadcast ready", _) => {
                     "finish the stream setup in YouTube Studio".into()
@@ -1722,7 +1807,7 @@ impl Controller {
 
     /// Go Live is on offer: a real broadcast that has not started yet.
     fn go_live_armed(&self) -> bool {
-        !self.begun && !self.rehearse && self.state.stream == Some(StreamStatus::Upcoming)
+        !self.begun && self.state.stream == Some(StreamStatus::Upcoming)
     }
 
     fn publish(&mut self) {

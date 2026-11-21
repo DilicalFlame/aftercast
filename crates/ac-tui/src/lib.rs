@@ -76,6 +76,8 @@ pub struct View {
     /// One-line feedback for the last action, e.g. "description unchanged".
     pub notice: Option<String>,
     pub preflight: Vec<Check>,
+    /// The broadcast and its stream as YouTube reports them; `None` until it answered.
+    pub youtube: Option<ac_core::youtube::LiveStatus>,
     /// Last chat messages, oldest first.
     pub chat: Arc<VecDeque<ChatMessage>>,
     /// A `!title` from chat waiting for `y`/`n`.
@@ -3250,12 +3252,17 @@ mod tests {
                     fix: "start recording in OBS (also :record start)".into(),
                 },
             ],
+            youtube: None,
         }
     }
 
     fn screen(app: &mut App, view: &View) -> String {
+        screen_sized(app, view, 110, 16)
+    }
+
+    fn screen_sized(app: &mut App, view: &View, width: u16, height: u16) -> String {
         let mut terminal =
-            ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 16)).unwrap();
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| app.draw(f, view)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         (0..buffer.area.height)
@@ -3280,7 +3287,7 @@ mod tests {
         let mut app = App::new(clock.clone(), rx, cmd_tx);
 
         // Home opens first (this session has started); Esc goes to the dashboard.
-        let text = screen(&mut app, &view);
+        let text = screen_sized(&mut app, &view, 110, 24);
         assert!(text.contains("STARTED"), "{text}");
         assert!(text.contains("Dashboard"), "{text}");
         assert!(text.contains("✖ OBS recording"), "{text}");
@@ -3975,6 +3982,43 @@ mute Mic/Aux
         press(&mut app, KeyCode::Char('q'));
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Quit);
         assert!(app.exit);
+    }
+
+    #[test]
+    fn home_shows_what_youtube_reports() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.begun = false;
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, _cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock.clone(), rx, cmd_tx);
+        assert!(screen_sized(&mut app, &view, 120, 30).contains("YOUTUBE"));
+        view.youtube = Some(ac_core::youtube::LiveStatus {
+            life_cycle: "ready".into(),
+            privacy: Some("unlisted".into()),
+            stream: Some("active".into()),
+            health: Some("good".into()),
+            resolution: Some("1080p".into()),
+            frame_rate: Some("60fps".into()),
+            latency: Some("low".into()),
+            dvr: Some(true),
+            issues: vec!["Bitrate is low".into()],
+            ..Default::default()
+        });
+        let text = screen_sized(&mut app, &view, 120, 30);
+        if std::env::var_os("SHOW_TUI").is_some() {
+            println!("{text}");
+        }
+        for want in [
+            "ready",
+            "unlisted",
+            "receiving · good",
+            "1080p · 60fps",
+            "low latency · DVR on",
+            "Bitrate is low",
+        ] {
+            assert!(text.contains(want), "{want}: {text}");
+        }
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod session;
 pub mod session_state;
 pub mod state;
 pub mod time;
+pub mod youtube;
 
 pub use config::Config;
 pub use error::{Error, Result, exit};
