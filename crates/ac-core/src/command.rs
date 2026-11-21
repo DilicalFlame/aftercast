@@ -79,6 +79,9 @@ pub enum Command {
     },
     /// Start the session prepared on Home: until then nothing lasting or public happens.
     Begin,
+    /// Go live: start the session, OBS recording and streaming together, then move the
+    /// YouTube broadcast to live once YouTube receives the video.
+    GoLive,
     /// Ask OBS for live audio levels (while a page showing meters is open) or stop.
     Meters {
         on: bool,

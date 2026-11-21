@@ -50,6 +50,8 @@ pub enum Msg {
     Command(Command, oneshot::Sender<()>),
     Spent(Spent),
     Broadcast(Result<Broadcast, String>),
+    /// Where the broadcast stands on YouTube, and a note if a transition was refused.
+    YtStatus(Result<ac_youtube::LiveStatus, String>, Option<String>),
     ReadmeChanged,
     /// A file in `<home>/overlays` changed (rehearsal only).
     OverlaysChanged,
@@ -312,6 +314,12 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     }
     if !opts.rehearsal {
         on_air.drain(..).for_each(|start| start());
+        // The pre-flight shows YouTube's side from the start.
+        let (yt, id, tx) = (yt.clone(), video_id.clone(), msg_tx.clone());
+        tokio::spawn(async move {
+            let status = yt.live_status(&id).await.map_err(|e| e.to_string());
+            let _ = tx.send(Msg::YtStatus(status, None));
+        });
     }
     let quest_watcher = watch_quest_file(home, &config, msg_tx.clone());
     let overlay_watcher = opts
@@ -352,6 +360,9 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         config: Arc::new(config),
         clock: clock.clone(),
         yt,
+        msg_tx: msg_tx.clone(),
+        yt_status: None,
+        going_live: false,
         session,
         state: session_state,
         log,
@@ -668,6 +679,58 @@ fn last_session_video(home: &Home) -> Result<String> {
     Ok(Session::open(&home.root().join(rel))?.meta.video_id)
 }
 
+/// Takes the broadcast live: waits until YouTube receives the video, then moves it to
+/// `testing` and `live` (a broadcast without a monitor stream goes straight to live). Keeps
+/// reporting the broadcast and stream health every minute afterwards, until the UI is gone.
+async fn take_live(yt: Arc<Client>, id: String, tx: mpsc::UnboundedSender<Msg>) {
+    let giveup = Instant::now() + Duration::from_secs(180);
+    let mut transitions = 0;
+    loop {
+        let status = yt.live_status(&id).await;
+        let mut note = None;
+        let mut wait = 60;
+        if let Ok(s) = &status
+            && s.life_cycle != "live"
+        {
+            wait = 5;
+            if s.stream.as_deref() == Some("active") && transitions < 6 {
+                let target = match s.life_cycle.as_str() {
+                    "ready" => Some("testing"),
+                    "testing" => Some("live"),
+                    _ => None,
+                };
+                if let Some(target) = target {
+                    transitions += 1;
+                    let mut result = yt.transition(&id, target).await;
+                    if target == "testing"
+                        && matches!(&result, Err(ac_youtube::Error::Api { reason, .. }) if reason == "invalidTransition")
+                    {
+                        result = yt.transition(&id, "live").await;
+                    }
+                    if let Err(e) = result {
+                        note = Some(format!("YouTube refused {target}: {e}"));
+                    }
+                }
+            }
+            if Instant::now() > giveup {
+                note = Some(format!(
+                    "YouTube is not live after 3 minutes ({}, stream {}); check OBS, or go live in Studio",
+                    s.life_cycle,
+                    s.stream.as_deref().unwrap_or("not bound")
+                ));
+                wait = 60;
+            }
+        }
+        if tx
+            .send(Msg::YtStatus(status.map_err(|e| e.to_string()), note))
+            .is_err()
+        {
+            return;
+        }
+        sleep(Duration::from_secs(wait)).await;
+    }
+}
+
 /// Polls `videos.list` (30 s while upcoming, 60 s while live) until the stream ends.
 async fn poll(
     yt: Arc<Client>,
@@ -726,6 +789,11 @@ struct Controller {
     config: Arc<Config>,
     clock: Arc<Clock>,
     yt: Arc<Client>,
+    msg_tx: mpsc::UnboundedSender<Msg>,
+    /// Last `live_status`, `None` until YouTube answered.
+    yt_status: Option<ac_youtube::LiveStatus>,
+    /// Go Live is running: the broadcast is being moved to live.
+    going_live: bool,
     session: Session,
     state: SessionState,
     log: EventLog,
@@ -839,6 +907,64 @@ impl Controller {
         ));
     }
 
+    /// Go Live: the session, the OBS recording and the OBS stream start together, then the
+    /// broadcast is taken live as soon as YouTube receives the video. Anything not ready
+    /// stops it before anything starts.
+    async fn go_live(&mut self) {
+        if self.begun || self.going_live {
+            return;
+        }
+        let blockers: Vec<String> = self
+            .preflight()
+            .into_iter()
+            .filter(|c| c.state == CheckState::Fail)
+            .map(|c| c.label)
+            .collect();
+        if !blockers.is_empty() {
+            self.notice = Some(format!("not ready to go live: {}", blockers.join(", ")));
+            return;
+        }
+        self.begin().await;
+        if !self.rehearsal {
+            let recording = matches!(
+                self.state.obs_record,
+                Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
+            );
+            if !recording {
+                self.record(ac_core::command::OutputAction::Start);
+            }
+            if self.state.obs_stream != Some(OutputState::Started) {
+                self.stream(true);
+            }
+            self.going_live = true;
+            let (yt, id, tx) = (
+                self.yt.clone(),
+                self.session.meta.video_id.clone(),
+                self.msg_tx.clone(),
+            );
+            tokio::spawn(take_live(yt, id, tx));
+        }
+        self.notice = Some("going live: recording and streaming start, then YouTube".into());
+    }
+
+    fn on_yt_status(
+        &mut self,
+        result: Result<ac_youtube::LiveStatus, String>,
+        note: Option<String>,
+    ) {
+        // A failed read keeps the last known status.
+        if let Ok(status) = result {
+            if self.going_live && status.life_cycle == "live" {
+                self.going_live = false;
+                self.notice = Some("you are live".into());
+            }
+            self.yt_status = Some(status);
+        }
+        if let Some(note) = note {
+            self.notice = Some(note);
+        }
+    }
+
     /// Runs until quit; returns the folder to delete when a new session was never started.
     async fn run(
         mut self,
@@ -881,6 +1007,7 @@ impl Controller {
                         remaining: s.remaining,
                     }),
                     Msg::Broadcast(result) => self.on_broadcast(result),
+                    Msg::YtStatus(result, note) => self.on_yt_status(result, note),
                     Msg::ReadmeChanged => render_at = Some(Instant::now() + README_DEBOUNCE),
                     Msg::OverlaysChanged => refresh_at = Some(Instant::now() + OVERLAY_DEBOUNCE),
                     Msg::Obs(update) => self.on_obs(update),
@@ -1031,6 +1158,7 @@ impl Controller {
                 self.done = true;
             }
             Command::Begin => self.begin().await,
+            Command::GoLive => self.go_live().await,
             Command::Question { qid, action } => self.question(qid, action),
             Command::Say { text } => {
                 self.send_chat(text.clone());
@@ -1411,11 +1539,24 @@ impl Controller {
             (false, true) if required => CheckState::Fail,
             _ => CheckState::Pending,
         };
+        // Before Go Live the outputs are not failures: Go Live starts them.
+        let armed = self.go_live_armed();
+        let output = |active: bool, required: bool| match (active, armed) {
+            (false, true) => CheckState::Pending,
+            _ => output(active, required),
+        };
+        let note = |active: bool| {
+            if armed && !active {
+                "starts with Go Live".to_owned()
+            } else {
+                String::new()
+            }
+        };
         let streaming = self.state.obs_stream == Some(OutputState::Started);
         list.push(check(
             "OBS streaming",
             output(streaming, true),
-            String::new(),
+            note(streaming),
         ));
         let recording = matches!(
             self.state.obs_record,
@@ -1424,8 +1565,52 @@ impl Controller {
         list.push(check(
             "OBS recording",
             output(recording, obs.require_recording),
-            String::new(),
+            note(recording),
         ));
+        if !self.rehearsal {
+            let begun = self.begun;
+            let going = self.going_live;
+            let (ready, receiving) = match &self.yt_status {
+                None => (
+                    check(
+                        "YouTube broadcast ready",
+                        CheckState::Pending,
+                        String::new(),
+                    ),
+                    check(
+                        "YouTube receiving video",
+                        CheckState::Pending,
+                        String::new(),
+                    ),
+                ),
+                Some(s) => {
+                    let ready = match s.life_cycle.as_str() {
+                        "created" | "complete" | "revoked" => CheckState::Fail,
+                        _ => CheckState::Ok,
+                    };
+                    let receiving = match (s.stream.as_deref(), s.health.as_deref()) {
+                        (Some("active"), Some("bad")) => CheckState::Fail,
+                        (Some("active"), Some("good" | "ok")) => CheckState::Ok,
+                        (Some("active"), _) => CheckState::Pending,
+                        _ if !begun || going => CheckState::Pending,
+                        _ => CheckState::Fail,
+                    };
+                    (
+                        check("YouTube broadcast ready", ready, s.life_cycle.clone()),
+                        check(
+                            "YouTube receiving video",
+                            receiving,
+                            match (receiving, s.health.as_deref()) {
+                                (CheckState::Pending, _) if !begun => "starts with Go Live".into(),
+                                (_, Some(h)) => format!("stream health: {h}"),
+                                _ => String::new(),
+                            },
+                        ),
+                    )
+                }
+            };
+            list.extend([ready, receiving]);
+        }
         if obs.record_into_session && matches!(self.obs, obs::ObsLink::Real(_)) {
             list.push(match (&self.record_dir, connected) {
                 (Some(dir), _) => check("Recording into the session", CheckState::Ok, dir.clone()),
@@ -1510,8 +1695,14 @@ impl Controller {
                 ("liveChatId present", _) => "turn on live chat in YouTube Studio".into(),
                 ("OBS connected", _) => "start OBS, enable its WebSocket server".into(),
                 ("OBS scenes exist", true) => "create them in OBS, or rename in Settings".into(),
-                ("OBS streaming", true) => "start streaming".into(),
-                ("OBS recording", true) => "start recording".into(),
+                ("OBS streaming", true) if !armed => "start streaming".into(),
+                ("OBS recording", true) if !armed => "start recording".into(),
+                ("YouTube broadcast ready", _) => {
+                    "finish the stream setup in YouTube Studio".into()
+                }
+                ("YouTube receiving video", _) if c.state == CheckState::Fail => {
+                    "check OBS's stream settings and key".into()
+                }
                 ("Mic live", true) if mic.is_some() => "unmute the mic".into(),
                 ("Mic live", true) => "add a mic input in OBS".into(),
                 ("Recording into the session", true) => "needs OBS 30.2+".into(),
@@ -1527,6 +1718,11 @@ impl Controller {
             };
         }
         list
+    }
+
+    /// Go Live is on offer: a real broadcast that has not started yet.
+    fn go_live_armed(&self) -> bool {
+        !self.begun && !self.rehearsal && self.state.stream == Some(StreamStatus::Upcoming)
     }
 
     fn publish(&mut self) {

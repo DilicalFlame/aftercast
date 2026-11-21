@@ -135,6 +135,17 @@ impl Broadcast {
     }
 }
 
+/// A broadcast's lifecycle and ingest, as YouTube reports them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LiveStatus {
+    /// `created`, `ready`, `testing`, `live`, `complete`, ...
+    pub life_cycle: String,
+    /// `inactive`, `ready` or `active` (YouTube is receiving video); `None` if no stream is bound.
+    pub stream: Option<String>,
+    /// `good`, `ok`, `bad` or `noData`.
+    pub health: Option<String>,
+}
+
 /// The authenticated channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Channel {
@@ -301,6 +312,71 @@ impl Client {
             }
         }
         Ok(None)
+    }
+
+    /// Where a broadcast stands: its lifecycle and, once a stream is bound, whether YouTube
+    /// receives video and how healthy it is (`liveBroadcasts.list` + `liveStreams.list`).
+    pub async fn live_status(&self, id: &str) -> Result<LiveStatus> {
+        let list = |method, path, part: &str, id: &str| Request {
+            method,
+            http: Http::Get,
+            path,
+            query: vec![("part", part.into()), ("id", id.into())],
+            body: None,
+        };
+        let response = self
+            .call(
+                list(
+                    Method::LiveBroadcastsList,
+                    "liveBroadcasts",
+                    "status,contentDetails",
+                    id,
+                ),
+                false,
+            )
+            .await?;
+        let item = &response["items"][0];
+        let life_cycle = item["status"]["lifeCycleStatus"]
+            .as_str()
+            .ok_or_else(|| Error::Broadcast(format!("{id} is not a broadcast of this channel")))?
+            .to_owned();
+        let mut status = LiveStatus {
+            life_cycle,
+            stream: None,
+            health: None,
+        };
+        if let Some(bound) = item["contentDetails"]["boundStreamId"].as_str() {
+            let response = self
+                .call(
+                    list(Method::LiveStreamsList, "liveStreams", "status", bound),
+                    false,
+                )
+                .await?;
+            let s = &response["items"][0]["status"];
+            status.stream = s["streamStatus"].as_str().map(str::to_owned);
+            status.health = s["healthStatus"]["status"].as_str().map(str::to_owned);
+        }
+        Ok(status)
+    }
+
+    /// `liveBroadcasts.transition` to `testing` or `live` (50 units).
+    pub async fn transition(&self, id: &str, to: &str) -> Result<()> {
+        self.call(
+            Request {
+                method: Method::LiveBroadcastsTransition,
+                http: Http::Post,
+                path: "liveBroadcasts/transition",
+                query: vec![
+                    ("part", "status".into()),
+                    ("id", id.into()),
+                    ("broadcastStatus", to.into()),
+                ],
+                body: None,
+            },
+            true,
+        )
+        .await?;
+        Ok(())
     }
 
     /// Replaces the video description, sending the full current snippet back so the

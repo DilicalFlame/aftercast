@@ -140,6 +140,12 @@ pub fn scene_audio<'a>(view: &'a View, scene: &str) -> Vec<&'a Audio> {
     audio
 }
 
+/// Go Live replaces Start while the broadcast is upcoming: it also starts OBS recording and
+/// streaming and takes the broadcast live. (A rehearsal has no upcoming state before it starts.)
+pub fn go_live(view: &View) -> bool {
+    !view.begun && view.state.stream == Some(StreamStatus::Upcoming)
+}
+
 /// What `Enter` on an item asks, as a command for the session.
 pub fn command(item: &Item, view: &View) -> Option<Command> {
     Some(match item {
@@ -472,7 +478,13 @@ impl Ctx<'_> {
         let buttons: Vec<(&str, &str, Style)> = if view.begun {
             vec![("Dashboard", "esc", Style::new().fg(Color::Black).bg(ACCENT))]
         } else {
-            let start = if view.fresh { "Start" } else { "Resume" };
+            let start = if go_live(view) {
+                "Go Live"
+            } else if view.fresh {
+                "Start"
+            } else {
+                "Resume"
+            };
             vec![
                 (start, "s", Style::new().fg(Color::Black).bg(ACCENT)),
                 ("Quit", "q", Style::new().fg(TEXT).bg(RAISED)),

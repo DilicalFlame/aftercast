@@ -23,6 +23,8 @@ pub enum Method {
     VideosList,
     ChannelsList,
     LiveBroadcastsList,
+    LiveBroadcastsTransition,
+    LiveStreamsList,
     VideosUpdate,
     ThumbnailsSet,
     ChatStreamList,
@@ -38,6 +40,8 @@ impl Method {
             Self::VideosList => "videos.list",
             Self::ChannelsList => "channels.list",
             Self::LiveBroadcastsList => "liveBroadcasts.list",
+            Self::LiveBroadcastsTransition => "liveBroadcasts.transition",
+            Self::LiveStreamsList => "liveStreams.list",
             Self::VideosUpdate => "videos.update",
             Self::ThumbnailsSet => "thumbnails.set",
             Self::ChatStreamList => "liveChatMessages.streamList",
@@ -50,10 +54,16 @@ impl Method {
 
     fn default_cost(self) -> u32 {
         match self {
-            Self::VideosList | Self::ChannelsList | Self::LiveBroadcastsList => 1,
+            Self::VideosList
+            | Self::ChannelsList
+            | Self::LiveBroadcastsList
+            | Self::LiveStreamsList => 1,
             Self::ChatStreamList | Self::ChatList => 5,
             Self::ChatInsert => 20,
-            Self::VideosUpdate | Self::ThumbnailsSet | Self::ChatDelete => 50,
+            Self::VideosUpdate
+            | Self::ThumbnailsSet
+            | Self::ChatDelete
+            | Self::LiveBroadcastsTransition => 50,
             Self::BansInsert => 200,
         }
     }
@@ -65,6 +75,7 @@ impl Method {
             Self::VideosList
                 | Self::ChannelsList
                 | Self::LiveBroadcastsList
+                | Self::LiveStreamsList
                 | Self::ChatStreamList
                 | Self::ChatList
         )

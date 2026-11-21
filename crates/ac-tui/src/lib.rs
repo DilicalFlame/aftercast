@@ -1079,7 +1079,11 @@ impl App {
             KeyCode::Char('q') => self.finish(Command::Quit),
             // The Start (or Resume) button's key; started, on to the dashboard.
             KeyCode::Char('s') if !view.begun => {
-                self.send(Command::Begin);
+                self.send(if home::go_live(view) {
+                    Command::GoLive
+                } else {
+                    Command::Begin
+                });
                 self.mode = Mode::Normal;
             }
             KeyCode::Char(c @ ('R' | 'S' | 'M' | ',' | ':')) => self.home_key(c, view),
@@ -3957,6 +3961,16 @@ mute Mic/Aux
         press(&mut app, KeyCode::Char('s'));
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Begin);
         assert_eq!(app.mode, Mode::Normal);
+        // While the broadcast is upcoming the same key is Go Live.
+        app.mode = Mode::Preflight;
+        let mut upcoming = view.clone();
+        upcoming.state.stream = Some(StreamStatus::Upcoming);
+        assert!(screen(&mut app, &upcoming).contains("Go Live"));
+        app.key(
+            KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+            &upcoming,
+        );
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::GoLive);
         app.mode = Mode::Preflight;
         press(&mut app, KeyCode::Char('q'));
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Quit);
