@@ -1,5 +1,5 @@
 //! `aftercast rehearse`: simulated YouTube and chat in session episode 0 next to the real
-//! ones, replaced by the next rehearsal, without using an episode number, the last-session
+//! ones, replaced by the next rehearse, without using an episode number, the last-session
 //! pointer or today's quota. (OBS points at a closed port here; with OBS running it
 //! connects for real.)
 
@@ -13,7 +13,7 @@ fn free_port() -> u16 {
     listener.local_addr().unwrap().port()
 }
 
-/// Runs a rehearsal: `script`, then `wait` of real time (the demo chat plays in real time,
+/// Runs a rehearse: `script`, then `wait` of real time (the demo chat plays in real time,
 /// script delays are virtual), then quit.
 fn rehearse(bin: &str, home: &std::path::Path, script: &str, wait: Duration) -> String {
     let mut child = Command::new(bin)
@@ -74,7 +74,7 @@ fn rehearse_is_isolated_from_real_sessions_and_quota() {
     );
     assert!(out.contains(" session.start "), "{out}");
 
-    // The rehearsal is episode 0 next to the real sessions.
+    // The rehearse is episode 0 next to the real sessions.
     let rehearse_dir = home.join("rehearse");
     let session = only_session(&home);
     let name = session.file_name().unwrap().to_string_lossy().into_owned();
@@ -94,7 +94,7 @@ fn rehearse_is_isolated_from_real_sessions_and_quota() {
     );
     assert!(!home.join("state/quota.json").exists());
 
-    // Commands find it as `rehearsal` (render reads its suggestions, which do not exist yet).
+    // Commands find it as `rehearse` (render reads its suggestions, which do not exist yet).
     let out = Command::new(bin)
         .arg("--home")
         .arg(&home)
@@ -107,7 +107,7 @@ fn rehearse_is_isolated_from_real_sessions_and_quota() {
         "{err}"
     );
 
-    // An edited demo chat is kept; a second rehearsal replaces the first.
+    // An edited demo chat is kept; a second rehearse replaces the first.
     fs::write(
         rehearse_dir.join("chat.jsonl"),
         "{\"after_ms\": 500, \"author\": \"zed\", \"text\": \"custom line\"}\n",

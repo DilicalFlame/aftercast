@@ -53,7 +53,7 @@ pub enum Msg {
     /// Where the broadcast stands on YouTube, and a note if a transition was refused.
     YtStatus(Result<ac_youtube::LiveStatus, String>, Option<String>),
     ReadmeChanged,
-    /// A file in `<home>/overlays` changed (rehearsal only).
+    /// A file in `<home>/overlays` changed (rehearse only).
     OverlaysChanged,
     Obs(ac_obs::Update),
     Chat(ac_youtube::chat::ChatUpdate),
@@ -85,14 +85,14 @@ pub struct Options<'a> {
     pub mock: Option<&'a Path>,
     pub allow_ended: bool,
     /// `aftercast rehearse`: real OBS and overlays; simulated YouTube and chat; a throwaway
-    /// session under `<home>/rehearsal/`; overlay files reload in OBS when saved.
+    /// session under `<home>/rehearse/`; overlay files reload in OBS when saved.
     pub rehearse: bool,
     /// Start the session at once (headless, scripts). Otherwise the TUI's Home starts it;
     /// until then a new session is a draft that quitting deletes.
     pub begin: bool,
 }
 
-/// Video id of the simulated broadcast in a rehearsal.
+/// Video id of the simulated broadcast in a rehearse.
 const REHEARSE_VIDEO: &str = "rehearse01";
 const REHEARSE_FILES: [(&str, &str); 2] = [
     (
@@ -108,11 +108,11 @@ const REHEARSE_CHAT: &str = include_str!("../rehearse/chat.jsonl");
 /// Overlay files are reloaded in OBS this long after the last change (editors write twice).
 const OVERLAY_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Fresh rehearsal: the simulated YouTube answers and demo chat (kept if edited) in
-/// `<home>/rehearsal`, and no earlier rehearsal session (episode 0) in `sessions`.
+/// Fresh rehearse: the simulated YouTube answers and demo chat (kept if edited) in
+/// `<home>/rehearse`, and no earlier rehearse session (episode 0) in `sessions`.
 fn prepare_rehearse(home: &Home, config: &Config, dir: &Path) -> Result<()> {
     Session::remove_rehearses(home, config)?;
-    // `sessions` and `state.toml` there are from the first rehearsal version.
+    // `sessions` and `state.toml` there are from the first rehearse version.
     for old in ["requests", "sessions"] {
         let old = dir.join(old);
         if old.exists() {
@@ -170,7 +170,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     };
 
     let mut yt = if opts.rehearse {
-        // Its own quota file: a rehearsal never touches today's real quota.
+        // Its own quota file: a rehearse never touches today's real quota.
         let quota = QuotaGuard::open(
             &rehearse_dir.join("quota.json"),
             config.youtube.daily_quota_reserve,
@@ -240,7 +240,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let renderer = Renderer::new(&home.path(&config.paths.templates));
     let (events_tx, events_rx) = broadcast::channel(4096);
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    // Rehearsal page: the chat box feeds the simulated chat; the session feeds the page.
+    // Rehearse page: the chat box feeds the simulated chat; the session feeds the page.
     let injector = if opts.rehearse {
         yt.chat_injector()
     } else {
@@ -260,7 +260,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let watcher = watch_readme(&session.dir, msg_tx.clone())
         .inspect_err(|e| tracing::warn!("README watcher unavailable: {e}"))
         .ok();
-    // A rehearsal goes "live" only when the session starts: until then its simulated
+    // A rehearse goes "live" only when the session starts: until then its simulated
     // broadcast is upcoming and its demo chat waits. A real stream is watched at once.
     let mut broadcast = broadcast;
     let rehearse_live = opts.rehearse.then(|| broadcast.clone());
@@ -905,7 +905,7 @@ struct Controller {
     latency_run: Option<chat::LatencyRun>,
     /// Tells the chat reader a latency measurement runs (reopen chat without waiting).
     chat_fast: watch::Sender<bool>,
-    /// `aftercast rehearse`: what the rehearsal page shows.
+    /// `aftercast rehearse`: what the rehearse page shows.
     rehearse_feed: Option<watch::Sender<ac_server::Feed>>,
     /// The broadcast title (as set at start or by `!title`).
     title: String,
@@ -920,10 +920,10 @@ struct Controller {
     capture: capture::Capture,
     /// The session was started from Home (or at once, headless).
     begun: bool,
-    /// What starts when the session does: in a rehearsal, the broadcast poll and the demo
+    /// What starts when the session does: in a rehearse, the broadcast poll and the demo
     /// chat (a real stream's run from the first moment).
     on_air: Vec<Box<dyn FnOnce() + Send>>,
-    /// The rehearsal's simulated broadcast, reported live when the session starts.
+    /// The rehearse's simulated broadcast, reported live when the session starts.
     rehearse_live: Option<ac_youtube::Broadcast>,
     /// Quitting is waiting (until then) for OBS to stop recording.
     quit_by: Option<Instant>,
@@ -947,7 +947,7 @@ impl Controller {
         self.begun = true;
         self.begun_flag
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        // A rehearsal goes live now: its broadcast starts and its demo chat plays.
+        // A rehearse goes live now: its broadcast starts and its demo chat plays.
         for start in self.on_air.drain(..) {
             start();
         }

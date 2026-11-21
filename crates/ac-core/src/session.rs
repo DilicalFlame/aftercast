@@ -78,7 +78,7 @@ pub struct Session {
     pub meta: SessionMeta,
 }
 
-/// Episode number of the rehearsal session (`aftercast rehearse`).
+/// Episode number of the rehearse session (`aftercast rehearse`).
 pub const REHEARSE_EPISODE: u32 = 0;
 
 impl Session {
@@ -141,7 +141,7 @@ impl Session {
         state.save(&state_path)
     }
 
-    /// The rehearsal session: episode 0 next to the real ones. It never uses up an episode
+    /// The rehearse session: episode 0 next to the real ones. It never uses up an episode
     /// number and never becomes the last session.
     pub fn create_rehearse(
         home: &Home,
@@ -152,7 +152,7 @@ impl Session {
         Self::create_at(home, config, new, now, REHEARSE_EPISODE).map(|(s, _)| s)
     }
 
-    /// Deletes every earlier rehearsal session (episode 0); returns how many.
+    /// Deletes every earlier rehearse session (episode 0); returns how many.
     pub fn remove_rehearses(home: &Home, config: &Config) -> Result<usize> {
         let mut removed = 0;
         let years = fs::read_dir(sessions_dir(home, config))

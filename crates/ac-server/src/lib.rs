@@ -91,7 +91,7 @@ pub struct Shared {
     pub dir: PathBuf,
     /// `:root { --bg: ... }` from `[overlay]`.
     pub theme: String,
-    /// `aftercast rehearse`: serves the rehearsal page at `/rehearsal`.
+    /// `aftercast rehearse`: serves the rehearse page at `/rehearse`.
     pub rehearse: Option<Rehearse>,
 }
 

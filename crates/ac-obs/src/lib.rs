@@ -79,7 +79,7 @@ pub enum Request {
     /// Reloads every Browser source whose URL starts with one of these prefixes. OBS does
     /// not retry a page that failed to load (aftercast was not running yet).
     RefreshBrowsers(Vec<String>),
-    /// Starts OBS Virtual Camera unless it runs (a rehearsal page shows it as the video).
+    /// Starts OBS Virtual Camera unless it runs (a rehearse page shows it as the video).
     StartVirtualCam,
     Mute {
         input: String,

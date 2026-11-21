@@ -155,7 +155,7 @@ fn name(dir: &Path) -> String {
         .into_owned()
 }
 
-/// A session by folder name, episode (`42`, `ep042`), `rehearsal` (episode 0) or `latest`
+/// A session by folder name, episode (`42`, `ep042`), `rehearse` (episode 0) or `latest`
 /// (the newest real stream).
 fn session_dir(home: &Home, config: &Config, arg: &str) -> R<PathBuf> {
     if arg.is_empty() || arg == "latest" {

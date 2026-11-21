@@ -39,7 +39,7 @@ pub fn session_dirs(home: &Home, config: &Config) -> Vec<PathBuf> {
     dirs
 }
 
-/// A session by folder name (`2026-11-19_ep042`), episode (`42`, `ep042`) or `rehearsal`
+/// A session by folder name (`2026-11-19_ep042`), episode (`42`, `ep042`) or `rehearse`
 /// (episode 0). The newest match wins.
 pub fn find_session(home: &Home, config: &Config, arg: &str) -> Option<PathBuf> {
     let dirs = session_dirs(home, config);
@@ -58,7 +58,7 @@ pub fn find_session(home: &Home, config: &Config, arg: &str) -> Option<PathBuf> 
         .find(|d| Session::open(d).is_ok_and(|s| s.meta.episode == episode))
 }
 
-/// The newest real (not rehearsal) session, else the rehearsal.
+/// The newest real (not rehearse) session, else the rehearse.
 pub fn latest_session(home: &Home, config: &Config) -> Option<PathBuf> {
     let dirs = session_dirs(home, config);
     dirs.iter()
@@ -406,7 +406,7 @@ mod tests {
             Some(real.dir.clone())
         );
         assert_eq!(find_session(&home, &config, "nope"), None);
-        // The next real stream is still #2; wiping removes only the rehearsal.
+        // The next real stream is still #2; wiping removes only the rehearse.
         let state = ac_core::state::State::load(&home.state_file()).unwrap();
         assert_eq!(state.next_episode, 2);
         assert_eq!(Session::remove_rehearses(&home, &config).unwrap(), 1);

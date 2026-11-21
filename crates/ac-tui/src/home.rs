@@ -141,7 +141,7 @@ pub fn scene_audio<'a>(view: &'a View, scene: &str) -> Vec<&'a Audio> {
 }
 
 /// Go Live replaces Start while the broadcast is upcoming: it also starts OBS recording and
-/// streaming and takes the broadcast live. (A rehearsal has no upcoming state before it starts.)
+/// streaming and takes the broadcast live. (A rehearse has no upcoming state before it starts.)
 pub fn go_live(view: &View) -> bool {
     !view.begun && view.state.stream == Some(StreamStatus::Upcoming)
 }

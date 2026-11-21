@@ -1,4 +1,4 @@
-//! The rehearsal page (`aftercast rehearse`): a stand-in for the stream page with the OBS
+//! The rehearse page (`aftercast rehearse`): a stand-in for the stream page with the OBS
 //! output (Virtual Camera), the description as pushed, and a chat to type into as any
 //! viewer, moderator, member or the owner.
 

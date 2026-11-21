@@ -397,7 +397,7 @@ fn library(home: &Home, config_path: &std::path::Path, action: cli::LibraryActio
     Ok(exit::OK)
 }
 
-/// Opens the rehearsal page in the default browser.
+/// Opens the rehearse page in the default browser.
 fn open_rehearse_page(port: u16) {
     let url = format!("http://127.0.0.1:{port}/rehearse");
     #[cfg(windows)]
@@ -414,7 +414,7 @@ fn open_rehearse_page(port: u16) {
 }
 
 /// A session folder from a path, a folder name like `2026-11-19_ep042`, an episode (`42`,
-/// `ep042`), `rehearsal`, or the last real session.
+/// `ep042`), `rehearse`, or the last real session.
 fn session_dir(home: &Home, config: &Config, session: Option<&str>) -> Result<PathBuf> {
     use error::AppError;
     let Some(arg) = session else {

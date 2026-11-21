@@ -20,10 +20,10 @@ pub(crate) struct Mock {
     /// Substituted for `"@now"` in fixtures, so broadcasts can start "now".
     now: Timestamp,
     counter: AtomicU32,
-    /// Chat typed into a rehearsal page (and echoed bot posts), merged into the stream.
+    /// Chat typed into a rehearse page (and echoed bot posts), merged into the stream.
     chat_tx: mpsc::UnboundedSender<ChatMessage>,
     chat_rx: Mutex<Option<mpsc::UnboundedReceiver<ChatMessage>>>,
-    /// Echo `liveChatMessages.insert` into the chat stream, as YouTube does (rehearsal).
+    /// Echo `liveChatMessages.insert` into the chat stream, as YouTube does (rehearse).
     echo: AtomicBool,
 }
 

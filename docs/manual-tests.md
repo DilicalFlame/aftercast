@@ -186,14 +186,14 @@ viewer, and ideally a third account you made a moderator.
 ### Rehearse
 
 1. With OBS running and not streaming: `aftercast rehearse`. Expect: the TUI with
-   "Rehearsal (not live)", OBS connected, and within a minute demo chat messages, two
+   "Rehearse (not live)", OBS connected, and within a minute demo chat messages, two
    questions in the queue, eve's ₹100.00 Super Chat pinned above them in the Inbox, a
-   `!links` toast and a "Rehearsal chapter" chapter.
+   `!links` toast and a "Rehearse chapter" chapter.
 2. `b`, `p`, `:latency`, `question show`: expect the same scenes and overlays as in a real
    stream.
 3. Edit `<home>\overlays\overlay.css` (or a custom `brb.html`) and save. Expect: OBS shows the
    change within a second, and the TUI says "overlays reloaded in OBS".
-4. The rehearsal page opens in the browser. Allow camera access. Expect: the OBS output in
+4. The rehearse page opens in the browser. Allow camera access. Expect: the OBS output in
    the player (OBS shows Virtual Camera as started), the title, a live timer and the pushed
    description.
 5. In the page chat, send `!links` as a viewer. Expect: the bot's reply appears in the chat
@@ -201,10 +201,10 @@ viewer, and ideally a third account you made a moderator.
    moderator: the TUI shows the chapter and the page says the README changed; `:push` updates
    the page's description. Send a Super Chat as a member and `!q` as a viewer: check the
    overlays in the player.
-6. Record in OBS for a few minutes during the rehearsal (talk, type, `p`, `b`, a commit), then
+6. Record in OBS for a few minutes during the rehearse (talk, type, `p`, `b`, a commit), then
    quit. Expect: `sessions\<year>\<date>_ep000`, `aftercast post` without a session still
    means your last real stream, and `aftercast auth status` shows no quota spent.
-7. `aftercast post rehearse`, then ask Claude to "find clips in the rehearsal session" and
+7. `aftercast post rehearse`, then ask Claude to "find clips in the rehearse session" and
    `aftercast render rehearse`. Expect: Phases 5 to 7 work on it like on a real stream.
 8. `aftercast rehearse` again. Expect: the old ep000 folder is gone, a new one is created.
 

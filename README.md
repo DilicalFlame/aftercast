@@ -112,7 +112,7 @@ each: `{"after_ms": 3000, "author": "ana", "text": "hi", "mod": false, "member":
 "amount": "₹100.00"}`. Save any file in `<home>\overlays\` and OBS reloads the overlays a
 moment later, so you can restyle them while watching.
 
-The rehearsal also opens **the rehearsal page** in your browser
+The rehearse also opens **the rehearse page** in your browser
 (`http://127.0.0.1:7878/rehearse`), a stand-in for the stream page: your OBS output (through
 OBS Virtual Camera, which aftercast starts; allow camera access once), the title and live timer,
 the description as last pushed (with a note when the README changed since), and the live chat.
@@ -120,10 +120,10 @@ Type into the chat as a viewer, member, moderator or yourself (the owner), with 
 send a Super Chat; command chips fill in `!q`, `!chapter`, `!lat` and the rest. Bot replies
 appear in the chat like on YouTube. The video has no sound; listen in OBS.
 
-The rehearsal is a real session, **episode 0** (`sessions\<year>\<date>_ep000`), so record in
+The rehearse is a real session, **episode 0** (`sessions\<year>\<date>_ep000`), so record in
 OBS during it and the whole pipeline works on it like on a stream: `aftercast post rehearse`,
 `aftercast render rehearse`, and Claude through the MCP server (session `rehearse`). Each
-rehearsal replaces the previous one. It never uses up an episode number, never becomes the
+rehearse replaces the previous one. It never uses up an episode number, never becomes the
 last session (`aftercast post` without a session, `latest` in MCP and resuming with plain
 `aftercast` still mean your last real stream) and never spends today's YouTube quota.
 Sessions can also be named by episode everywhere: `aftercast post 42` or `ep042`.
@@ -260,7 +260,7 @@ number is used up, it is not the "last session", the description is not pushed, 
 recorded and the bot does not answer (chat is read and shown). `Enter` starts it (or resumes
 an existing one); `q` before that quits and a new draft is deleted, leaving everything as it
 was. OBS changes you make from Home (recording, mute) are real, because you asked for them.
-Headless runs (`--no-tui`) start at once, as before. In a rehearsal the simulated broadcast
+Headless runs (`--no-tui`) start at once, as before. In a rehearse the simulated broadcast
 stays "upcoming" and the demo chat waits until you start, so Home is the moment before going
 live there too. The palette (`:`) and settings (`,`) open over Home and return to it.
 
