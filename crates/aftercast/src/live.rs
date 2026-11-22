@@ -72,8 +72,6 @@ pub enum Msg {
     Caption(captions::Caption),
     /// The `:end` end screen has run its time.
     EndDue,
-    /// A line for the UI's notice (post-processing finished or failed).
-    Notice(String),
 }
 
 /// Where OBS shows the facecam: scene, item, left/top/width/height, canvas size.
@@ -1229,7 +1227,6 @@ impl Controller {
                     Msg::ShellPoll => self.shell_poll(),
                     Msg::Caption(c) => self.on_caption(c),
                     Msg::EndDue => self.end_due(),
-                    Msg::Notice(text) => self.notice = Some(text),
                 },
                 () = quit_due => self.done = true,
                 () = render_due => {
@@ -1387,7 +1384,7 @@ impl Controller {
             }
             Command::Sync => self.push(PushTrigger::Manual, false).await,
             Command::Finalize => self.finalize().await,
-            Command::PostProcess => self.post_process(),
+
             Command::Reload => self.reload(),
             // Quitting from Home, before the session began: what aftercast started in OBS
             // (the stream, the rehearse page's Virtual Camera) is stopped, and a recording too
@@ -1608,35 +1605,6 @@ impl Controller {
                 );
             }
         }
-    }
-
-    /// `p` on the end screen: the post-stream pipeline on this session, in the background.
-    fn post_process(&mut self) {
-        let (home, path, dir) = (
-            self.home.clone(),
-            self.config_path.clone(),
-            self.session.dir.clone(),
-        );
-        let tx = self.msg_tx.clone();
-        self.notice = Some("post-processing: running (this takes a while)".into());
-        tokio::task::spawn_blocking(move || {
-            let run = || -> std::result::Result<String, String> {
-                let config = Config::load(&path).map_err(|e| e.to_string())?;
-                let mut ctx = ac_post::Ctx::open(home, config, &dir)?;
-                let report = ac_post::run(&mut ctx, &ac_post::Options::default())?;
-                let ran = report
-                    .iter()
-                    .filter(|(_, o)| matches!(o, ac_post::Outcome::Ran))
-                    .count();
-                Ok(format!(
-                    "post-processing done ({ran} stages ran): {}",
-                    dir.join("derived").join("index.md").display()
-                ))
-            };
-            let _ = tx.send(Msg::Notice(
-                run().unwrap_or_else(|e| format!("post-processing failed: {e}")),
-            ));
-        });
     }
 
     async fn finalize(&mut self) {

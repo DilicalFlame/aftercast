@@ -123,7 +123,7 @@ fn keys(t: f64, motion: bool) -> Line<'static> {
         Span::raw("   "),
     ];
     spans.extend(hint("k", "keep open"));
-    spans.extend(hint("p", "post-process"));
+    spans.extend(hint("p", "finalize + post-process"));
     Line::from(spans)
 }
 

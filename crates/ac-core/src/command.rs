@@ -167,9 +167,6 @@ pub enum Command {
     Sync,
     /// Final push and session end (`:finalize`).
     Finalize,
-    /// Run the post-stream pipeline on this session now (`p` on the end screen), as
-    /// `aftercast post` does.
-    PostProcess,
     /// Re-read config and templates (`:reload`).
     Reload,
     /// End the session without finalizing.

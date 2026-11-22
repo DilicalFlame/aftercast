@@ -137,18 +137,20 @@ pub enum External {
 const HOTKEY_TITLE_TIMEOUT_S: f64 = 600.0;
 
 /// Runs the TUI until the user quits or finalizes. Blocking: call from a dedicated thread.
+/// Returns whether post-processing was asked for (`p` on the end prompt): the caller runs it
+/// once the terminal is back to normal.
 pub fn run(
     clock: Arc<Clock>,
     view: watch::Receiver<View>,
     commands: mpsc::UnboundedSender<Command>,
     external: std::sync::mpsc::Receiver<External>,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     let mut terminal = ratatui::init();
     let mut app = App::new(clock, view, commands);
     app.external = Some(external);
     let result = app.run(&mut terminal);
     ratatui::restore();
-    result
+    result.map(|()| app.post_after)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -327,6 +329,8 @@ fn pane_areas(body: Rect, split: Split) -> [Rect; 4] {
 
 struct App {
     clock: Arc<Clock>,
+    /// `p` on the end prompt: post-process once the TUI is gone.
+    post_after: bool,
     view: watch::Receiver<View>,
     commands: mpsc::UnboundedSender<Command>,
     mode: Mode,
@@ -400,6 +404,7 @@ impl App {
             message: None,
             end_prompted: false,
             starting_at: None,
+            post_after: false,
             exit: false,
             external: None,
             pending: VecDeque::new(),
@@ -565,7 +570,7 @@ impl App {
         self.split != self.split_target
     }
 
-    fn run(mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
         while !self.exit {
             let view = self.view.borrow_and_update().clone();
             self.poll_external(&view);
@@ -890,9 +895,11 @@ impl App {
             Mode::Ended => match key.code {
                 KeyCode::Char('f') => self.finish(Command::Finalize),
                 KeyCode::Char('k') | KeyCode::Esc => {}
+                // The final description goes up, the session ends, the TUI closes; then the
+                // pipeline runs in the plain terminal.
                 KeyCode::Char('p') => {
-                    self.send(Command::PostProcess);
-                    self.message = Some("post-processing started".into());
+                    self.post_after = true;
+                    self.finish(Command::Finalize);
                 }
                 _ => self.mode = Mode::Ended,
             },

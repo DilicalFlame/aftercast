@@ -199,7 +199,11 @@ async fn live_session(
     if let Some(notice) = last.notice {
         println!("{notice}");
     }
-    ui.map_err(|e| error::AppError::Usage(format!("TUI task failed: {e}")))??;
+    let post_after = ui.map_err(|e| error::AppError::Usage(format!("TUI task failed: {e}")))??;
+    if post_after {
+        // The terminal is plain again: the pipeline's progress bars print here.
+        return post(home, config_path, Some(&last.session), None, None, false, None);
+    }
     Ok(exit::OK)
 }
 
