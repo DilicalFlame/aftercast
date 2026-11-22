@@ -60,6 +60,23 @@ pub enum Update {
         id: i64,
         enabled: bool,
     },
+    /// Where an item shows on the canvas (the answer to [`Request::Place`]).
+    Place {
+        scene: String,
+        id: i64,
+        /// Left, top, width, height.
+        rect: [f32; 4],
+        /// The canvas size.
+        canvas: (f32, f32),
+    },
+    /// Which monitor a scene's display capture shows (the answer to [`Request::Screen`]).
+    Screen {
+        scene: String,
+        /// The capture's `monitor_id` (a monitor interface path), when OBS stores one.
+        id: Option<String>,
+        /// Its `monitor` index.
+        index: Option<usize>,
+    },
     /// Audio peaks in dBFS per input (only while meters are on).
     Levels(Vec<(String, f32)>),
     /// Where OBS records now (after aftercast set it).
@@ -79,8 +96,16 @@ pub enum Request {
     /// Reloads every Browser source whose URL starts with one of these prefixes. OBS does
     /// not retry a page that failed to load (aftercast was not running yet).
     RefreshBrowsers(Vec<String>),
+    /// Stacks the overlay sources (Browser sources whose URL starts with one of `prefixes`)
+    /// in every scene: `order` holds overlay names, frontmost first.
+    OverlayOrder {
+        prefixes: Vec<String>,
+        order: Vec<String>,
+    },
     /// Starts OBS Virtual Camera unless it runs (a rehearse page shows it as the video).
     StartVirtualCam,
+    /// Stops OBS Virtual Camera if it runs (`:end`).
+    StopVirtualCam,
     Mute {
         input: String,
         muted: bool,
@@ -94,6 +119,27 @@ pub enum Request {
         id: i64,
         enabled: bool,
     },
+    /// Asks where an item shows on the canvas; answered with [`Update::Place`] (nothing when
+    /// OBS refuses, e.g. the item is gone).
+    Place {
+        scene: String,
+        id: i64,
+    },
+    /// Asks which monitor the display capture in `scene` shows; answered with
+    /// [`Update::Screen`] (nothing when the scene has none).
+    Screen {
+        scene: String,
+    },
+    /// Puts a Browser source in `scene`: a new input called `source` showing `url` at the
+    /// canvas size, or (`existing`) a new item of the input of that name, so every scene
+    /// shares one source. `audio` hands its sound to OBS's mixer.
+    AddBrowser {
+        scene: String,
+        source: String,
+        url: String,
+        existing: bool,
+        audio: bool,
+    },
     Record(ac_core::command::OutputAction),
     Stream(bool),
     /// Receive audio levels (a high-volume event OBS only sends on request).
@@ -101,7 +147,30 @@ pub enum Request {
     /// Record into this folder from now on, and after every reconnect. The folder OBS had
     /// before is put back when the request channel closes (aftercast exits).
     RecordDirectory(String),
+    /// Delay OBS's own sources (cameras, captures, audio) so aftercast's overlays can show
+    /// captions ahead of the voice. Undone when aftercast exits.
+    Delay(Delay),
 }
+
+/// `[stream] delay_ms` as OBS applies it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Delay {
+    /// 0 to 500 (OBS's Render Delay filter stops at 500 ms).
+    pub ms: u32,
+    /// Browser sources with these URL prefixes (aftercast's overlays) stay on time.
+    pub overlays: Vec<String>,
+    /// Scenes switched to at once (privacy); every other switch waits `ms`, so the delayed
+    /// picture never shows what was on screen before it.
+    pub instant_scenes: Vec<String>,
+    /// The audio sync offset aftercast added per input, so a crash is undone next run.
+    pub ledger: std::path::PathBuf,
+}
+
+/// Whether the last facecam place request failed (so a failure is logged once).
+static PLACE_FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Name of the Render Delay filter aftercast adds to video sources.
+const DELAY_FILTER: &str = "aftercast delay";
 
 /// Where OBS listens.
 #[derive(Clone)]
@@ -151,11 +220,21 @@ pub async fn run(
     // aftercast asked for (with the one OBS had before) is set again.
     let mut meters = false;
     let mut folder = RecordFolder::default();
+    let mut delay = Delay::default();
     loop {
         let error = match connect(&target).await {
             Ok(client) => {
                 backoff = BACKOFF_MIN;
-                match serve(&client, &mut requests, &send, &mut meters, &mut folder).await {
+                match serve(
+                    &client,
+                    &mut requests,
+                    &send,
+                    &mut meters,
+                    &mut folder,
+                    &mut delay,
+                )
+                .await
+                {
                     Ok(()) => return,
                     Err(e) => e,
                 }
@@ -174,6 +253,7 @@ pub async fn run(
                 req = requests.recv() => match req {
                     Some(Request::Meters(on)) => meters = on,
                     Some(Request::RecordDirectory(dir)) => folder.wanted = Some(dir),
+                    Some(Request::Delay(d)) => delay = d,
                     Some(_) => send(Update::Failed("OBS is not connected".into())),
                     None => return,
                 },
@@ -202,6 +282,8 @@ async fn connect(target: &Target) -> Result<obws::Client, String> {
 struct RecordFolder {
     wanted: Option<String>,
     original: Option<String>,
+    /// The recording format OBS had (its settings category and value), put back at the end.
+    format: Option<(&'static str, String)>,
 }
 
 impl RecordFolder {
@@ -222,6 +304,7 @@ impl RecordFolder {
                 }
             }
         }
+        self.fragment(client).await;
         match client.config().set_record_directory(&dir).await {
             Ok(()) => send(Update::RecordDirectory(dir)),
             Err(e) => send(Update::Failed(format!(
@@ -231,8 +314,50 @@ impl RecordFolder {
         }
     }
 
-    /// Puts OBS's own folder back.
+    /// Records fragmented mp4: the file plays while it grows, so the rehearse page's player can
+    /// go back in it. Takes effect with the next recording.
+    async fn fragment(&mut self, client: &obws::Client) {
+        if self.format.is_some() {
+            return;
+        }
+        let profiles = client.profiles();
+        let advanced = profiles
+            .parameter("Output", "Mode")
+            .await
+            .ok()
+            .and_then(|p| p.value)
+            .is_some_and(|m| m == "Advanced");
+        let category = if advanced { "AdvOut" } else { "SimpleOutput" };
+        let Some(current) = profiles
+            .parameter(category, "RecFormat2")
+            .await
+            .ok()
+            .and_then(|p| p.value)
+        else {
+            return;
+        };
+        if current != "fragmented_mp4" {
+            let set = obws::requests::profiles::SetParameter {
+                category,
+                name: "RecFormat2",
+                value: Some("fragmented_mp4"),
+            };
+            if profiles.set_parameter(set).await.is_ok() {
+                self.format = Some((category, current));
+            }
+        }
+    }
+
+    /// Puts OBS's own folder (and recording format) back.
     async fn restore(&mut self, client: &obws::Client) {
+        if let Some((category, value)) = self.format.take() {
+            let set = obws::requests::profiles::SetParameter {
+                category,
+                name: "RecFormat2",
+                value: Some(&value),
+            };
+            let _ = client.profiles().set_parameter(set).await;
+        }
         if let Some(original) = self.original.take() {
             let _ = client.config().set_record_directory(&original).await;
         }
@@ -245,6 +370,7 @@ async fn serve(
     send: &impl Fn(Update),
     meters: &mut bool,
     folder: &mut RecordFolder,
+    delay: &mut Delay,
 ) -> Result<(), String> {
     // Subscribe before reading the snapshot so no change falls in between.
     let mut events = client.events().map_err(|e| error_chain(&e))?;
@@ -254,6 +380,9 @@ async fn serve(
             .map_err(|e| error_chain(&e))?;
     }
     folder.apply(client, send).await;
+    delay.apply(client, delay.ms, send).await;
+    // A delayed scene switch waiting for its time; a newer switch replaces it.
+    let mut pending_scene: Option<(tokio::time::Instant, String)> = None;
     // Levels arrive about 20 times a second; pass on at most 10.
     let mut last_levels = tokio::time::Instant::now();
     send(Update::Connected(
@@ -265,6 +394,10 @@ async fn serve(
                 Some(ObsEvent::ExitStarted) => return Err("OBS is shutting down".into()),
                 // Something was added, removed or renamed: list everything again.
                 Some(event) if structural(&event) => {
+                    // A new camera or microphone gets the delay too.
+                    if matches!(event, ObsEvent::InputCreated { .. }) {
+                        delay.apply(client, delay.ms, send).await;
+                    }
                     send(Update::Media(media(client).await.map_err(|e| error_chain(&e))?));
                 }
                 Some(ObsEvent::InputVolumeMeters { inputs }) => {
@@ -283,8 +416,25 @@ async fn serve(
                 Some(event) => if let Some(update) = translate(event) { send(update) },
                 None => return Err("connection to OBS lost".into()),
             },
+            () = async {
+                if let Some((at, _)) = &pending_scene {
+                    tokio::time::sleep_until(*at).await;
+                }
+            }, if pending_scene.is_some() => {
+                let (_, name) = pending_scene.take().expect("guarded");
+                if let Err(e) = client.scenes().set_current_program_scene(name.as_str()).await {
+                    send(Update::Failed(format!("switching to scene {name:?}: {}", error_chain(&e))));
+                }
+            }
             req = requests.recv() => match req {
+                Some(Request::SetScene(name))
+                    if delay.ms > 0 && !delay.instant_scenes.contains(&name) =>
+                {
+                    let at = tokio::time::Instant::now() + Duration::from_millis(delay.ms.into());
+                    pending_scene = Some((at, name));
+                }
                 Some(Request::SetScene(name)) => {
+                    pending_scene = None;
                     if let Err(e) = client.scenes().set_current_program_scene(name.as_str()).await {
                         send(Update::Failed(format!("switching to scene {name:?}: {}", error_chain(&e))));
                     }
@@ -295,6 +445,14 @@ async fn serve(
                         && let Err(e) = cam.start().await
                     {
                         send(Update::Failed(format!("starting the virtual camera: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::StopVirtualCam) => {
+                    let cam = client.virtual_cam();
+                    if cam.status().await.unwrap_or(false)
+                        && let Err(e) = cam.stop().await
+                    {
+                        send(Update::Failed(format!("stopping the virtual camera: {}", error_chain(&e))));
                     }
                 }
                 Some(Request::Mute { input, muted }) => {
@@ -318,9 +476,96 @@ async fn serve(
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
                     }
                 }
+                Some(Request::Place { scene, id }) => {
+                    let t = client.scene_items().transform(scene.as_str().into(), id).await;
+                    let v = client.config().video_settings().await;
+                    if let (Err(e), _) | (_, Err(e)) = (&t, &v) {
+                        // Once per failure streak: the controller asks every second.
+                        if !PLACE_FAILING.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                            tracing::warn!("facecam: OBS would not tell where {id} in {scene:?} is: {}", error_chain(e));
+                        }
+                    }
+                    if let (Ok(t), Ok(v)) = (t, v) {
+                        PLACE_FAILING.store(false, std::sync::atomic::Ordering::Relaxed);
+                        let size = if t.bounds_type == obws::common::BoundsType::None {
+                            (
+                                (t.source_width - (t.crop_left + t.crop_right) as f32) * t.scale_x,
+                                (t.source_height - (t.crop_top + t.crop_bottom) as f32) * t.scale_y,
+                            )
+                        } else {
+                            (t.bounds_width, t.bounds_height)
+                        };
+                        let rect = ac_core::obs::placed(
+                            (t.position_x, t.position_y),
+                            size,
+                            u8::from(t.alignment),
+                        );
+                        send(Update::Place {
+                            scene,
+                            id,
+                            rect,
+                            canvas: (v.base_width as f32, v.base_height as f32),
+                        });
+                    }
+                }
+                Some(Request::Screen { scene }) => {
+                    let Ok(items) = client.scene_items().list(scene.as_str().into()).await else {
+                        continue;
+                    };
+                    for item in items {
+                        let name = item.source_name.as_str();
+                        let Ok(got) = client
+                            .inputs()
+                            .settings::<serde_json::Value>(name.into())
+                            .await
+                        else {
+                            continue;
+                        };
+                        if got.kind != "monitor_capture" {
+                            continue;
+                        }
+                        let id = got.settings["monitor_id"].as_str().map(str::to_owned);
+                        let index = got.settings["monitor"].as_u64().map(|i| i as usize);
+                        send(Update::Screen { scene, id, index });
+                        break;
+                    }
+                }
+                Some(Request::AddBrowser { scene, source, url, existing, audio }) => {
+                    let done = if existing {
+                        let item = obws::requests::scene_items::CreateSceneItem {
+                            scene: scene.as_str().into(),
+                            source: source.as_str().into(),
+                            enabled: Some(true),
+                        };
+                        client.scene_items().create(item).await.map(|_| ())
+                    } else {
+                        let (w, h) = client
+                            .config()
+                            .video_settings()
+                            .await
+                            .map_or((1920, 1080), |v| (v.base_width, v.base_height));
+                        let create = obws::requests::inputs::Create {
+                            scene: scene.as_str().into(),
+                            input: source.as_str(),
+                            kind: "browser_source",
+                            settings: Some(serde_json::json!({
+                                "url": url, "width": w, "height": h, "reroute_audio": audio
+                            })),
+                            enabled: Some(true),
+                        };
+                        client.inputs().create(create).await.map(|_| ())
+                    };
+                    if let Err(e) = done {
+                        send(Update::Failed(format!("adding {source:?} to {scene:?}: {}", error_chain(&e))));
+                    }
+                }
                 Some(Request::RecordDirectory(dir)) => {
                     folder.wanted = Some(dir);
                     folder.apply(client, send).await;
+                }
+                Some(Request::Delay(d)) => {
+                    *delay = d;
+                    delay.apply(client, delay.ms, send).await;
                 }
                 Some(Request::Meters(on)) => {
                     *meters = on;
@@ -351,6 +596,11 @@ async fn serve(
                         send(Update::Failed(format!("streaming: {}", error_chain(&e))));
                     }
                 }
+                Some(Request::OverlayOrder { prefixes, order }) => {
+                    if let Err(e) = overlay_order(client, &prefixes, &order).await {
+                        send(Update::Failed(format!("stacking overlays: {}", error_chain(&e))));
+                    }
+                }
                 Some(Request::RefreshBrowsers(prefixes)) => {
                     if let Err(e) = refresh_browsers(client, &prefixes).await {
                         send(Update::Failed(format!("refreshing overlays: {}", error_chain(&e))));
@@ -359,11 +609,196 @@ async fn serve(
                 // aftercast is exiting: give OBS its own record folder back.
                 None => {
                     folder.restore(client).await;
+                    delay.apply(client, 0, send).await;
                     return Ok(());
                 }
             },
         }
     }
+}
+
+impl Delay {
+    /// Sets every source's delay to `ms` (0 removes it): a Render Delay filter on video
+    /// sources, the audio sync offset on audio ones, minus what aftercast added before.
+    async fn apply(&self, client: &obws::Client, ms: u32, send: &impl Fn(Update)) {
+        if self.ledger.as_os_str().is_empty() {
+            return; // never asked for
+        }
+        if let Err(e) = self.try_apply(client, ms.min(500)).await {
+            send(Update::Failed(format!("stream delay: {}", error_chain(&e))));
+        }
+    }
+
+    async fn try_apply(&self, client: &obws::Client, ms: u32) -> obws::error::Result<()> {
+        let mut added: std::collections::BTreeMap<String, i64> =
+            std::fs::read_to_string(&self.ledger)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+        let want = i64::from(ms);
+        for input in client.inputs().list(None).await? {
+            let name = input.id.name.as_str();
+            if input.kind == "browser_source" && self.is_overlay(client, name).await {
+                continue;
+            }
+            // Inputs without audio refuse this.
+            if let Ok(offset) = client.inputs().audio_sync_offset(name.into()).await {
+                let had = added.get(name).copied().unwrap_or(0);
+                if had != want {
+                    let base = offset.whole_milliseconds() as i64 - had;
+                    let to = time::Duration::milliseconds(base + want);
+                    client
+                        .inputs()
+                        .set_audio_sync_offset(name.into(), to)
+                        .await?;
+                    if want == 0 {
+                        added.remove(name);
+                    } else {
+                        added.insert(name.to_owned(), want);
+                    }
+                    let json = serde_json::to_string(&added).unwrap_or_default();
+                    let _ = std::fs::write(&self.ledger, json);
+                }
+            }
+            if !has_live_video(&input.kind) {
+                continue;
+            }
+            let filters = client.filters();
+            let settings = serde_json::json!({ "delay_ms": ms });
+            match filters.get(name.into(), DELAY_FILTER).await.ok() {
+                Some(_) if ms == 0 => filters.remove(name.into(), DELAY_FILTER).await?,
+                Some(f) if f.settings.get("delay_ms") != Some(&settings["delay_ms"]) => {
+                    filters
+                        .set_settings(obws::requests::filters::SetSettings {
+                            source: name.into(),
+                            filter: DELAY_FILTER,
+                            settings,
+                            overlay: Some(true),
+                        })
+                        .await?;
+                }
+                None if ms > 0 => {
+                    filters
+                        .create(obws::requests::filters::Create {
+                            source: name.into(),
+                            filter: DELAY_FILTER,
+                            kind: "gpu_delay",
+                            settings: Some(settings),
+                        })
+                        .await?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn is_overlay(&self, client: &obws::Client, name: &str) -> bool {
+        #[derive(serde::Deserialize)]
+        struct Browser {
+            url: Option<String>,
+        }
+        client
+            .inputs()
+            .settings::<Browser>(name.into())
+            .await
+            .ok()
+            .and_then(|s| s.settings.url)
+            .is_some_and(|u| self.overlays.iter().any(|p| u.starts_with(p.as_str())))
+    }
+}
+
+/// Sources whose picture moves on its own (cameras, captures, media, other pages) get the
+/// Render Delay filter. Audio-only and still sources (images, colors, text) do not: each
+/// filter holds up to 500 ms of frames in video memory.
+fn has_live_video(kind: &str) -> bool {
+    const STILL_OR_AUDIO: [&str; 10] = [
+        "wasapi",
+        "coreaudio",
+        "pulse",
+        "alsa",
+        "jack",
+        "sck_audio",
+        "image_source",
+        "color_source",
+        "text_",
+        "slideshow",
+    ];
+    !STILL_OR_AUDIO.iter().any(|p| kind.starts_with(p))
+}
+
+/// Stacks aftercast's overlay sources (Browser sources whose URL starts with one of
+/// `prefixes`) in every scene in `order` (overlay names, frontmost first), in the slots
+/// they already hold: every other source keeps its place.
+async fn overlay_order(
+    client: &obws::Client,
+    prefixes: &[String],
+    order: &[String],
+) -> obws::error::Result<()> {
+    #[derive(serde::Deserialize)]
+    struct Browser {
+        url: Option<String>,
+    }
+    // Input name to rank (0 is frontmost).
+    let mut rank = std::collections::HashMap::new();
+    for input in client.inputs().list(Some("browser_source")).await? {
+        let name = input.id.name;
+        let url = client
+            .inputs()
+            .settings::<Browser>(name.as_str().into())
+            .await?
+            .settings
+            .url;
+        let overlay = url.and_then(|u| {
+            let rest = prefixes.iter().find_map(|p| u.strip_prefix(p.as_str()))?;
+            Some(
+                rest.split(['?', '#', '/'])
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned(),
+            )
+        });
+        if let Some(r) = overlay.and_then(|o| order.iter().position(|n| *n == o)) {
+            rank.insert(name, r);
+        }
+    }
+    if rank.is_empty() {
+        return Ok(());
+    }
+    for scene in client.scenes().list().await?.scenes {
+        let id = scene.id.name.as_str();
+        let mut items = client.scene_items().list(id.into()).await?;
+        items.sort_by_key(|i| i.index); // bottom first
+        let slots: Vec<usize> = (0..items.len())
+            .filter(|&i| rank.contains_key(&items[i].source_name))
+            .collect();
+        if slots.len() < 2 {
+            continue;
+        }
+        let mut overlays: Vec<_> = slots.iter().map(|&i| items[i].clone()).collect();
+        overlays.sort_by_key(|i| std::cmp::Reverse(rank[&i.source_name])); // back first
+        let mut want = items.clone();
+        for (&slot, item) in slots.iter().zip(overlays) {
+            want[slot] = item;
+        }
+        // Bottom up: moving an item down only shifts the ones not placed yet.
+        let mut now: Vec<i64> = items.iter().map(|i| i.id).collect();
+        for (index, item) in want.iter().enumerate() {
+            if now[index] == item.id {
+                continue;
+            }
+            let from = now.iter().position(|&i| i == item.id).expect("same items");
+            let set = obws::requests::scene_items::SetIndex {
+                scene: id.into(),
+                item_id: item.id,
+                index: index as u32,
+            };
+            client.scene_items().set_index(set).await?;
+            let moved = now.remove(from);
+            now.insert(index, moved);
+        }
+    }
+    Ok(())
 }
 
 async fn refresh_browsers(client: &obws::Client, prefixes: &[String]) -> obws::error::Result<()> {
@@ -397,6 +832,8 @@ async fn media(client: &obws::Client) -> obws::error::Result<Media> {
     scenes.sort_by_key(|s| std::cmp::Reverse(s.index));
     let scenes: Vec<String> = scenes.into_iter().map(|s| s.id.name).collect();
     let mut items = Vec::new();
+    // Which overlay each Browser source shows, asked once per source.
+    let mut overlays: std::collections::HashMap<String, Option<String>> = Default::default();
     for scene in &scenes {
         let mut list = client.scene_items().list(scene.as_str().into()).await?;
         list.sort_by_key(|i| std::cmp::Reverse(i.index));
@@ -405,11 +842,30 @@ async fn media(client: &obws::Client) -> obws::error::Result<Media> {
                 .scene_items()
                 .enabled(scene.as_str().into(), item.id)
                 .await?;
+            let overlay = if item.input_kind.as_deref() == Some("browser_source") {
+                if !overlays.contains_key(&item.source_name) {
+                    let url = client
+                        .inputs()
+                        .settings::<serde_json::Value>(item.source_name.as_str().into())
+                        .await
+                        .ok()
+                        .and_then(|s| {
+                            s.settings["url"]
+                                .as_str()
+                                .and_then(ac_core::obs::overlay_name)
+                        });
+                    overlays.insert(item.source_name.clone(), url);
+                }
+                overlays[&item.source_name].clone()
+            } else {
+                None
+            };
             items.push(Item {
                 scene: scene.clone(),
                 source: item.source_name,
                 id: item.id,
                 enabled,
+                overlay,
             });
         }
     }

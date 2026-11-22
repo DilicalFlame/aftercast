@@ -3,9 +3,11 @@
 //! The UI only reads [`View`] snapshots and sends [`Command`]s; the controller owns state.
 //! Times are captured when a key is pressed, before any prompt opens.
 
+mod ended;
 mod home;
 mod palette;
 mod settings;
+mod starting;
 mod theme;
 
 use std::collections::VecDeque;
@@ -147,11 +149,17 @@ pub fn run(
 
 #[derive(Debug, Clone, PartialEq)]
 enum Prompt {
-    Checkpoint { by: By },
+    Checkpoint {
+        by: By,
+    },
     Mark,
     Note,
-    Edit { cid: String },
+    Edit {
+        cid: String,
+    },
     Palette,
+    /// `:end` with the end screen on: how many seconds it shows.
+    EndScreen,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +189,8 @@ enum Mode {
     Settings(settings::Page),
     /// `:stream stop` asks first: ending the broadcast cannot be undone.
     ConfirmStreamStop,
+    /// `:end` with the end screen off.
+    ConfirmEnd,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +335,9 @@ struct App {
     title_answered: Option<String>,
     message: Option<String>,
     end_prompted: bool,
+    /// Start or Go Live was pressed at this moment: the dashboard opens by itself once the
+    /// session has begun (Home is not where it returns to meanwhile).
+    starting_at: Option<std::time::Instant>,
     exit: bool,
     external: Option<std::sync::mpsc::Receiver<External>>,
     /// Hotkey checkpoints waiting for their title prompt.
@@ -340,6 +353,8 @@ struct App {
     users: UserColors,
     /// `tui.animations` as of the last frame.
     motion: bool,
+    /// When the TUI first saw OBS on the starting scene (the banner's clock).
+    starting_seen: Option<Instant>,
     /// The highlighted palette suggestion, and whether ↑/↓ chose it.
     pick: usize,
     picked: bool,
@@ -377,6 +392,7 @@ impl App {
             title_answered: None,
             message: None,
             end_prompted: false,
+            starting_at: None,
             exit: false,
             external: None,
             pending: VecDeque::new(),
@@ -386,6 +402,7 @@ impl App {
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
             motion: true,
+            starting_seen: None,
             pick: 0,
             picked: false,
             meters: false,
@@ -494,12 +511,23 @@ impl App {
             let view = self.view.borrow_and_update().clone();
             self.poll_external(&view);
             // Until the session starts, Home is where everything returns to.
-            if !view.begun && self.mode == Mode::Normal {
+            // (Start was just pressed: Home waits a few seconds for the session to begin; if it
+            // cannot, Home stays with the reason.)
+            let starting = self
+                .starting_at
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(8));
+            if view.begun && self.starting_at.take().is_some() && self.mode == Mode::Preflight {
+                self.mode = Mode::Normal;
+            }
+            if !view.begun && self.mode == Mode::Normal && !starting {
                 self.mode = Mode::Preflight;
             }
             if view.state.ended && !self.end_prompted && self.mode == Mode::Normal {
                 self.end_prompted = true;
                 self.mode = Mode::Ended;
+                // One bell, so the prompt is noticed from another window.
+                let _ = io::Write::write_all(&mut io::stdout(), b"");
+                let _ = io::Write::flush(&mut io::stdout());
             } else if !view.state.ended && self.end_prompted {
                 // The stream restarted: drop the end modal, prompt again on the next end.
                 self.end_prompted = false;
@@ -530,6 +558,9 @@ impl App {
                 16
             } else if self.mode == Mode::Preflight {
                 home::FRAME.as_millis() as u64
+            } else if self.mode == Mode::Ended {
+                // The end prompt animates: smooth.
+                50
             } else {
                 100
             };
@@ -757,6 +788,11 @@ impl App {
                     self.send(Command::Stream { on: false });
                 }
             }
+            Mode::ConfirmEnd => {
+                if key.code == KeyCode::Char('y') {
+                    self.send(Command::End { screen_s: 0 });
+                }
+            }
             Mode::Settings(mut page) => {
                 match page.key(key.code, &view.config, &view.config_path, &view.obs) {
                     settings::Outcome::Close => return,
@@ -790,8 +826,8 @@ impl App {
                 KeyCode::Char('f') => self.finish(Command::Finalize),
                 KeyCode::Char('k') | KeyCode::Esc => {}
                 KeyCode::Char('p') => {
-                    self.message =
-                        Some("post-processing arrives with `aftercast post` (phase 5)".into())
+                    self.send(Command::PostProcess);
+                    self.message = Some("post-processing started".into());
                 }
                 _ => self.mode = Mode::Ended,
             },
@@ -800,6 +836,12 @@ impl App {
 
     fn normal_key(&mut self, code: KeyCode, view: &View) {
         self.message = None;
+        // The Starting Soon banner: Enter moves on to the main scene.
+        if code == KeyCode::Enter && on_starting(view) {
+            let name = view.config.obs.scenes.main.clone();
+            self.send(Command::Scene { name });
+            return;
+        }
         let pressed_at = self.clock.now_ts();
         let input = |prompt| Mode::Input {
             prompt,
@@ -1086,6 +1128,7 @@ impl App {
                 } else {
                     Command::Begin
                 });
+                self.starting_at = Some(std::time::Instant::now());
                 self.mode = Mode::Normal;
             }
             KeyCode::Char(c @ ('R' | 'S' | 'M' | ',' | ':')) => self.home_key(c, view),
@@ -1237,6 +1280,16 @@ impl App {
             }
             Prompt::Edit { .. } => {}
             // Palette commands take their time when Enter is pressed.
+            // Empty keeps the seconds from the settings.
+            Prompt::EndScreen => match text.trim() {
+                "" => self.send(Command::End {
+                    screen_s: view.config.stream.end_screen_s.min(END_SCREEN_MAX_S),
+                }),
+                t => match end_seconds(t) {
+                    Ok(screen_s) => self.send(Command::End { screen_s }),
+                    Err(e) => self.message = Some(e),
+                },
+            },
             Prompt::Palette => match palette(&text, self.clock.now_ts()) {
                 Ok(parsed) if !text.is_empty() => {
                     self.remember(&text, view);
@@ -1259,6 +1312,19 @@ impl App {
                 Ok(Palette::Help) => self.mode = Mode::Help,
                 Ok(Palette::Preflight) => self.mode = Mode::Preflight,
                 Ok(Palette::StopStream) => self.mode = Mode::ConfirmStreamStop,
+                Ok(Palette::End) if view.config.stream.end_screen => {
+                    self.mode = Mode::Input {
+                        prompt: Prompt::EndScreen,
+                        text: view
+                            .config
+                            .stream
+                            .end_screen_s
+                            .min(END_SCREEN_MAX_S)
+                            .to_string(),
+                        pressed_at: self.clock.now_ts(),
+                    }
+                }
+                Ok(Palette::End) => self.mode = Mode::ConfirmEnd,
                 Ok(Palette::Settings) => self.mode = Mode::Settings(settings::Page::default()),
                 Ok(Palette::Set { key, value }) => {
                     self.set_setting(&key, value.as_deref(), false, view)
@@ -1354,6 +1420,13 @@ impl App {
         self.draw_questions(frame, questions, view);
         self.draw_chapters(frame, chapters, view);
         self.draw_log(frame, log, view);
+        if on_starting(view) && self.mode == Mode::Normal {
+            let since = *self.starting_seen.get_or_insert_with(Instant::now);
+            let main = &view.config.obs.scenes.main;
+            starting::draw(frame, body, since.elapsed(), self.tick(), self.motion, main);
+        } else if !on_starting(view) {
+            self.starting_seen = None;
+        }
 
         // The notice wins on the info line; the README summary gives way.
         let notice = self.notice_line(view);
@@ -2089,6 +2162,9 @@ impl App {
                     Prompt::Note => "Private note",
                     Prompt::Edit { .. } => "Edit chapter title",
                     Prompt::Palette => "Command",
+                    Prompt::EndScreen => {
+                        "End screen seconds, then the stream ends (Esc stays live)"
+                    }
                 };
                 let at = pressed_at
                     .datetime()
@@ -2170,6 +2246,16 @@ impl App {
                 76,
                 5,
             ),
+            Mode::ConfirmEnd => (
+                " End the stream ".into(),
+                vec![
+                    Line::raw("End now? OBS stops streaming, recording and the virtual camera."),
+                    Line::raw(""),
+                    chips(&[("y", "end the stream"), ("any key", "stay live")]),
+                ],
+                76,
+                5,
+            ),
             Mode::ConfirmQuit => (
                 " Quit ".into(),
                 vec![
@@ -2204,20 +2290,15 @@ impl App {
                 84,
                 5,
             ),
-            Mode::Ended => (
-                " Stream ended ".into(),
-                vec![
-                    Line::raw("The stream has ended. What next?"),
-                    Line::raw(""),
-                    chips(&[
-                        ("f", "finalize (push final description)"),
-                        ("k", "keep session open"),
-                        ("p", "post-process now"),
-                    ]),
-                ],
-                92,
-                5,
-            ),
+            Mode::Ended => {
+                let anchors = &view.meta.anchors;
+                let on_air = anchors.yt_actual_start.map(|start| {
+                    let end = anchors.yt_actual_end.unwrap_or(self.clock.now_ts());
+                    Duration::from_secs_f64(end.secs_since(start).max(0.0))
+                });
+                ended::draw(frame, frame.area(), on_air, t, self.motion);
+                return;
+            }
         };
         let popup = centered(frame.area(), width, height);
         frame.render_widget(Clear, popup);
@@ -2234,6 +2315,8 @@ enum Palette {
     Settings,
     /// `:stream stop`: confirmed first.
     StopStream,
+    /// `:end`: asks for the end screen's seconds, or confirms when it is off.
+    End,
     Set {
         key: String,
         value: Option<String>,
@@ -2244,6 +2327,22 @@ enum Palette {
     Command(Command),
     Help,
     Preflight,
+}
+
+/// OBS shows the starting scene (the Starting Soon banner is up).
+fn on_starting(view: &View) -> bool {
+    view.state.scene.as_deref() == Some(view.config.obs.scenes.starting.as_str())
+}
+
+/// The longest end screen `:end` shows (the setting's range).
+pub(crate) const END_SCREEN_MAX_S: u32 = 600;
+
+/// Seconds of end screen typed at `:end`.
+fn end_seconds(text: &str) -> Result<u32, String> {
+    match text.trim().parse::<u32>() {
+        Ok(s) if s <= END_SCREEN_MAX_S => Ok(s),
+        _ => Err(format!(":end <seconds 0 to {END_SCREEN_MAX_S}|now|cancel>")),
+    }
 }
 
 /// Parses a palette line (specs/02, "Command palette"); `now` is when Enter was pressed.
@@ -2288,6 +2387,14 @@ fn palette(line: &str, now: Timestamp) -> Result<Palette, String> {
                 "pause" => ac_core::command::OutputAction::Pause,
                 "resume" => ac_core::command::OutputAction::Resume,
                 _ => return Err(":record start|stop|pause|resume".into()),
+            },
+        },
+        "end" => match args.as_str() {
+            "" => return Ok(Palette::End),
+            "cancel" => Command::CancelEnd,
+            "now" => Command::End { screen_s: 0 },
+            n => Command::End {
+                screen_s: end_seconds(n)?,
             },
         },
         "stream" => match args.as_str() {
@@ -3079,6 +3186,16 @@ mod tests {
             Ok(Palette::Command(Command::Sync))
         );
         assert_eq!(palette("?", now()), Ok(Palette::Help));
+        // :end asks (or confirms); with seconds, now or cancel it acts at once.
+        assert_eq!(palette("end", now()), Ok(Palette::End));
+        let end = |s| Ok(Palette::Command(Command::End { screen_s: s }));
+        assert_eq!(palette("end 45", now()), end(45));
+        assert_eq!(palette("end now", now()), end(0));
+        assert_eq!(
+            palette("end cancel", now()),
+            Ok(Palette::Command(Command::CancelEnd))
+        );
+        assert!(palette("end 601", now()).is_err());
         assert!(
             palette("checkpoint", now())
                 .unwrap_err()
@@ -3182,6 +3299,7 @@ mod tests {
                     source: "Camera".into(),
                     id: 1,
                     enabled: true,
+                    overlay: None,
                 }],
                 devices: vec![
                     ac_core::obs::Device {
@@ -3925,6 +4043,7 @@ mute Mic/Aux
             source: "Music".into(),
             id: 7,
             enabled: true,
+            overlay: None,
         });
         view
     }
@@ -4180,6 +4299,55 @@ mute Mic/Aux
     }
 
     #[test]
+    fn starting_scene_shows_the_banner_and_enter_moves_on() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.state.scene = Some("Starting Soon".into());
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Normal;
+        let text = screen(&mut app, &view);
+        assert!(
+            text.contains("On air soon") && text.contains("go to Code"),
+            "{text}"
+        );
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &view);
+        assert_eq!(
+            cmd_rx.try_recv().unwrap(),
+            Command::Scene {
+                name: "Code".into()
+            }
+        );
+    }
+
+    #[test]
+    fn the_end_prompt_shows_the_banner_and_its_keys() {
+        let clock = Arc::new(Clock::new());
+        let view = sample_view(&clock);
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Ended;
+        // Wide: one line of letters; narrow: the words stack; the keys are always there.
+        for (w, h) in [(120, 24), (60, 24), (40, 12)] {
+            let text = screen_sized(&mut app, &view, w, h);
+            assert!(
+                text.contains("Off air") && text.contains("Finalize"),
+                "{w}x{h}
+{text}"
+            );
+            assert!(
+                text.contains("keep open") || w < 60,
+                "{w}x{h}
+{text}"
+            );
+        }
+        app.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), &view);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::Finalize);
+    }
+
+    #[test]
     fn comma_opens_settings_and_a_change_is_saved_then_reloaded() {
         let clock = Arc::new(Clock::new());
         let mut view = sample_view(&clock);
@@ -4197,6 +4365,8 @@ mute Mic/Aux
         app.mode = Mode::Normal;
         let press = |app: &mut App, code| app.key(KeyEvent::new(code, KeyModifiers::NONE), &view);
         press(&mut app, KeyCode::Char(','));
+        // Sections are alphabetical: Display is the fourth.
+        press(&mut app, KeyCode::Char('4'));
         let text = screen(&mut app, &view);
         assert!(
             text.contains("Settings") && text.contains("Wrap long lines"),

@@ -155,6 +155,12 @@ pub fn parse(line: &str) -> Result<Option<Line>, String> {
                 _ => return Err("stream start|stop".into()),
             },
         }),
+        "end" => Action::Do(match args.as_str() {
+            "cancel" => Command::CancelEnd,
+            n => Command::End {
+                screen_s: n.parse().map_err(|_| "end <seconds>|cancel".to_owned())?,
+            },
+        }),
         "hide" | "show" => Action::Do(Command::Source {
             source: required("a source")?,
             scene: None,

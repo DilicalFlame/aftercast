@@ -22,9 +22,19 @@ use crate::theme::{ACCENT, FAINT, INFO, MUTED, OK, RAISED, SELECTED, TEXT, WARN,
 #[derive(Debug, Clone, Copy)]
 pub enum Kind {
     Bool,
-    Int { min: i64, max: i64, step: i64 },
-    Float { min: f64, max: f64, step: f64 },
+    Int {
+        min: i64,
+        max: i64,
+        step: i64,
+    },
+    Float {
+        min: f64,
+        max: f64,
+        step: f64,
+    },
     Text,
+    /// Names separated by commas, saved as a list.
+    List,
     Choice(&'static [&'static str]),
 }
 
@@ -60,6 +70,8 @@ impl When {
 
 pub struct Setting {
     pub section: usize,
+    /// Sub-heading within the section ("" for none).
+    pub group: &'static str,
     /// Dotted key in `aftercast.toml`.
     pub key: &'static str,
     pub label: &'static str,
@@ -69,15 +81,8 @@ pub struct Setting {
     pub get: fn(&Config) -> Value,
 }
 
-pub const SECTIONS: [&str; 8] = [
-    "Display",
-    "Stream",
-    "YouTube",
-    "Chat bot",
-    "OBS",
-    "OBS live",
-    "Capture",
-    "After the stream",
+pub const SECTIONS: [&str; 9] = [
+    "Captions", "Capture", "Chat bot", "Display", "OBS", "OBS live", "Post", "Stream", "YouTube",
 ];
 
 /// The section listing what OBS has right now: audio inputs and every scene's sources.
@@ -99,8 +104,9 @@ fn text(s: &str) -> Value {
 pub fn all() -> Vec<Setting> {
     use Kind::*;
     use When::*;
-    let s = |section, key, label, help, kind, when, get| Setting {
+    let s = |section, group, key, label, help, kind, when, get| Setting {
         section,
+        group,
         key,
         label,
         help,
@@ -108,138 +114,85 @@ pub fn all() -> Vec<Setting> {
         when,
         get,
     };
-    vec![
-        // Display
+    let mut settings = vec![
+        // Captions
         s(
             0,
-            "tui.wrap_lines",
-            "Wrap long lines",
-            "Wrap long lines instead of cutting them.",
+            "Captions",
+            "captions.enabled",
+            "Live captions",
+            "Caption your microphone on the captions overlay.",
             Bool,
             Now,
-            |c| Value::Bool(c.tui.wrap_lines),
-        ),
-        s(
-            0,
-            "tui.animations",
-            "Animations",
-            "Pulsing dots, spinners, gliding panes.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.tui.animations),
+            |c| Value::Bool(c.captions.enabled),
         ),
         s(
             0,
-            "tui.name_colors",
-            "Name colors",
-            "A color per chat author.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.tui.name_colors),
-        ),
-        s(
-            0,
-            "tui.home_layout",
-            "Home layout",
-            "columns: a grid with scene tabs. tabs: Checks, Mixer, Sources.",
-            Choice(&["columns", "tabs"]),
-            Now,
-            |c| text(c.tui.home_layout.name()),
-        ),
-        // Stream
-        s(
-            1,
-            "stream.chapter_on_brb",
-            "Chapter on BRB",
-            "BRB adds a \"Break\" chapter.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.stream.chapter_on_brb),
-        ),
-        s(
-            1,
-            "stream.chapter_on_question",
-            "Chapter on question",
-            "A question shown on stream adds a \"Q: …\" chapter.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.stream.chapter_on_question),
-        ),
-        s(
-            1,
-            "stream.chapter_on_quest_change",
-            "Chapter on new quest",
-            "A new quest starts a chapter.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.stream.chapter_on_quest_change),
-        ),
-        s(
-            1,
-            "stream.chapter_on_latency",
-            "Chapter on latency check",
-            ":latency adds a \"Latency check\" chapter.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.stream.chapter_on_latency),
-        ),
-        s(
-            1,
-            "stream.default_latency_s",
-            "Default latency (s)",
-            "Stream delay until :latency measures it.",
-            Float {
-                min: 0.0,
-                max: 600.0,
-                step: 0.5,
-            },
-            Now,
-            |c| Value::Float(c.stream.default_latency_s),
-        ),
-        s(
-            1,
-            "stream.first_chapter_title",
-            "First chapter title",
-            "Title of the 0:00 chapter.",
+            "Captions",
+            "captions.device",
+            "Microphone",
+            "Name as ffmpeg lists it: ffmpeg -list_devices true -f dshow -i dummy.",
             Text,
             Now,
-            |c| text(&c.stream.first_chapter_title),
-        ),
-        // YouTube
-        s(
-            2,
-            "youtube.push_on_start",
-            "Push description at start",
-            "Push the description at start (50 units).",
-            Bool,
-            NextSession,
-            |c| Value::Bool(c.youtube.push_on_start),
+            |c| text(&c.captions.device),
         ),
         s(
-            2,
-            "youtube.push_on_end",
-            "Push description at end",
-            "Push the final description at the end (50 units).",
-            Bool,
+            0,
+            "Captions",
+            "captions.model",
+            "Captions model",
+            "Smaller is faster: base.en and small.en keep up best; .en models are English only.",
+            Choice(&[
+                "tiny.en",
+                "base.en",
+                "small.en",
+                "small",
+                "medium",
+                "distil-large-v3",
+                "large-v3-turbo",
+            ]),
             Now,
-            |c| Value::Bool(c.youtube.push_on_end),
+            |c| text(&c.captions.model),
         ),
         s(
-            2,
-            "youtube.daily_quota_reserve",
-            "Quota reserve",
-            "Quota kept for manual actions.",
+            0,
+            "Sync",
+            "stream.delay_ms",
+            "Stream delay (ms)",
+            "OBS shows cameras, captures and audio this late so captions land on the words; overlays and scene switches wait too. 0 is off.",
             Int {
                 min: 0,
-                max: 10_000,
-                step: 100,
+                max: 500,
+                step: 50,
             },
+            Now,
+            |c| Value::Int(c.stream.delay_ms.into()),
+        ),
+        // Capture
+        s(
+            1,
+            "",
+            "capture.keys",
+            "Record key presses",
+            "Record typed keys (never in privacy or password boxes).",
+            Bool,
             Restart,
-            |c| Value::Int(c.youtube.daily_quota_reserve.into()),
+            |c| Value::Bool(c.capture.keys),
+        ),
+        s(
+            1,
+            "",
+            "capture.shell",
+            "Record shell commands",
+            "Record shell commands (aftercast shell-hook).",
+            Bool,
+            Restart,
+            |c| Value::Bool(c.capture.shell),
         ),
         // Chat bot
         s(
-            3,
+            2,
+            "",
             "bot.enabled",
             "Chat bot",
             "Answer !commands in chat.",
@@ -248,7 +201,8 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.bot.enabled),
         ),
         s(
-            3,
+            2,
+            "",
             "bot.prefix",
             "Command prefix",
             "What chat commands start with.",
@@ -257,7 +211,8 @@ pub fn all() -> Vec<Setting> {
             |c| text(&c.bot.prefix),
         ),
         s(
-            3,
+            2,
+            "",
             "bot.default_reply",
             "Replies go to",
             "Where replies go; chat costs 20 units each.",
@@ -272,7 +227,8 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            3,
+            2,
+            "",
             "bot.global_cooldown_s",
             "Global cooldown (s)",
             "Least time between two replies.",
@@ -285,7 +241,8 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Int(c.bot.global_cooldown_s as i64),
         ),
         s(
-            3,
+            2,
+            "",
             "bot.user_cooldown_s",
             "Per-viewer cooldown (s)",
             "Least time between one viewer's commands.",
@@ -298,7 +255,8 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Int(c.bot.user_cooldown_s as i64),
         ),
         s(
-            3,
+            2,
+            "",
             "bot.max_chat_replies_per_hour",
             "Chat replies per hour",
             "Chat replies per hour; more go to the overlay.",
@@ -310,36 +268,61 @@ pub fn all() -> Vec<Setting> {
             Restart,
             |c| Value::Int(c.bot.max_chat_replies_per_hour.into()),
         ),
+        // Display
+        s(
+            3,
+            "",
+            "tui.wrap_lines",
+            "Wrap long lines",
+            "Wrap long lines instead of cutting them.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.tui.wrap_lines),
+        ),
+        s(
+            3,
+            "",
+            "tui.animations",
+            "Animations",
+            "Pulsing dots, spinners, gliding panes.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.tui.animations),
+        ),
+        s(
+            3,
+            "",
+            "tui.name_colors",
+            "Name colors",
+            "A color per chat author.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.tui.name_colors),
+        ),
+        s(
+            3,
+            "",
+            "tui.home_layout",
+            "Home layout",
+            "columns: a grid with scene tabs. tabs: Checks, Mixer, Sources.",
+            Choice(&["columns", "tabs"]),
+            Now,
+            |c| text(c.tui.home_layout.name()),
+        ),
         // OBS
         s(
             4,
-            "obs.require_recording",
-            "Warn when not recording",
-            "Warn while OBS is not recording.",
-            Bool,
-            Now,
-            |c| Value::Bool(c.obs.require_recording),
-        ),
-        s(
-            4,
-            "obs.record_into_session",
-            "Record into the session folder",
-            "Record into the session's media folder.",
-            Bool,
-            Restart,
-            |c| Value::Bool(c.obs.record_into_session),
-        ),
-        s(
-            4,
+            "Scenes",
             "obs.scenes.main",
             "Main scene",
-            "Where BRB and privacy return to.",
+            "The primary scene: BRB and privacy return to it; Enter on Starting Soon goes to it.",
             Text,
             Now,
             |c| text(&c.obs.scenes.main),
         ),
         s(
             4,
+            "Scenes",
             "obs.scenes.brb",
             "BRB scene",
             "Where b switches to.",
@@ -349,6 +332,7 @@ pub fn all() -> Vec<Setting> {
         ),
         s(
             4,
+            "Scenes",
             "obs.scenes.privacy",
             "Privacy scene",
             "Where p switches to.",
@@ -356,28 +340,336 @@ pub fn all() -> Vec<Setting> {
             Now,
             |c| text(&c.obs.scenes.privacy),
         ),
-        // Capture
         s(
-            6,
-            "capture.keys",
-            "Record key presses",
-            "Record typed keys (never in privacy or password boxes).",
-            Bool,
-            Restart,
-            |c| Value::Bool(c.capture.keys),
+            4,
+            "Scenes",
+            "obs.scenes.starting",
+            "Starting scene",
+            "Where Go Live opens (with the starting screen on).",
+            Text,
+            Now,
+            |c| text(&c.obs.scenes.starting),
         ),
         s(
-            6,
-            "capture.shell",
-            "Record shell commands",
-            "Record shell commands (aftercast shell-hook).",
+            4,
+            "Scenes",
+            "obs.scenes.ending",
+            "Ending scene",
+            "The end screen :end shows.",
+            Text,
+            Now,
+            |c| text(&c.obs.scenes.ending),
+        ),
+        s(
+            4,
+            "Recording",
+            "obs.require_recording",
+            "Warn when not recording",
+            "Warn while OBS is not recording.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.obs.require_recording),
+        ),
+        s(
+            4,
+            "Recording",
+            "obs.record_into_session",
+            "Record into the session folder",
+            "Record into the session's media folder.",
             Bool,
             Restart,
-            |c| Value::Bool(c.capture.shell),
+            |c| Value::Bool(c.obs.record_into_session),
         ),
-        // After the stream
         s(
-            7,
+            2,
+            "Notifications",
+            "notify.supporters",
+            "Notify for supporters",
+            "A Super Chat, Super Sticker or membership pops up a desktop notification.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.notify.supporters),
+        ),
+        s(
+            2,
+            "Notifications",
+            "notify.sound",
+            "Notification sound",
+            "Play Windows' notification sound with it.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.notify.sound),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.enabled",
+            "Hide the camera under the pointer",
+            "The camera source hides while the mouse pointer is over its place on the screen, and returns after.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.obs.facecam.enabled),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.auto",
+            "Follow the camera in OBS",
+            "Read where the camera is from OBS in each scene. The place below is used until OBS answers, or when this is off.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.obs.facecam.auto),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.monitor",
+            "Screen number",
+            "The screen the pointer moves on, as Windows Settings numbers it (1, 2, ...). 0 is the one the scene's display capture shows.",
+            Int {
+                min: 0,
+                max: 8,
+                step: 1,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.monitor.into()),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.source",
+            "Camera source",
+            "The OBS source to hide, e.g. Video Capture Device (in the scene on air).",
+            Text,
+            Now,
+            |c| text(&c.obs.facecam.source),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.x",
+            "Camera left",
+            "Left edge of the camera on the 1920x1080 canvas (the screen OBS captures).",
+            Int {
+                min: 0,
+                max: 1920,
+                step: 10,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.x.into()),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.y",
+            "Camera top",
+            "Top edge of the camera on the canvas.",
+            Int {
+                min: 0,
+                max: 1080,
+                step: 10,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.y.into()),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.width",
+            "Camera width",
+            "Width of the camera on the canvas.",
+            Int {
+                min: 1,
+                max: 1920,
+                step: 10,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.width.into()),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.height",
+            "Camera height",
+            "Height of the camera on the canvas.",
+            Int {
+                min: 1,
+                max: 1080,
+                step: 10,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.height.into()),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.margin",
+            "Margin around it",
+            "Pixels around the camera that count as over it.",
+            Int {
+                min: 0,
+                max: 400,
+                step: 10,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.margin.into()),
+        ),
+        s(
+            4,
+            "Facecam",
+            "obs.facecam.return_ms",
+            "Return after (ms)",
+            "The camera comes back this long after the pointer left, so it does not flicker.",
+            Int {
+                min: 0,
+                max: 5000,
+                step: 100,
+            },
+            Now,
+            |c| Value::Int(c.obs.facecam.return_ms.into()),
+        ),
+        s(
+            4,
+            "Status bar",
+            "overlay.bar.order",
+            "Segment order",
+            "Docked overlays from left to right, comma separated: now, brb, latency, chapters, toast.",
+            List,
+            Now,
+            |c| Value::List(c.overlay.bar.order.clone()),
+        ),
+        s(
+            4,
+            "Status bar",
+            "overlay.bar.animate",
+            "Animate segments",
+            "Segments slide in and out, and a changed value flashes.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.overlay.bar.animate),
+        ),
+        s(
+            4,
+            "Status bar",
+            "overlay.bar.marquee",
+            "Scroll like a ticker",
+            "The segments scroll left forever.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.overlay.bar.marquee),
+        ),
+        s(
+            4,
+            "Status bar",
+            "overlay.bar.speed",
+            "Ticker speed (px/s)",
+            "How fast the segments scroll when the ticker is on.",
+            Int {
+                min: 10,
+                max: 600,
+                step: 10,
+            },
+            Now,
+            |c| Value::Int(c.overlay.bar.speed.into()),
+        ),
+        s(
+            4,
+            "Alert sound",
+            "overlay.sound.enabled",
+            "Alert sound",
+            "Sound effects of the Super Chat alert (the overlay's audio goes through OBS).",
+            Bool,
+            Now,
+            |c| Value::Bool(c.overlay.sound.enabled),
+        ),
+        s(
+            4,
+            "Alert sound",
+            "overlay.sound.skin",
+            "Alert sound skin",
+            "synth, or a folder in <home>/overlays/sounds with sound files named after what they are for.",
+            Text,
+            Now,
+            |c| text(&c.overlay.sound.skin),
+        ),
+        s(
+            4,
+            "Alert sound",
+            "overlay.sound.volume",
+            "Alert volume %",
+            "Loudness of the alert's sound effects.",
+            Int {
+                min: 0,
+                max: 100,
+                step: 5,
+            },
+            Now,
+            |c| Value::Int(c.overlay.sound.volume.into()),
+        ),
+        s(
+            4,
+            "Overlay look",
+            "overlay.font_sans",
+            "Overlay font",
+            "Font of the overlay cards.",
+            Text,
+            Now,
+            |c| text(&c.overlay.font_sans),
+        ),
+        s(
+            4,
+            "Overlay look",
+            "overlay.font_mono",
+            "Overlay mono font",
+            "Font of timers and typed keys.",
+            Text,
+            Now,
+            |c| text(&c.overlay.font_mono),
+        ),
+        s(
+            4,
+            "Overlay look",
+            "overlay.bg",
+            "Overlay background",
+            "Card color, e.g. #303030.",
+            Text,
+            Now,
+            |c| text(&c.overlay.bg),
+        ),
+        s(
+            4,
+            "Overlay look",
+            "overlay.accent",
+            "Overlay accent",
+            "Edge and highlight color, e.g. #FF5555.",
+            Text,
+            Now,
+            |c| text(&c.overlay.accent),
+        ),
+        s(
+            4,
+            "Overlay look",
+            "overlay.fg",
+            "Overlay text color",
+            "e.g. #FFFFFF.",
+            Text,
+            Now,
+            |c| text(&c.overlay.fg),
+        ),
+        s(
+            4,
+            "Overlay look",
+            "overlay.muted",
+            "Overlay muted color",
+            "Timers and key borders, e.g. #9A9A9A.",
+            Text,
+            Now,
+            |c| text(&c.overlay.muted),
+        ),
+        // Post
+        s(
+            6,
+            "Source",
             "post.use_vod",
             "Use the YouTube VOD",
             "Use the YouTube VOD, not the recording.",
@@ -386,7 +678,8 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.post.use_vod),
         ),
         s(
-            7,
+            6,
+            "Transcription",
             "post.transcriber",
             "Transcriber",
             "Speech to text engine.",
@@ -401,7 +694,8 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            7,
+            6,
+            "Transcription",
             "post.whisper_model",
             "Whisper model",
             "Model name, or a ggml .bin for whisper-cpp.",
@@ -410,7 +704,18 @@ pub fn all() -> Vec<Setting> {
             |c| text(&c.post.whisper_model),
         ),
         s(
-            7,
+            6,
+            "Transcription",
+            "post.whisper_compute_type",
+            "Whisper precision",
+            "int8_float16 or int8 if video memory runs out.",
+            Choice(&["float16", "int8_float16", "int8", "float32"]),
+            NextPost,
+            |c| text(&c.post.whisper_compute_type),
+        ),
+        s(
+            6,
+            "Transcription",
             "post.language",
             "Language",
             "auto, or a code such as en or hi.",
@@ -419,7 +724,98 @@ pub fn all() -> Vec<Setting> {
             |c| text(&c.post.language),
         ),
         s(
-            7,
+            6,
+            "Transcription",
+            "post.correct",
+            "Fix misheard terms",
+            "Fix misheard terms with a small local model.",
+            Bool,
+            NextPost,
+            |c| Value::Bool(c.post.correct),
+        ),
+        s(
+            6,
+            "Transcription",
+            "post.correct_model",
+            "Correction model",
+            "owner/repo/file.gguf on Hugging Face.",
+            Text,
+            NextPost,
+            |c| text(&c.post.correct_model),
+        ),
+        s(
+            6,
+            "Transcription",
+            "post.correct_below",
+            "Check words below",
+            "Words Whisper was less sure of than this get checked.",
+            Float {
+                min: 0.0,
+                max: 1.0,
+                step: 0.05,
+            },
+            NextPost,
+            |c| Value::Float(c.post.correct_below),
+        ),
+        s(
+            6,
+            "Screen",
+            "post.frame_interval_s",
+            "Frame every (s)",
+            "Sample a frame this often (scene changes add more).",
+            Int {
+                min: 5,
+                max: 300,
+                step: 5,
+            },
+            NextPost,
+            |c| Value::Int(c.post.frame_interval_s.into()),
+        ),
+        s(
+            6,
+            "Screen",
+            "post.scene_threshold",
+            "Scene change threshold",
+            "How different a frame must be to count as a new scene.",
+            Float {
+                min: 0.05,
+                max: 1.0,
+                step: 0.05,
+            },
+            NextPost,
+            |c| Value::Float(c.post.scene_threshold),
+        ),
+        s(
+            6,
+            "Screen",
+            "post.phash_max_distance",
+            "Duplicate frame distance",
+            "Frames closer than this are kept once.",
+            Int {
+                min: 0,
+                max: 32,
+                step: 1,
+            },
+            NextPost,
+            |c| Value::Int(c.post.phash_max_distance.into()),
+        ),
+        s(
+            6,
+            "Screen",
+            "post.frame_width",
+            "Frame width",
+            "Width frames are saved at.",
+            Int {
+                min: 320,
+                max: 3840,
+                step: 160,
+            },
+            NextPost,
+            |c| Value::Int(c.post.frame_width.into()),
+        ),
+        s(
+            6,
+            "Screen",
             "post.ocr",
             "Read screen text (OCR)",
             "Read the text on screen in sampled frames.",
@@ -428,7 +824,8 @@ pub fn all() -> Vec<Setting> {
             |c| Value::Bool(c.post.ocr),
         ),
         s(
-            7,
+            6,
+            "Screen",
             "post.ocr_engine",
             "OCR engine",
             "glm-ocr (GPU, best on code) or tesseract (CPU).",
@@ -442,16 +839,78 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            7,
-            "post.correct",
-            "Fix misheard terms",
-            "Fix misheard terms with a small local model.",
-            Bool,
+            6,
+            "Screen",
+            "post.ocr_parallel",
+            "OCR in parallel",
+            "Frames GLM-OCR reads at once.",
+            Int {
+                min: 1,
+                max: 16,
+                step: 1,
+            },
             NextPost,
-            |c| Value::Bool(c.post.correct),
+            |c| Value::Int(c.post.ocr_parallel.into()),
         ),
         s(
-            7,
+            6,
+            "Screen",
+            "capture.git_max_depth",
+            "Git search depth",
+            "How deep post looks for git repos under the git roots.",
+            Int {
+                min: 0,
+                max: 10,
+                step: 1,
+            },
+            NextPost,
+            |c| Value::Int(c.capture.git_max_depth as i64),
+        ),
+        s(
+            6,
+            "Activity",
+            "post.silence_db",
+            "Silence level (dB)",
+            "Quieter than this counts as silence.",
+            Float {
+                min: -80.0,
+                max: 0.0,
+                step: 1.0,
+            },
+            NextPost,
+            |c| Value::Float(c.post.silence_db),
+        ),
+        s(
+            6,
+            "Activity",
+            "post.silence_min_s",
+            "Shortest silence (s)",
+            "Silences shorter than this are ignored.",
+            Float {
+                min: 0.5,
+                max: 60.0,
+                step: 0.5,
+            },
+            NextPost,
+            |c| Value::Float(c.post.silence_min_s),
+        ),
+        s(
+            6,
+            "Activity",
+            "post.focus_min_keys_per_10s",
+            "Focus typing rate",
+            "Keys per 10 s that count as focused work.",
+            Int {
+                min: 0,
+                max: 100,
+                step: 1,
+            },
+            NextPost,
+            |c| Value::Int(c.post.focus_min_keys_per_10s.into()),
+        ),
+        s(
+            6,
+            "Clips",
             "render.encoder",
             "Video encoder",
             "h264_nvenc (NVIDIA) or libx264.",
@@ -465,7 +924,22 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            7,
+            6,
+            "Clips",
+            "render.cq",
+            "Video quality (CQ)",
+            "Lower is better and bigger.",
+            Int {
+                min: 0,
+                max: 51,
+                step: 1,
+            },
+            NextPost,
+            |c| Value::Int(c.render.cq.into()),
+        ),
+        s(
+            6,
+            "Clips",
             "render.captions",
             "Captions",
             "Burn subtitles, write an .srt, or none.",
@@ -480,7 +954,8 @@ pub fn all() -> Vec<Setting> {
             },
         ),
         s(
-            7,
+            6,
+            "Clips",
             "render.keys_overlay",
             "Keys overlay in clips",
             "Burn key presses, an alpha layer, or none.",
@@ -494,8 +969,444 @@ pub fn all() -> Vec<Setting> {
                 })
             },
         ),
-    ]
+        s(
+            6,
+            "Clips",
+            "render.pad_start_ms",
+            "Clip lead-in (ms)",
+            "Extra time before each clip.",
+            Int {
+                min: 0,
+                max: 3000,
+                step: 50,
+            },
+            NextPost,
+            |c| Value::Int(c.render.pad_start_ms.into()),
+        ),
+        s(
+            6,
+            "Clips",
+            "render.pad_end_ms",
+            "Clip tail (ms)",
+            "Extra time after each clip.",
+            Int {
+                min: 0,
+                max: 3000,
+                step: 50,
+            },
+            NextPost,
+            |c| Value::Int(c.render.pad_end_ms.into()),
+        ),
+        s(
+            6,
+            "Clips",
+            "render.short_max_s",
+            "Longest short (s)",
+            "Shorts are cut to at most this long.",
+            Int {
+                min: 15,
+                max: 180,
+                step: 5,
+            },
+            NextPost,
+            |c| Value::Int(c.render.short_max_s.into()),
+        ),
+        // Stream
+        s(
+            7,
+            "Show",
+            "channel.series",
+            "Series name",
+            "The show's name, in titles and the captions prompt.",
+            Text,
+            NextSession,
+            |c| text(&c.channel.series),
+        ),
+        s(
+            7,
+            "Show",
+            "channel.short",
+            "Short name",
+            "Short form of the series, e.g. IDD.",
+            Text,
+            NextSession,
+            |c| text(&c.channel.short),
+        ),
+        s(
+            7,
+            "Show",
+            "channel.episode_prefix",
+            "Episode prefix",
+            "Before the episode number in session folders, e.g. ep.",
+            Text,
+            NextSession,
+            |c| text(&c.channel.episode_prefix),
+        ),
+        s(
+            7,
+            "Show",
+            "channel.episode_pad",
+            "Episode digits",
+            "Episode numbers are padded to this many digits.",
+            Int {
+                min: 1,
+                max: 6,
+                step: 1,
+            },
+            NextSession,
+            |c| Value::Int(c.channel.episode_pad as i64),
+        ),
+        s(
+            7,
+            "Show",
+            "stream.first_chapter_title",
+            "First chapter title",
+            "Title of the 0:00 chapter.",
+            Text,
+            Now,
+            |c| text(&c.stream.first_chapter_title),
+        ),
+        s(
+            7,
+            "Chapters",
+            "stream.chapter_on_brb",
+            "Chapter on BRB",
+            "BRB adds a \"Break\" chapter.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.stream.chapter_on_brb),
+        ),
+        s(
+            7,
+            "Chapters",
+            "stream.chapter_on_question",
+            "Chapter on question",
+            "A question shown on stream adds a \"Q: …\" chapter.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.stream.chapter_on_question),
+        ),
+        s(
+            7,
+            "Chapters",
+            "stream.chapter_on_quest_change",
+            "Chapter on new quest",
+            "A new quest starts a chapter.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.stream.chapter_on_quest_change),
+        ),
+        s(
+            7,
+            "Chapters",
+            "stream.chapter_on_latency",
+            "Chapter on latency check",
+            ":latency adds a \"Latency check\" chapter.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.stream.chapter_on_latency),
+        ),
+        // YouTube
+        s(
+            8,
+            "Description",
+            "youtube.push_on_start",
+            "Push description at start",
+            "Push the description at start (50 units).",
+            Bool,
+            NextSession,
+            |c| Value::Bool(c.youtube.push_on_start),
+        ),
+        s(
+            8,
+            "Description",
+            "youtube.push_on_end",
+            "Push description at end",
+            "Push the final description at the end (50 units).",
+            Bool,
+            Now,
+            |c| Value::Bool(c.youtube.push_on_end),
+        ),
+        s(
+            8,
+            "Chat",
+            "youtube.chat_idle_max_s",
+            "Chat poll when idle (s)",
+            "Longest wait between chat polls when chat is quiet.",
+            Int {
+                min: 5,
+                max: 300,
+                step: 5,
+            },
+            Restart,
+            |c| Value::Int(c.youtube.chat_idle_max_s as i64),
+        ),
+        s(
+            8,
+            "Chat",
+            "stream.default_latency_s",
+            "Default latency (s)",
+            "Stream delay until :latency measures it.",
+            Float {
+                min: 0.0,
+                max: 600.0,
+                step: 0.5,
+            },
+            Now,
+            |c| Value::Float(c.stream.default_latency_s),
+        ),
+        s(
+            8,
+            "Quota",
+            "youtube.daily_quota_reserve",
+            "Quota reserve",
+            "Quota kept for manual actions.",
+            Int {
+                min: 0,
+                max: 10_000,
+                step: 100,
+            },
+            Restart,
+            |c| Value::Int(c.youtube.daily_quota_reserve.into()),
+        ),
+    ];
+    // Each overlay's frame, next to what drives it.
+    settings.extend(frame!(0, "Captions", captions));
+    settings.extend(frame!(1, "Keys", keys));
+    settings.extend(frame!(2, "Question", question));
+    settings.extend(frame!(2, "Toast", toast));
+    settings.extend(frame!(7, "Now", now));
+    settings.extend(frame!(7, "Chapters", chapters));
+    settings.extend(frame!(7, "BRB", brb));
+    settings.extend(frame!(7, "Latency", latency));
+    settings.extend(frame!(7, "Starting", starting));
+    settings.extend(frame!(7, "Status bar", status));
+    settings.extend(frame!(7, "Alert", alert));
+    settings.extend([
+        dock!(2, "Toast", toast),
+        dock!(7, "Now", now),
+        dock!(7, "Chapters", chapters),
+        dock!(7, "BRB", brb),
+        dock!(7, "Latency", latency),
+    ]);
+    settings.push(Setting {
+        section: 4,
+        group: "Overlay look",
+        key: "overlay.skin",
+        label: "Overlay skin pack",
+        help: "Skin every overlay wears unless it has its own: nvim, clean, broadcast, glass, minimal or a custom one.",
+        kind: Kind::Text,
+        when: When::Now,
+        get: |c| Value::Text(c.overlay.skin.clone()),
+    });
+    settings.push(Setting {
+        section: 4,
+        group: "Overlay look",
+        key: "overlay.avatar",
+        label: "Starting screen picture",
+        help: "A picture file in <home>/overlays, e.g. logo.jpg.",
+        kind: Kind::Text,
+        when: When::Now,
+        get: |c| Value::Text(c.overlay.avatar.clone()),
+    });
+    settings.extend([
+        Setting {
+            section: 4,
+            group: "Launch",
+            key: "obs.launch",
+            label: "Start OBS",
+            help: "Start OBS when it is not running, never in safe mode; it stays open when aftercast exits.",
+            kind: Kind::Bool,
+            when: When::Restart,
+            get: |c| Value::Bool(c.obs.launch),
+        },
+        Setting {
+            section: 4,
+            group: "Launch",
+            key: "obs.path",
+            label: "OBS program",
+            help: "obs64.exe; empty finds it in Program Files.",
+            kind: Kind::Text,
+            when: When::Restart,
+            get: |c| Value::Text(c.obs.path.display().to_string()),
+        },
+        Setting {
+            section: 7,
+            group: "Start",
+            key: "stream.starting_screen",
+            label: "Starting screen",
+            help: "Go Live opens on the starting scene, counting up; Enter in the TUI goes to the main scene.",
+            kind: Kind::Bool,
+            when: When::Now,
+            get: |c| Value::Bool(c.stream.starting_screen),
+        },
+        Setting {
+            section: 7,
+            group: "End",
+            key: "stream.end_screen",
+            label: "End screen",
+            help: ":end shows the ending scene first and asks how long; then the stream ends.",
+            kind: Kind::Bool,
+            when: When::Now,
+            get: |c| Value::Bool(c.stream.end_screen),
+        },
+        Setting {
+            section: 7,
+            group: "End",
+            key: "stream.end_screen_s",
+            label: "End screen seconds",
+            help: "What :end offers; type another number at the prompt for this time only.",
+            kind: Kind::Int {
+                min: 1,
+                max: 600,
+                step: 5,
+            },
+            when: When::Now,
+            get: |c| Value::Int(c.stream.end_screen_s.into()),
+        },
+    ]);
+    settings
 }
+
+/// One overlay's frame (`[overlay.<name>]`) in a group "<Title> overlay". The rehearse
+/// page's overlay editor changes the same values with the mouse.
+macro_rules! frame {
+    ($section:expr, $title:literal, $name:ident) => {{
+        let int = |field, label, help, min, max, step, get| Setting {
+            section: $section,
+            group: concat!($title, " overlay"),
+            key: field,
+            label,
+            help,
+            kind: Kind::Int { min, max, step },
+            when: When::Now,
+            get,
+        };
+        [
+            int(
+                concat!("overlay.", stringify!($name), ".x"),
+                concat!($title, " x"),
+                "Left edge of the frame on the 1920x1080 canvas. Drag it on the rehearse page.",
+                -1920,
+                3840,
+                10,
+                |c| Value::Int(c.overlay.$name.x.into()),
+            ),
+            int(
+                concat!("overlay.", stringify!($name), ".y"),
+                concat!($title, " y"),
+                "Top edge of the frame on the canvas.",
+                -1080,
+                2160,
+                10,
+                |c| Value::Int(c.overlay.$name.y.into()),
+            ),
+            int(
+                concat!("overlay.", stringify!($name), ".width"),
+                concat!($title, " width"),
+                "Width the content lays out in, before Size scales it.",
+                20,
+                3840,
+                20,
+                |c| Value::Int(c.overlay.$name.width.into()),
+            ),
+            int(
+                concat!("overlay.", stringify!($name), ".height"),
+                concat!($title, " height"),
+                "Height the content lays out in, before Size scales it.",
+                20,
+                2160,
+                20,
+                |c| Value::Int(c.overlay.$name.height.into()),
+            ),
+            int(
+                concat!("overlay.", stringify!($name), ".size"),
+                concat!($title, " size %"),
+                "Scales the frame and everything in it; 100 is the built-in size.",
+                10,
+                400,
+                5,
+                |c| Value::Int(c.overlay.$name.size.into()),
+            ),
+            int(
+                concat!("overlay.", stringify!($name), ".rotate"),
+                concat!($title, " rotation"),
+                "Degrees clockwise around the frame's center.",
+                -180,
+                180,
+                5,
+                |c| Value::Int(c.overlay.$name.rotate.into()),
+            ),
+            Setting {
+                section: $section,
+                group: concat!($title, " overlay"),
+                key: concat!("overlay.", stringify!($name), ".align"),
+                label: concat!($title, " align"),
+                help: "Line the content up on the left, center or right of the frame.",
+                kind: Kind::Choice(&["left", "center", "right"]),
+                when: When::Now,
+                get: |c| Value::Text(c.overlay.$name.align.name().into()),
+            },
+            Setting {
+                section: $section,
+                group: concat!($title, " overlay"),
+                key: concat!("overlay.", stringify!($name), ".bg"),
+                label: concat!($title, " background"),
+                help: "Card color, #RRGGBB; empty uses the overlay background in OBS.",
+                kind: Kind::Text,
+                when: When::Now,
+                get: |c| Value::Text(c.overlay.$name.bg.clone()),
+            },
+            int(
+                concat!("overlay.", stringify!($name), ".opacity"),
+                concat!($title, " background opacity %"),
+                "0 is see-through, 100 solid.",
+                0,
+                100,
+                5,
+                |c| Value::Int(c.overlay.$name.opacity.into()),
+            ),
+            Setting {
+                section: $section,
+                group: concat!($title, " overlay"),
+                key: concat!("overlay.", stringify!($name), ".skin"),
+                label: concat!($title, " skin"),
+                help: "This overlay's own skin; empty wears the skin pack.",
+                kind: Kind::Text,
+                when: When::Now,
+                get: |c| Value::Text(c.overlay.$name.skin.clone()),
+            },
+            Setting {
+                section: $section,
+                group: concat!($title, " overlay"),
+                key: concat!("overlay.", stringify!($name), ".hide_when"),
+                label: concat!($title, " hidden while"),
+                help: "Overlays that hide this one while they are on screen, comma separated (e.g. question, brb).",
+                kind: Kind::List,
+                when: When::Now,
+                get: |c| Value::List(c.overlay.$name.hide_when.clone()),
+            },
+        ]
+    }};
+}
+use frame;
+
+/// Whether an overlay shows in the status bar instead of its own frame.
+macro_rules! dock {
+    ($section:expr, $title:literal, $name:ident) => {
+        Setting {
+            section: $section,
+            group: concat!($title, " overlay"),
+            key: concat!("overlay.", stringify!($name), ".dock"),
+            label: concat!($title, " in the status bar"),
+            help: "Show it as a segment of the status bar instead of in its own frame.",
+            kind: Kind::Bool,
+            when: When::Now,
+            get: |c| Value::Bool(c.overlay.$name.dock),
+        }
+    };
+}
+use dock;
 
 pub fn show(v: &Value) -> String {
     match v {
@@ -505,6 +1416,7 @@ pub fn show(v: &Value) -> String {
         Value::Float(f) => format!("{f}"),
         Value::Text(t) if t.is_empty() => "(empty)".into(),
         Value::Text(t) => t.clone(),
+        Value::List(l) => l.join(", "),
     }
 }
 
@@ -932,7 +1844,7 @@ impl Page {
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(crate::theme::BORDER))
             .title(Span::styled(" Sections ", Style::new().fg(MUTED).bold()))
-            .title_bottom(Span::styled(" Tab 1-8 ", Style::new().fg(FAINT)))
+            .title_bottom(Span::styled(" Tab 1-9 ", Style::new().fg(FAINT)))
             .padding(Padding::new(1, 1, 1, 0));
         frame.render_widget(Paragraph::new(lines).block(sections), side);
 
@@ -964,7 +1876,12 @@ impl Page {
             };
             rows.push(Line::styled(empty, Style::new().fg(FAINT)));
         }
+        let mut group = "";
+        let mut selected_line = 0;
         for (r, &row) in visible.iter().enumerate() {
+            if r == self.row {
+                selected_line = rows.len();
+            }
             let i = match row {
                 Row::Setting(i) => i,
                 other => {
@@ -974,6 +1891,20 @@ impl Page {
                 }
             };
             let s = &all[i];
+            // A sub-heading where the group changes (not in search results).
+            if self.search.is_empty() && !s.group.is_empty() && s.group != group {
+                if !rows.is_empty() {
+                    rows.push(Line::raw(""));
+                }
+                rows.push(Line::styled(
+                    format!("  {}", s.group.to_uppercase()),
+                    Style::new().fg(MUTED).bold(),
+                ));
+                if r == self.row {
+                    selected_line = rows.len();
+                }
+            }
+            group = s.group;
             let value = (s.get)(config);
             let modified = value != (s.get)(&defaults);
             let selected = r == self.row;
@@ -1020,7 +1951,7 @@ impl Page {
             }
             rows.push(line);
         }
-        let skip = (self.row + 1).saturating_sub(list.height as usize);
+        let skip = (selected_line + 1).saturating_sub(list.height as usize);
         let rows: Vec<Line> = rows.into_iter().skip(skip).collect();
         frame.render_widget(list_block, list_area);
         frame.render_widget(Paragraph::new(rows), list);
@@ -1277,6 +2208,7 @@ mod tests {
         let mut page = Page::default();
 
         // Display › Wrap long lines: Space flips it and asks for a reload.
+        page.key(K::Char('4'), &load(), &path, &Media::default());
         assert_eq!(
             page.key(K::Char(' '), &load(), &path, &Media::default()),
             Outcome::Reload
@@ -1290,9 +2222,11 @@ mod tests {
         page.key(K::Char('h'), &load(), &path, &Media::default());
         assert!(!load().tui.wrap_lines);
 
-        // Section 2, last row: typed text.
-        page.key(K::Char('2'), &load(), &path, &Media::default());
-        page.key(K::Char('G'), &load(), &path, &Media::default());
+        // Stream › First chapter title (fifth row): typed text.
+        page.key(K::Char('8'), &load(), &path, &Media::default());
+        for _ in 0..4 {
+            page.key(K::Char('j'), &load(), &path, &Media::default());
+        }
         page.key(K::Enter, &load(), &path, &Media::default());
         for _ in 0..5 {
             page.key(K::Backspace, &load(), &path, &Media::default());
@@ -1306,8 +2240,11 @@ mod tests {
         );
         assert_eq!(load().stream.first_chapter_title, "Intro");
 
-        // A number refuses garbage and keeps the file.
-        page.key(K::Char('k'), &load(), &path, &Media::default());
+        // YouTube › Default latency (fourth row): a number refuses garbage and keeps the file.
+        page.key(K::Char('9'), &load(), &path, &Media::default());
+        for _ in 0..3 {
+            page.key(K::Char('j'), &load(), &path, &Media::default());
+        }
         page.key(K::Enter, &load(), &path, &Media::default());
         page.key(K::Char('x'), &load(), &path, &Media::default());
         assert_eq!(

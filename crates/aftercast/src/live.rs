@@ -1,6 +1,7 @@
 //! Live session: startup, the controller loop, YouTube polling and README watching
 //! (specs/01-architecture.md, specs/04-session-and-folders.md "Lifecycle").
 
+mod captions;
 mod capture;
 mod chat;
 mod obs;
@@ -67,7 +68,16 @@ pub enum Msg {
     KeysHook(std::result::Result<(), String>),
     /// Read new lines from the shell spool.
     ShellPoll,
+    /// A live caption line (partial or final).
+    Caption(captions::Caption),
+    /// The `:end` end screen has run its time.
+    EndDue,
+    /// A line for the UI's notice (post-processing finished or failed).
+    Notice(String),
 }
+
+/// Where OBS shows the facecam: scene, item, left/top/width/height, canvas size.
+type FacecamPlace = (String, i64, [f32; 4], (f32, f32));
 
 /// Everything a UI needs to drive and display a running session.
 pub struct Handles {
@@ -90,6 +100,24 @@ pub struct Options<'a> {
     /// Start the session at once (headless, scripts). Otherwise the TUI's Home starts it;
     /// until then a new session is a draft that quitting deletes.
     pub begin: bool,
+}
+
+/// What OBS needs to apply `[stream] delay_ms`.
+fn obs_delay(home: &Home, config: &Config) -> ac_obs::Delay {
+    let port = config.overlay.port;
+    ac_obs::Delay {
+        ms: stream_delay_ms(config) as u32,
+        overlays: ["127.0.0.1", "localhost"]
+            .map(|host| format!("http://{host}:{port}/overlay/"))
+            .to_vec(),
+        instant_scenes: vec![config.obs.scenes.privacy.clone()],
+        ledger: home.join("state/obs-delay.json"),
+    }
+}
+
+/// `[stream] delay_ms`, at most the 500 ms OBS's Render Delay filter allows.
+fn stream_delay_ms(config: &Config) -> u64 {
+    config.stream.delay_ms.min(500).into()
 }
 
 /// Video id of the simulated broadcast in a rehearse.
@@ -249,7 +277,10 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     let (feed_tx, page) = match injector {
         Some(inject) => {
             let (tx, rx) = watch::channel(ac_server::Feed::default());
-            (Some(tx), Some(ac_server::Rehearse::new(rx, inject)))
+            (
+                Some(tx),
+                Some(ac_server::Rehearse::new(rx, inject).with_media(session.dir.join("media"))),
+            )
         }
         None => (None, None),
     };
@@ -280,6 +311,10 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
     }
 
     let (obs, obs_task) = connect_obs(&config, opts.mock.is_some(), &msg_tx);
+    // Sent even when 0: it undoes a delay a crashed run left in OBS.
+    if let obs::ObsLink::Real(tx) = &obs {
+        let _ = tx.send(ac_obs::Request::Delay(obs_delay(home, &config)));
+    }
     // The master recording lives with the session: OBS records into its media folder.
     let record_dir = session.dir.join("media");
     if config.obs.record_into_session
@@ -345,9 +380,19 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         .inspect_err(|e| tracing::error!("chat.jsonl: {e}"))
         .ok();
 
-    let overlays = ac_server::Overlays::default();
+    let overlays = ac_server::Overlays::delayed(stream_delay_ms(&config));
+    overlays.set_theme(ac_server::theme(&config.overlay));
     let (state_tx, state_rx) = watch::channel(session_state.clone());
-    let server = serve(home, &config, &overlays, state_rx, &cmd_tx, &clock, page).await;
+    let server = serve(
+        home,
+        (&config, config_path),
+        &overlays,
+        state_rx,
+        &cmd_tx,
+        &clock,
+        page,
+    )
+    .await;
 
     let bot = config.bot.enabled.then(|| ac_bot::Bot::new(&config.bot));
     let capture = capture::Capture::new(home, &config, &session);
@@ -360,6 +405,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             }
         });
     }
+    let captions = captions::spawn(home, &config, clock.clone(), msg_tx.clone());
     let pushed_text = fs::read_to_string(session_render_pushed(&session)).ok();
     let mut controller = Controller {
         home: home.clone(),
@@ -371,6 +417,9 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         begun_flag,
         yt_status: None,
         going_live: false,
+        auto_streamed: false,
+        ending: None,
+        starting_since: None,
         session,
         state: session_state,
         log,
@@ -387,6 +436,13 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         obs_media: Arc::default(),
         obs_levels: ac_core::obs::Levels::default(),
         pending_scenes: VecDeque::new(),
+        hover: ac_core::obs::Hover::default(),
+        facecam_hidden: None,
+        facecam_place: None,
+        facecam_asked: None,
+        facecam_logged: String::new(),
+        facecam_screen: None,
+        screens: None,
         recordings,
         privacy_return: None,
         bot,
@@ -407,6 +463,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         overlays_off: BTreeSet::new(),
         overlay_sent: BTreeMap::new(),
         capture,
+        captions,
         begun: false,
         quit_by: None,
         record_dir: None,
@@ -518,6 +575,7 @@ fn connect_obs(
                 source: "Camera".into(),
                 id: 1,
                 enabled: true,
+                overlay: None,
             }],
             devices: Vec::new(),
         };
@@ -535,6 +593,7 @@ fn connect_obs(
             None,
         );
     }
+    obs::launch(&config.obs);
     let (tx, rx) = mpsc::unbounded_channel();
     let password = crate::secret::resolve(&config.obs.password)
         .inspect_err(|e| tracing::warn!("OBS password: {e}"))
@@ -562,7 +621,7 @@ fn connect_obs(
 /// (port taken) leaves the session running and shows in the pre-flight checklist.
 async fn serve(
     home: &Home,
-    config: &Config,
+    (config, config_path): (&Config, &Path),
     overlays: &ac_server::Overlays,
     state: watch::Receiver<SessionState>,
     commands: &mpsc::UnboundedSender<Command>,
@@ -579,7 +638,7 @@ async fn serve(
         clock: clock.clone(),
         token,
         dir: home.join("overlays"),
-        theme: ac_server::theme(&config.overlay),
+        config: config_path.to_path_buf(),
         rehearse,
     };
     let port = config.overlay.port;
@@ -867,6 +926,12 @@ struct Controller {
     yt_status: Option<ac_youtube::LiveStatus>,
     /// Go Live is running: the broadcast is being moved to live.
     going_live: bool,
+    /// OBS streaming was started by itself (once, so a stream stopped by hand stays stopped).
+    auto_streamed: bool,
+    /// `:end` is showing the end screen until then (`:end cancel` clears it).
+    ending: Option<Timestamp>,
+    /// Since when OBS shows the starting scene.
+    starting_since: Option<Timestamp>,
     session: Session,
     state: SessionState,
     log: EventLog,
@@ -887,6 +952,19 @@ struct Controller {
     obs_levels: ac_core::obs::Levels,
     /// Scene switches sent to OBS whose echo has not arrived yet.
     pending_scenes: VecDeque<String>,
+    /// The facecam hides while the pointer is over it (`[obs.facecam]`).
+    hover: ac_core::obs::Hover,
+    /// The scene and item the facecam was hidden in, to show that very one again.
+    facecam_hidden: Option<(String, i64)>,
+    /// Where OBS says the facecam shows: scene, item, rect, canvas size; and when asked last.
+    facecam_place: Option<FacecamPlace>,
+    facecam_asked: Option<Instant>,
+    /// What the facecam code last logged, so it logs when that changes.
+    facecam_logged: String,
+    /// What the on-air scene's display capture shows: scene, `monitor_id`, `monitor` index.
+    facecam_screen: Option<(String, Option<String>, Option<usize>)>,
+    /// The screens, listed again every few seconds (monitors come and go).
+    screens: Option<(Instant, Vec<ac_capture::pointer::Screen>)>,
     recordings: Recordings,
     /// Scene to restore when privacy ends.
     privacy_return: Option<String>,
@@ -918,6 +996,8 @@ struct Controller {
     /// Last message sent per stateful overlay.
     overlay_sent: BTreeMap<&'static str, ac_server::OverlayMsg>,
     capture: capture::Capture,
+    /// The live captions helper, while `[captions] enabled`.
+    captions: Option<captions::Running>,
     /// The session was started from Home (or at once, headless).
     begun: bool,
     /// What starts when the session does: in a rehearse, the broadcast poll and the demo
@@ -1000,6 +1080,16 @@ impl Controller {
             return;
         }
         self.begin().await;
+        // Viewers arrive on the starting screen; Enter in the TUI moves on to the main scene.
+        let starting = self.config.obs.scenes.starting.clone();
+        if self.config.stream.starting_screen
+            && self
+                .obs_scenes
+                .as_ref()
+                .is_some_and(|s| s.contains(&starting))
+        {
+            self.switch_scene(starting);
+        }
         let recording = matches!(
             self.state.obs_record,
             Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
@@ -1042,6 +1132,26 @@ impl Controller {
         if let Some(note) = note {
             self.notice = Some(note);
         }
+        self.auto_stream();
+    }
+
+    /// While the broadcast waits for Go Live and OBS is there, OBS starts streaming: YouTube
+    /// receives the video before Go Live, which then takes the broadcast live at once.
+    fn auto_stream(&mut self) {
+        if !self.config.obs.auto_stream
+            || self.auto_streamed
+            || self.rehearse
+            || self.obs_scenes.is_none()
+            || !self.go_live_armed()
+        {
+            return;
+        }
+        self.auto_streamed = true;
+        if self.state.obs_stream != Some(OutputState::Started) {
+            self.stream(true);
+            self.notice =
+                Some("OBS streaming started (the broadcast goes live with Go Live)".into());
+        }
     }
 
     /// Runs until quit; returns the folder to delete when a new session was never started.
@@ -1051,6 +1161,7 @@ impl Controller {
         mut msgs: mpsc::UnboundedReceiver<Msg>,
     ) -> Option<PathBuf> {
         let mut flush = interval(FLUSH_EVERY);
+        let mut pointer = interval(Duration::from_millis(100));
         let mut render_at: Option<Instant> = None;
         let mut refresh_at: Option<Instant> = None;
         while !self.done {
@@ -1099,6 +1210,9 @@ impl Controller {
                     Msg::Key(raw) => self.on_key(raw),
                     Msg::KeysHook(result) => self.keys_hook(result),
                     Msg::ShellPoll => self.shell_poll(),
+                    Msg::Caption(c) => self.on_caption(c),
+                    Msg::EndDue => self.end_due(),
+                    Msg::Notice(text) => self.notice = Some(text),
                 },
                 () = quit_due => self.done = true,
                 () = render_due => {
@@ -1110,6 +1224,7 @@ impl Controller {
                     self.refresh_overlays();
                     self.notice = Some("overlays reloaded in OBS".into());
                 }
+                _ = pointer.tick() => self.pointer_tick(),
                 _ = flush.tick() => {
                     self.flush();
                     self.write_keys(false);
@@ -1118,6 +1233,7 @@ impl Controller {
             }
             self.publish();
         }
+        self.facecam_release();
         self.write_keys(true);
         self.flush();
         self.discard.then(|| self.session.dir.clone())
@@ -1125,6 +1241,7 @@ impl Controller {
 
     async fn command(&mut self, cmd: Command) {
         self.notice = None;
+        self.end_due();
         match cmd {
             Command::Checkpoint {
                 title,
@@ -1186,6 +1303,7 @@ impl Controller {
             }
             Command::Mute { input, on } => self.mute(&input, on),
             Command::Volume { input, db } => self.volume(&input, db),
+            Command::AddOverlay { scene, overlay } => self.add_overlay(scene, overlay),
             Command::Source {
                 source,
                 scene,
@@ -1193,6 +1311,8 @@ impl Controller {
             } => self.source_visible(&source, scene.as_deref(), visible),
             Command::Record { action } => self.record(action),
             Command::Stream { on } => self.stream(on),
+            Command::End { screen_s } => self.end_stream(screen_s),
+            Command::CancelEnd => self.cancel_end(),
             Command::Meters { on } => self.meters(on),
             Command::Quest { title } => self.emit_render(
                 "tui",
@@ -1208,6 +1328,7 @@ impl Controller {
             }
             Command::Sync => self.push(PushTrigger::Manual, false).await,
             Command::Finalize => self.finalize().await,
+            Command::PostProcess => self.post_process(),
             Command::Reload => self.reload(),
             // Quitting a draft that never started keeps nothing: a recording in it is
             // stopped first (its file is deleted with the draft once OBS lets go of it).
@@ -1403,6 +1524,35 @@ impl Controller {
         }
     }
 
+    /// `p` on the end screen: the post-stream pipeline on this session, in the background.
+    fn post_process(&mut self) {
+        let (home, path, dir) = (
+            self.home.clone(),
+            self.config_path.clone(),
+            self.session.dir.clone(),
+        );
+        let tx = self.msg_tx.clone();
+        self.notice = Some("post-processing: running (this takes a while)".into());
+        tokio::task::spawn_blocking(move || {
+            let run = || -> std::result::Result<String, String> {
+                let config = Config::load(&path).map_err(|e| e.to_string())?;
+                let mut ctx = ac_post::Ctx::open(home, config, &dir)?;
+                let report = ac_post::run(&mut ctx, &ac_post::Options::default())?;
+                let ran = report
+                    .iter()
+                    .filter(|(_, o)| matches!(o, ac_post::Outcome::Ran))
+                    .count();
+                Ok(format!(
+                    "post-processing done ({ran} stages ran): {}",
+                    dir.join("derived").join("index.md").display()
+                ))
+            };
+            let _ = tx.send(Msg::Notice(
+                run().unwrap_or_else(|e| format!("post-processing failed: {e}")),
+            ));
+        });
+    }
+
     async fn finalize(&mut self) {
         if self.config.youtube.push_on_end {
             self.push(PushTrigger::End, true).await;
@@ -1422,8 +1572,24 @@ impl Controller {
         match Config::load(&self.config_path) {
             Ok(config) => {
                 self.renderer = Renderer::new(&self.home.path(&config.paths.templates));
+                let delay = stream_delay_ms(&self.config);
+                let order = self.config.overlay.order() != config.overlay.order();
                 self.config = Arc::new(config);
+                if order {
+                    self.stack_overlays();
+                }
                 self.notice = Some("config and templates reloaded".into());
+                self.overlays
+                    .set_theme(ac_server::theme(&self.config.overlay));
+                self.captions_reload();
+                let ms = stream_delay_ms(&self.config);
+                if ms != delay {
+                    self.overlays.set_delay(ms);
+                    if let obs::ObsLink::Real(tx) = &self.obs {
+                        let _ =
+                            tx.send(ac_obs::Request::Delay(obs_delay(&self.home, &self.config)));
+                    }
+                }
             }
             Err(e) => self.notice = Some(format!("reload failed, keeping old config: {e}")),
         }
@@ -1629,7 +1795,7 @@ impl Controller {
             if streaming {
                 String::new()
             } else {
-                "may start early; Go Live starts it too".into()
+                "starts by itself; Go Live starts it too".into()
             },
         ));
         let output = |active: bool, required: bool| match (active, armed) {
@@ -1820,6 +1986,9 @@ impl Controller {
                 draft: rendered.filter(|r| Some(r) != self.pushed_text.as_ref()),
                 scene: self.state.scene.clone(),
                 chat: self.chat.clone(),
+                media: self.obs_media.clone(),
+                brb: self.state.brb,
+                privacy: self.state.privacy,
             });
         }
         let measuring = self.latency_run.is_some();

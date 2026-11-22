@@ -22,15 +22,103 @@ pub enum ObsLink {
     },
 }
 
+/// `[obs] launch`: starts OBS when its WebSocket is on this computer and it is not running.
+/// Never in safe mode (OBS asks after a crash and waits), and detached: it keeps running
+/// when aftercast exits, and Ctrl+C in aftercast's terminal does not reach it. The
+/// connection retries on its own until OBS is up.
+pub(super) fn launch(config: &ac_core::config::Obs) {
+    if !config.launch || !is_local(&config.url) || running() {
+        return;
+    }
+    let Some(exe) = exe(&config.path) else {
+        tracing::warn!("OBS is not running and was not found; set [obs] path to obs64.exe");
+        return;
+    };
+    let mut cmd = std::process::Command::new(&exe);
+    // OBS finds its own files from the folder it starts in.
+    if let Some(dir) = exe.parent().filter(|d| !d.as_os_str().is_empty()) {
+        cmd.current_dir(dir);
+    }
+    cmd.arg("--disable-shutdown-check")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    }
+    match cmd.spawn() {
+        Ok(_) => tracing::info!("started OBS: {}", exe.display()),
+        Err(e) => tracing::warn!("starting OBS ({}): {e}", exe.display()),
+    }
+}
+
+/// The WebSocket is on this computer, so OBS would be too.
+fn is_local(url: &str) -> bool {
+    let host = url.split("://").nth(1).unwrap_or(url);
+    ["127.0.0.1", "localhost", "[::1]"].iter().any(|h| {
+        host.strip_prefix(h)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '/']))
+    })
+}
+
+fn running() -> bool {
+    #[cfg(windows)]
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq obs64.exe", "/NH"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("obs64.exe"));
+    #[cfg(not(windows))]
+    let out = std::process::Command::new("pgrep")
+        .args(["-x", "obs"])
+        .status()
+        .map(|s| s.success());
+    // Cannot tell: better not to start a second OBS (it would ask about the first).
+    out.unwrap_or(true)
+}
+
+fn exe(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !path.as_os_str().is_empty() {
+        return Some(path.to_path_buf());
+    }
+    #[cfg(windows)]
+    {
+        ["ProgramFiles", "ProgramW6432"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(|dir| std::path::Path::new(&dir).join(r"obs-studio\bin\64bit\obs64.exe"))
+            .find(|p| p.is_file())
+    }
+    #[cfg(not(windows))]
+    Some("obs".into())
+}
+
+/// The URLs our overlay pages have in OBS Browser sources.
+fn overlay_prefixes(port: u16) -> Vec<String> {
+    ["127.0.0.1", "localhost"]
+        .map(|host| format!("http://{host}:{port}/overlay/"))
+        .to_vec()
+}
+
 impl Controller {
     /// Reloads (without cache) every OBS browser source showing one of our overlays.
     pub(super) fn refresh_overlays(&self) {
         if let (ObsLink::Real(tx), Ok(addr)) = (&self.obs, &self.server) {
-            let port = addr.port();
-            let prefixes = ["127.0.0.1", "localhost"]
-                .map(|host| format!("http://{host}:{port}/overlay/"))
-                .to_vec();
-            let _ = tx.send(Request::RefreshBrowsers(prefixes));
+            let _ = tx.send(Request::RefreshBrowsers(overlay_prefixes(addr.port())));
+        }
+    }
+
+    /// Stacks the overlay sources in OBS as `[overlay] order` says.
+    pub(super) fn stack_overlays(&self) {
+        if let (ObsLink::Real(tx), Ok(addr)) = (&self.obs, &self.server) {
+            let order = self.config.overlay.order().into_iter().map(String::from);
+            let _ = tx.send(Request::OverlayOrder {
+                prefixes: overlay_prefixes(addr.port()),
+                order: order.collect(),
+            });
         }
     }
 
@@ -55,9 +143,10 @@ impl Controller {
                 }
             }
             Update::Scene(to) => {
-                if self.pending_scenes.front() == Some(&to) {
-                    // Our own switch: BRB/privacy events were already emitted.
-                    self.pending_scenes.pop_front();
+                // Our own switch: BRB/privacy events were already emitted. Switches before it
+                // never came (with a stream delay, privacy on cancels a waiting switch).
+                if let Some(i) = self.pending_scenes.iter().position(|s| *s == to) {
+                    self.pending_scenes.drain(..=i);
                     self.scene_changed(to, false);
                 } else {
                     self.scene_changed(to, true);
@@ -92,6 +181,11 @@ impl Controller {
                 {
                     item.enabled = enabled;
                     let source = item.source.clone();
+                    // The pointer flips the facecam all the time; that is not an event.
+                    let cam = &self.config.obs.facecam;
+                    if cam.enabled && source == cam.source {
+                        return;
+                    }
                     self.emit(
                         "obs",
                         EventKind::ObsSource {
@@ -102,6 +196,13 @@ impl Controller {
                     );
                 }
             }
+            Update::Place {
+                scene,
+                id,
+                rect,
+                canvas,
+            } => self.facecam_place = Some((scene, id, rect, canvas)),
+            Update::Screen { scene, id, index } => self.facecam_screen = Some((scene, id, index)),
             Update::RecordDirectory(dir) => self.record_dir = Some(dir),
             Update::Levels(levels) => {
                 if let Ok(mut map) = self.obs_levels.lock() {
@@ -129,7 +230,7 @@ impl Controller {
         self.service_state("obs", ServiceStatus::Ok);
         self.obs_scenes = Some(snap.scenes);
         self.obs_media = Arc::new(snap.media);
-        let now = self.clock.now_ts();
+        let now = self.output_now();
         // Overlay pages OBS loaded while aftercast was down show an error and never retry.
         self.refresh_overlays();
         // The rehearse page shows OBS through its Virtual Camera.
@@ -142,6 +243,7 @@ impl Controller {
         if let Some(scene) = snap.scene {
             self.scene_changed(scene, true);
         }
+        self.auto_stream();
 
         let streaming = matches!(
             self.state.obs_stream,
@@ -216,6 +318,9 @@ impl Controller {
                 to: to.clone(),
             },
         );
+        // The starting overlay counts up from when the starting scene came on.
+        self.starting_since = (to == self.config.obs.scenes.starting)
+            .then(|| self.starting_since.unwrap_or_else(|| self.clock.now_ts()));
         if !infer {
             return;
         }
@@ -246,7 +351,7 @@ impl Controller {
         match state {
             OutputState::Started => {
                 if self.session.meta.anchors.obs_stream_start.is_none() {
-                    self.session.meta.anchors.obs_stream_start = Some(self.clock.now_ts());
+                    self.session.meta.anchors.obs_stream_start = Some(self.output_now());
                     self.save_session();
                 }
                 self.stream_restarted();
@@ -286,8 +391,19 @@ impl Controller {
         self.notice = Some("OBS is streaming again; session is live".into());
     }
 
+    /// Now, as far as OBS's outputs are concerned: with `[stream] delay_ms` the recording
+    /// and stream carry what happened that much earlier, so their anchors move back by it
+    /// and post lines events up with the picture.
+    fn output_now(&self) -> ac_core::time::Timestamp {
+        let delay_ms = match self.obs {
+            ObsLink::Real(_) => super::stream_delay_ms(&self.config),
+            ObsLink::Fake { .. } => 0,
+        };
+        self.clock.now_ts().add_secs(-(delay_ms as f64) / 1000.0)
+    }
+
     fn record_changed(&mut self, state: OutputState, path: Option<String>) {
-        let now = self.clock.now_ts();
+        let now = self.output_now();
         let r = &mut self.recordings;
         match state {
             OutputState::Started => {
@@ -354,6 +470,78 @@ impl Controller {
             self.emit(by_src(by), EventKind::PrivacyEnd {});
             self.switch_scene(back);
         }
+    }
+
+    /// `:end`: the end screen (the `ending` scene) for `screen_s` seconds, then
+    /// [`Self::end_now`]. With 0 seconds, or no such scene in OBS, it ends at once.
+    pub(super) fn end_stream(&mut self, screen_s: u32) {
+        if self.obs_scenes.is_none() {
+            self.notice = Some("OBS is not connected".into());
+            return;
+        }
+        if self.ending.is_some() {
+            self.notice = Some("already ending; :end cancel stays live".into());
+            return;
+        }
+        let scene = self.config.obs.scenes.ending.clone();
+        let has_scene = self.obs_scenes.as_ref().is_some_and(|s| s.contains(&scene));
+        if screen_s == 0 || !has_scene {
+            self.end_now();
+            if screen_s > 0 {
+                self.notice = Some(format!(
+                    "stream ended without an end screen: OBS has no scene {scene:?}"
+                ));
+            }
+            return;
+        }
+        self.switch_scene(scene);
+        // On the session clock (scripts move it), checked when the timer fires and before
+        // every command.
+        self.ending = Some(self.clock.now_ts().add_secs(screen_s.into()));
+        let tx = self.msg_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(screen_s.into())).await;
+            let _ = tx.send(Msg::EndDue);
+        });
+        self.notice = Some(format!(
+            "end screen for {screen_s} s, then the stream ends (:end cancel stays live)"
+        ));
+    }
+
+    /// Ends the stream if the end screen has run its time.
+    pub(super) fn end_due(&mut self) {
+        if self.ending.is_some_and(|at| self.clock.now_ts() >= at) {
+            self.end_now();
+        }
+    }
+
+    /// `:end cancel`: back to the main scene, still live.
+    pub(super) fn cancel_end(&mut self) {
+        if self.ending.take().is_none() {
+            self.notice = Some("not ending".into());
+            return;
+        }
+        self.switch_scene(self.config.obs.scenes.main.clone());
+        self.notice = Some("end cancelled: still live".into());
+    }
+
+    /// Stops whatever OBS has running: streaming, recording, the virtual camera.
+    fn end_now(&mut self) {
+        self.ending = None;
+        if matches!(
+            self.state.obs_stream,
+            Some(OutputState::Started | OutputState::Reconnecting)
+        ) {
+            self.obs_request(Request::Stream(false));
+        }
+        if matches!(
+            self.state.obs_record,
+            Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
+        ) {
+            self.obs_request(Request::Record(ac_core::command::OutputAction::Stop));
+        }
+        self.obs_request(Request::StopVirtualCam);
+        self.notice = Some("stream ended: OBS stopped streaming, recording and the virtual camera; :finalize when ready".into());
     }
 
     /// Asks OBS to switch; the resulting `obs.scene` event comes from OBS's echo.
@@ -527,6 +715,157 @@ impl Controller {
         }
     }
 
+    /// Every 100 ms: hides the facecam while the mouse pointer is over it, shows it again a
+    /// moment after the pointer left (`[obs.facecam]`).
+    pub(super) fn pointer_tick(&mut self) {
+        let cam = &self.config.obs.facecam;
+        if !cam.enabled || self.obs_scenes.is_none() {
+            // Switched off meanwhile: the camera must not stay hidden.
+            if self.facecam_hidden.is_some() {
+                self.facecam_release();
+            }
+            return;
+        }
+        let Some((px, py)) = ac_capture::pointer::pointer() else {
+            return;
+        };
+        if self
+            .screens
+            .as_ref()
+            .is_none_or(|(t, _)| t.elapsed() >= std::time::Duration::from_secs(3))
+        {
+            self.screens = Some((tokio::time::Instant::now(), ac_capture::pointer::screens()));
+        }
+        let scene = self.state.scene.clone().unwrap_or_default();
+        let item = self.obs_media.item(&scene, &cam.source).cloned();
+        // The camera's place comes from OBS, scene by scene: asked again each second (and at
+        // once in a new scene), since it can be moved or resized any time.
+        let mut rect = cam.rect();
+        let mut canvas = (1920.0, 1080.0);
+        if cam.auto
+            && let Some(item) = &item
+        {
+            let known = self
+                .facecam_place
+                .as_ref()
+                .filter(|p| p.0 == item.scene && p.1 == item.id);
+            if let Some(p) = known {
+                (rect, canvas) = (p.2, p.3);
+            }
+            let unknown = known.is_none();
+            let stale = self
+                .facecam_asked
+                .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+            if stale || unknown {
+                self.facecam_asked = Some(tokio::time::Instant::now());
+                self.obs_request(Request::Place {
+                    scene: item.scene.clone(),
+                    id: item.id,
+                });
+                if self.config.obs.facecam.monitor == 0 {
+                    self.obs_request(Request::Screen {
+                        scene: item.scene.clone(),
+                    });
+                }
+            }
+        }
+        // The screen OBS captures in this scene (asked with the camera's place).
+        let on_air = self
+            .facecam_screen
+            .as_ref()
+            .filter(|s| s.0 == scene)
+            .map_or((None, None), |s| (s.1.as_deref(), s.2));
+        let cam = &self.config.obs.facecam;
+        let screens = self.screens.as_ref().map_or(&[][..], |s| &s.1[..]);
+        let Some(screen) = ac_capture::pointer::choose(screens, cam.monitor, on_air.0, on_air.1)
+        else {
+            return;
+        };
+        let (fx, fy) = screen.fraction(px, py);
+        let over = cam.over(rect, fx * canvas.0, fy * canvas.1);
+        let seen = format!(
+            "scene {scene:?} source found {} auto {} screen {} (OBS capture: id {:?}, index {:?}) of {} rect {rect:?} canvas {canvas:?}",
+            item.is_some(),
+            cam.auto,
+            screen.name,
+            on_air.0,
+            on_air.1,
+            screens.len(),
+        );
+        if seen != self.facecam_logged {
+            tracing::info!("facecam: {seen}");
+            self.facecam_logged = seen;
+        }
+        let back = std::time::Duration::from_millis(cam.return_ms.into());
+        match self.hover.step(over, std::time::Instant::now(), back) {
+            Some(true) => {
+                tracing::info!(
+                    "facecam: pointer over it at {fx:.2},{fy:.2} of {}",
+                    screen.name
+                );
+                // A camera the owner already hid stays theirs.
+                if let Some(item) = item.filter(|i| i.enabled) {
+                    self.facecam_hidden = Some((item.scene.clone(), item.id));
+                    self.obs_request(Request::ItemEnabled {
+                        scene: item.scene,
+                        id: item.id,
+                        enabled: false,
+                    });
+                }
+            }
+            Some(false) => self.facecam_release(),
+            None => {}
+        }
+    }
+
+    /// The editor's "add to scene": the overlay's page as a Browser source the size of the
+    /// canvas. When some scene already has one for this overlay its input is shared.
+    pub(super) fn add_overlay(&mut self, scene: String, overlay: String) {
+        if self.obs_scenes.is_none() {
+            self.notice = Some("OBS is not connected".into());
+            return;
+        }
+        let Ok(addr) = &self.server else {
+            self.notice = Some("the overlay server is not running".into());
+            return;
+        };
+        if self
+            .obs_media
+            .items
+            .iter()
+            .any(|i| i.scene == scene && i.overlay.as_deref() == Some(&overlay))
+        {
+            self.notice = Some(format!("{scene:?} already has the {overlay} overlay"));
+            return;
+        }
+        let shared = self
+            .obs_media
+            .items
+            .iter()
+            .find(|i| i.overlay.as_deref() == Some(&overlay))
+            .map(|i| i.source.clone());
+        self.notice = Some(format!("{overlay} overlay added to {scene}"));
+        self.obs_request(Request::AddBrowser {
+            scene,
+            existing: shared.is_some(),
+            source: shared.unwrap_or_else(|| format!("aftercast {overlay}")),
+            url: format!("http://{addr}/overlay/{overlay}"),
+            // The alert's sound reaches the stream only through OBS's mixer.
+            audio: overlay == "alert",
+        });
+    }
+
+    /// Shows the facecam again if the pointer hid it.
+    pub(super) fn facecam_release(&mut self) {
+        if let Some((scene, id)) = self.facecam_hidden.take() {
+            self.obs_request(Request::ItemEnabled {
+                scene,
+                id,
+                enabled: true,
+            });
+        }
+    }
+
     /// `:show` / `:hide`: a source in `scene` (default: the program scene).
     pub(super) fn source_visible(
         &mut self,
@@ -574,5 +913,27 @@ impl Controller {
             tracing::error!("saving recordings.json: {e}");
         }
         self.save_session();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn launches_only_for_obs_on_this_computer() {
+        for url in [
+            "ws://127.0.0.1:4455",
+            "ws://localhost:4455",
+            "ws://[::1]:4455",
+            "ws://localhost",
+        ] {
+            assert!(super::is_local(url), "{url}");
+        }
+        for url in [
+            "ws://192.168.1.20:4455",
+            "ws://localhost.example.com:4455",
+            "ws://127.0.0.10:4455",
+        ] {
+            assert!(!super::is_local(url), "{url}");
+        }
     }
 }

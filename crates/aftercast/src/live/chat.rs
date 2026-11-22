@@ -343,6 +343,8 @@ impl Controller {
             "" => "(no message)".to_owned(),
             t => t.chars().take(QUESTION_MAX).collect(),
         };
+        let (support_label, support_member) =
+            (support.label.clone(), support.kind == ChatKind::Membership);
         let what = match support.kind {
             ChatKind::Membership => "membership".to_owned(),
             _ => format!("{} Super Chat", support.label),
@@ -357,10 +359,65 @@ impl Controller {
                 support: Some(support),
             },
         );
+        // The alert plays at once; the inbox keeps the message for later.
+        if !self.overlays_off.contains("alert") {
+            self.overlays.send(OverlayMsg {
+                overlay: "alert".into(),
+                action: Action::Update,
+                data: json!({ "author": msg.author_name, "amount": support_label,
+                              "text": msg.text.trim().chars().take(80).collect::<String>(),
+                              "member": support_member }),
+            });
+        }
+        self.notify_support(msg, &what, support_member);
         self.notice = Some(format!(
             "{what} from {}: pinned in the inbox",
             msg.author_name
         ));
+    }
+
+    /// A desktop notification for a supporter: the amount (or "New member") on top, who and what
+    /// they wrote under it, the aftercast mark on the left.
+    fn notify_support(&self, msg: &ChatMessage, what: &str, member: bool) {
+        let cfg = &self.config.notify;
+        // Not for the fixtures a mock run (and the tests) replay: those are not supporters.
+        if !cfg.supporters
+            || std::env::var_os("AFTERCAST_NO_TOAST").is_some()
+            || matches!(self.obs, super::obs::ObsLink::Fake { .. })
+        {
+            return;
+        }
+        // The mark Windows shows is a file: written once into the home's state folder.
+        let logo = self.home.path(std::path::Path::new("state/toast-logo.png"));
+        if !logo.exists() {
+            if let Some(dir) = logo.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(
+                &logo,
+                include_bytes!("../../../../assets/logo/logo-128.png"),
+            );
+        }
+        let text: String = msg.text.trim().chars().take(160).collect();
+        let body = if text.is_empty() {
+            msg.author_name.clone()
+        } else {
+            format!("{}: {text}", msg.author_name)
+        };
+        ac_capture::toast::show(
+            ac_capture::toast::Toast {
+                title: if member {
+                    "New member".to_owned()
+                } else {
+                    what.to_owned()
+                },
+                body,
+                note: "aftercast".into(),
+                image: logo.exists().then_some(logo),
+                sound: cfg.sound,
+            },
+            |e| tracing::warn!("desktop notification: {e}"),
+        );
     }
 
     pub(super) fn question(&mut self, qid: String, action: QuestionAction) {
@@ -582,6 +639,13 @@ impl Controller {
         } else {
             hide()
         };
+        let starting = match self.starting_since {
+            Some(since) => (
+                Action::Show,
+                json!({ "since_ms": since.unix_ms(), "avatar": self.config.overlay.avatar }),
+            ),
+            None => hide(),
+        };
         let latency = self.latency_run.as_ref().map_or_else(hide, |run| {
             (Action::Show, json!({ "start_ms": run.start.unix_ms() }))
         });
@@ -596,6 +660,7 @@ impl Controller {
             ("now", now),
             ("question", question),
             ("brb", brb),
+            ("starting", starting),
             ("latency", latency),
             ("chapters", chapters),
         ] {
@@ -613,6 +678,24 @@ impl Controller {
                 self.overlay_sent.insert(name, msg.clone());
                 self.overlays.send(msg);
             }
+        }
+        // The status bar leaves out an overlay whose own source is switched off in the scene
+        // on air: hidden is hidden, docked or not.
+        let hidden: Vec<&str> = self.state.scene.as_deref().map_or_else(Vec::new, |scene| {
+            self.obs_media
+                .sources_in(scene)
+                .filter(|i| !i.enabled)
+                .filter_map(|i| i.overlay.as_deref())
+                .collect()
+        });
+        let msg = OverlayMsg {
+            overlay: "status".into(),
+            action: Action::Show,
+            data: json!({ "hidden": hidden }),
+        };
+        if self.overlay_sent.get("status") != Some(&msg) {
+            self.overlay_sent.insert("status", msg.clone());
+            self.overlays.send(msg);
         }
     }
 

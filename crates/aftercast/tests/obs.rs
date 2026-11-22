@@ -212,6 +212,77 @@ quit
 }
 
 #[test]
+fn end_shows_the_end_screen_then_stops_streaming_and_recording() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The first end is cancelled during its end screen; the second runs its course (seen at
+    // the next command, as the script moves the clock).
+    let (_, events) = run(
+        tmp.path(),
+        "+1s record start\n+1s stream start\n+1s end 30\n+1s end cancel\n+1s end 1\n+3s mark\n+1s quit\n",
+    );
+    let of = |ty: &str| -> Vec<String> {
+        events
+            .iter()
+            .filter(|e| e["type"] == ty)
+            .map(|e| {
+                let d = &e["data"];
+                d["to"].as_str().or(d["state"].as_str()).unwrap().to_owned()
+            })
+            .collect()
+    };
+    let scenes = of("obs.scene");
+    assert_eq!(
+        scenes[scenes.len() - 3..],
+        ["Ending", "Code", "Ending"],
+        "end screen, cancel back to main, end screen again"
+    );
+    assert_eq!(of("obs.stream"), ["started", "stopped"]);
+    assert_eq!(of("obs.record"), ["started", "stopped"]);
+}
+
+#[test]
+fn go_live_opens_on_the_starting_scene_until_moving_on() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("Streams");
+    let init = Command::new(env!("CARGO_BIN_EXE_aftercast"))
+        .arg("--home")
+        .arg(&home)
+        .arg("init")
+        .output();
+    assert!(init.unwrap().status.success());
+    // Go Live is checked first: its own overlay server (any free port, not the 7878 another
+    // aftercast may hold), and no recording demanded before Go Live starts one.
+    let config = home.join("aftercast.toml");
+    let text = fs::read_to_string(&config)
+        .unwrap()
+        .replace("port = 7878", "port = 0")
+        .replace("require_recording = true", "require_recording = false");
+    fs::write(&config, text).unwrap();
+    // Go Live belongs to a draft (Home before the stream).
+    let script = tmp.path().join("golive.txt");
+    fs::write(&script, "+1s golive\n+1s scene Code\n+1s quit\n").unwrap();
+    let out = run_draft(&home, &script);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let only_child = |dir: PathBuf| fs::read_dir(dir).unwrap().next().unwrap().unwrap().path();
+    let dir = only_child(only_child(home.join("sessions")));
+    let events: Vec<Value> = fs::read_to_string(dir.join("events.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let scenes: Vec<&str> = events
+        .iter()
+        .filter(|e| e["type"] == "obs.scene")
+        .map(|e| e["data"]["to"].as_str().unwrap())
+        .collect();
+    assert_eq!(scenes[scenes.len() - 2..], ["Starting Soon", "Code"]);
+}
+
+#[test]
 fn obs_restart_after_stop_makes_the_session_live_again() {
     let tmp = tempfile::tempdir().unwrap();
     let (dir, events) = run(

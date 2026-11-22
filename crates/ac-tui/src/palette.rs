@@ -41,8 +41,8 @@ pub struct Spec {
     pub arg: Arg,
 }
 
-pub const OVERLAYS: [&str; 7] = [
-    "now", "question", "toast", "brb", "latency", "chapters", "keys",
+pub const OVERLAYS: [&str; 8] = [
+    "now", "question", "toast", "brb", "latency", "chapters", "keys", "captions",
 ];
 
 const fn spec(
@@ -133,6 +133,13 @@ pub const SPECS: &[Spec] = &[
         "<start|stop>",
         "start or stop the OBS stream (stop asks first)",
         Arg::Words(&["start", "stop"]),
+    ),
+    spec(
+        "end",
+        &[],
+        "[seconds|now|cancel]",
+        "end screen, then stop streaming, recording and the virtual camera",
+        Arg::Words(&["now", "cancel"]),
     ),
     spec("brb", &["break", "b"], "", "BRB scene on", Arg::None),
     spec(
@@ -474,6 +481,13 @@ pub fn parse_value(s: &settings::Setting, text: &str) -> Result<Value, String> {
             .map(|o| Value::Text((*o).to_owned()))
             .ok_or_else(|| format!("{} takes one of: {}", s.key, options.join(", "))),
         Kind::Text => Ok(Value::Text(text.to_owned())),
+        Kind::List => Ok(Value::List(
+            text.split(',')
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        )),
     }
 }
 
@@ -510,6 +524,7 @@ mod tests {
                 source: "Camera".into(),
                 id: 1,
                 enabled: true,
+                overlay: None,
             }],
             devices: Vec::new(),
         }

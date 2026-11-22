@@ -17,6 +17,8 @@ fn free_port() -> u16 {
 /// script delays are virtual), then quit.
 fn rehearse(bin: &str, home: &std::path::Path, script: &str, wait: Duration) -> String {
     let mut child = Command::new(bin)
+        // The demo chat has Super Chats: no desktop notifications from a test.
+        .env("AFTERCAST_NO_TOAST", "1")
         .arg("--home")
         .arg(home)
         .args(["--no-tui", "rehearse"])
@@ -47,6 +49,7 @@ fn rehearse_is_isolated_from_real_sessions_and_quota() {
     let bin = env!("CARGO_BIN_EXE_aftercast");
     assert!(
         Command::new(bin)
+            .env("AFTERCAST_NO_TOAST", "1")
             .arg("--home")
             .arg(&home)
             .arg("init")
@@ -96,6 +99,7 @@ fn rehearse_is_isolated_from_real_sessions_and_quota() {
 
     // Commands find it as `rehearse` (render reads its suggestions, which do not exist yet).
     let out = Command::new(bin)
+        .env("AFTERCAST_NO_TOAST", "1")
         .arg("--home")
         .arg(&home)
         .args(["render", "rehearse", "--dry-run"])
@@ -157,6 +161,7 @@ fn rehearse_page_serves_the_feed_and_takes_chat() {
     let bin = env!("CARGO_BIN_EXE_aftercast");
     assert!(
         Command::new(bin)
+            .env("AFTERCAST_NO_TOAST", "1")
             .arg("--home")
             .arg(&home)
             .arg("init")
@@ -180,6 +185,7 @@ fn rehearse_page_serves_the_feed_and_takes_chat() {
     fs::write(home.join("rehearse/chat.jsonl"), "").unwrap();
 
     let mut child = Command::new(bin)
+        .env("AFTERCAST_NO_TOAST", "1")
         .arg("--home")
         .arg(&home)
         .args(["--no-tui", "rehearse"])
@@ -198,7 +204,7 @@ fn rehearse_page_serves_the_feed_and_takes_chat() {
     let (status, page) = http(port, "GET", "/rehearse", "");
     assert_eq!(status, 200);
     assert!(
-        page.contains("REHEARSE") && page.contains("--accent"),
+        page.contains(">Rehearse<") && page.contains("--accent"),
         "{page}"
     );
 

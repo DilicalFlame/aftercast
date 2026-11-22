@@ -44,6 +44,23 @@ url = "ws://127.0.0.1:4455"
 password = "keyring:obs"
 require_recording = true        # pre-flight warns loudly if OBS is not recording
 record_into_session = true      # OBS records into <session>/media while aftercast runs
+launch = true                   # start OBS (never in safe mode) when it is not running
+auto_stream = true              # OBS starts streaming by itself while the broadcast waits for Go Live
+path = ""                       # obs64.exe; empty finds it in Program Files
+
+[obs.facecam]
+enabled = false                 # hide the camera while the mouse pointer is over it
+source = "Video Capture Device" # the OBS source to hide
+auto = true                     # read where the camera is from OBS, scene by scene
+monitor = 0                     # screen number (1, 2, ...); 0 is the one the scene's display capture shows
+# Where the camera sits on the 1920x1080 canvas (the screen OBS captures); used until OBS
+# answers, or when auto is off.
+x = 1360
+y = 680
+width = 560
+height = 400
+margin = 40                     # pixels around it that count as over it
+return_ms = 600                 # the camera returns this long after the pointer left
 
 [obs.scenes]
 main = "Code"
@@ -59,6 +76,12 @@ chapter_on_quest_change = true
 chapter_on_brb = true           # BRB gets a "Break" chapter, then returns to the chapter before
 chapter_on_question = false     # add "Q: ..." chapter when a question is shown
 chapter_on_latency = true       # :latency adds a "Latency check" chapter, then returns to the previous one
+end_screen = true               # :end shows the ending scene first, asking how long
+end_screen_s = 30               # seconds it offers (1 to 600); then streaming, recording, virtual camera stop
+starting_screen = true          # Go Live opens on the starting scene; Enter in the TUI goes to the main scene
+# Delay OBS's cameras, screen captures and audio by this much (0 to 500 ms) so live captions
+# land on the words. Overlays and scene switches wait as long; privacy on stays instant.
+delay_ms = 0
 
 [readme]
 seed_template = "session-readme.md"   # copied into each new session as README.md
@@ -107,6 +130,27 @@ bg = "#303030"
 accent = "#FF5555"
 fg = "#FFFFFF"
 muted = "#9A9A9A"
+skin = "nvim"                   # skin pack: nvim, clean, broadcast, glass, minimal, or yours
+avatar = "logo.jpg"             # starting screen picture, a file in <home>/overlays
+# Each overlay lays out in a frame on the 1920x1080 canvas, e.g. [overlay.keys] with
+# x = 1400, y = 120 (top left), width = 480, height = 520, size = 100 (scale, percent),
+# rotate = 0 (degrees), align = "center" ("left", "right"), bg = "" (#RRGGBB; empty is
+# the bg above) and opacity = 100 (percent). Edit them with the mouse on the rehearse page
+# (Edit overlays) or in the TUI settings. order = ["keys", ...] stacks them, frontmost first
+# (OBS restacks their sources to match); unlisted overlays follow in the built-in order.
+# An overlay can wear its own skin (skin = "clean"); your own skins are stylesheets in
+# <home>/overlays/skins/<overlay>/<name>.css and show up in the editor's skins strip.
+
+[notify]
+supporters = true               # a Super Chat or membership pops up a desktop notification
+sound = true                    # with Windows' notification sound
+
+[captions]
+# Live captions on the `captions` overlay (needs `aftercast setup`). Shown and saved to
+# captions.jsonl in the session, except in privacy mode.
+enabled = false
+device = ""                    # microphone name: ffmpeg -list_devices true -f dshow -i dummy
+model = "large-v3-turbo"
 
 [capture]
 keys = true

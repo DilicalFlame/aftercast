@@ -69,6 +69,12 @@ pub enum Command {
         scene: Option<String>,
         visible: Option<bool>,
     },
+    /// Add an overlay to an OBS scene as a Browser source the size of the canvas (the
+    /// editor's right-click menu).
+    AddOverlay {
+        scene: String,
+        overlay: String,
+    },
     /// Start, stop, pause or resume the OBS recording (`:record`).
     Record {
         action: OutputAction,
@@ -77,6 +83,13 @@ pub enum Command {
     Stream {
         on: bool,
     },
+    /// End the stream (`:end`): show the end screen (the `ending` scene) for `screen_s`
+    /// seconds, 0 for none, then stop OBS streaming, recording and the virtual camera.
+    End {
+        screen_s: u32,
+    },
+    /// Back out of an `:end` while its end screen shows (`:end cancel`).
+    CancelEnd,
     /// Start the session prepared on Home: until then nothing lasting or public happens.
     Begin,
     /// Go live: start the session, OBS recording and streaming together, then move the
@@ -121,6 +134,9 @@ pub enum Command {
     Sync,
     /// Final push and session end (`:finalize`).
     Finalize,
+    /// Run the post-stream pipeline on this session now (`p` on the end screen), as
+    /// `aftercast post` does.
+    PostProcess,
     /// Re-read config and templates (`:reload`).
     Reload,
     /// End the session without finalizing.
