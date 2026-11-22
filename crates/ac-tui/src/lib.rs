@@ -391,7 +391,7 @@ impl App {
             view,
             commands,
             mode: Mode::Preflight,
-            focus: Pane::Chapters,
+            focus: Pane::Chat,
             chapters: ListState::default(),
             questions: ListState::default(),
             chat_feed: Feed::default(),
@@ -581,6 +581,7 @@ impl App {
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(8));
             if view.begun && self.starting_at.take().is_some() && self.mode == Mode::Preflight {
                 self.mode = Mode::Normal;
+                self.focus = Pane::Chat;
             }
             if !view.begun && self.mode == Mode::Normal && !starting {
                 self.mode = Mode::Preflight;
@@ -3772,7 +3773,7 @@ mod tests {
         app.last_frame -= Duration::from_secs(1); // one long frame finishes a move
         screen(&mut app, &view);
         assert!(!app.resizing());
-        app.key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE), &view);
+        app.key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE), &view);
         screen(&mut app, &view);
         assert!(app.resizing());
         app.last_frame -= Duration::from_secs(1);
