@@ -224,10 +224,11 @@ body.editing .t-right { justify-content: flex-end; padding-right: 16px; }
 .sep { width: 1px; height: 20px; background: var(--line); }
 .mode { font-size: 13px; color: var(--dim); }
 .top .hint { color: var(--dim); font-size: 12.5px; }
-.saved { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 12.5px;
-  transition: color .2s; }
+.saved { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 120; padding: 7px 12px;
+  border-radius: 8px; background: var(--raised); box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgb(0 0 0 / 50%);
+  color: var(--dim); font-size: 12.5px; pointer-events: none; }
+.saved:empty { display: none; }
 .saved.bad { color: #f08a8e; }
-.saved svg { width: 15px; height: 15px; }
 .btn { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 0;
   background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: inherit; font-size: 13px;
   font-weight: 550; cursor: pointer; transition: background .12s, box-shadow .12s, transform .06s; }
@@ -252,28 +253,24 @@ body:not(.editing) .edit-only, body.editing .view-only { display: none; }
 /* Editor: layers | canvas | style. The page becomes an app: no scrolling, panels full height. */
 .layers, .inspector, .bar { display: none; }
 body.editing { height: 100vh; overflow: hidden; display: grid; grid-template-rows: 56px minmax(0, 1fr); }
-body.editing main { display: grid; grid-template-columns: 248px minmax(0, 1fr) 288px; gap: 0; padding: 0;
+body.editing main { display: grid; grid-template-columns: var(--lw, 248px) minmax(0, 1fr) var(--rw, 288px); gap: 0; padding: 0;
   max-width: none; margin: 0; min-height: 0; }
 body.editing .chat, body.editing .details, body.editing .novideo, body.editing .cam { display: none; }
 body.editing .layers, body.editing .inspector { display: flex; flex-direction: column; min-height: 0;
   background: var(--panel); }
-body.editing .layers { border-right: 1px solid var(--line); }
-body.editing .inspector { border-left: 1px solid var(--line); }
-body.editing main > section { display: flex; flex-direction: column; align-items: center;
+body.editing .layers { grid-column: 1; border-right: 1px solid var(--line); }
+body.editing .inspector { grid-column: 3; border-left: 1px solid var(--line); }
+body.editing main > section { grid-column: 2; display: flex; flex-direction: column; align-items: center;
   justify-content: flex-start; padding: 0; min-width: 0; min-height: 0; background: var(--well); }
 body.editing .player { border-radius: 0; background: #101012; flex: none; }
 /* Handles of a frame at the video's edge stay whole. */
 body.editing .player, body.editing .stage { overflow: visible; }
-/* The viewport holds the player; zoomed, it scrolls (the player is wider than it). */
 .viewport { display: contents; }
-body.editing .viewport { display: block; flex: none; max-width: 100%; }
-body.editing .viewport.zoomed { display: flex; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
-body.editing .viewport.zoomed .player { margin: auto; }
 /* Only the picture and the layers: no player controls, no side panels. */
 body.editing.noseek :is(.ctl, .skipfx, .bigicon, .spd) { display: none; }
-body.editing.focus main { grid-template-columns: minmax(0, 1fr); }
-body.editing.focus :is(.layers, .inspector) { display: none; }
-body.editing.focus .top { grid-template-columns: auto minmax(0, 1fr) auto; }
+body.editing.hideL .layers, body.editing.hideR .inspector { display: none; }
+body.editing.hideL { --lw: 0px; }
+body.editing.hideR { --rw: 0px; }
 body.editing video { overflow: hidden; }
 body.editing .bar { display: flex; }
 
@@ -367,7 +364,6 @@ body.gesture, body.gesture * { cursor: var(--gesture) !important; user-select: n
   overflow-x: auto; scrollbar-width: none; }
 .icon.drop { width: auto; padding: 0 5px 0 7px; gap: 2px; display: inline-flex; align-items: center; }
 .icon.drop svg:last-child:not(:first-child) { width: 10px; height: 10px; opacity: .6; }
-.icon.zoom { width: 50px; font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .bar .div { width: 1px; height: 22px; background: var(--line); margin: 0 6px; flex: none; }
 .bar .group { display: flex; align-items: center; gap: 2px; transition: opacity .15s; }
 .bar.empty .group.sel { opacity: .35; pointer-events: none; }
@@ -580,42 +576,37 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
 <header class="top">
   <div class="t-left">
     <div class="brand"><svg viewBox="0 0 28 20" aria-hidden="true"><rect width="28" height="20" fill="currentColor"/><path d="M11 5v10l8.5-5z" fill="#fff"/></svg>aftercast</div>
-    <span class="sep"></span>
-    <span class="mode">Rehearse</span>
+    <button class="icon edit-only" id="leftToggle" type="button" title="Layers panel" data-icon="panelL" style="margin-left:auto;margin-right:10px"></button>
   </div>
   <div class="t-mid">
     <span class="hint view-only">Simulated YouTube, video from OBS Virtual Camera</span>
     <div class="bar empty" id="bar">
       <div class="group">
-        <button class="icon" id="showVideo" aria-pressed="true" title="OBS video behind the sources" data-icon="video"></button>
-        <button class="icon edit-only" id="shotBtn" aria-pressed="false" title="Show OBS's own picture of this scene behind the sources" data-icon="image"></button>
-        <button class="icon edit-only" id="edSound" aria-pressed="true" title="Play the selected browser source's sound while editing" data-icon="speaker"></button>
+        <button class="icon" id="showVideo" aria-pressed="true" title="OBS video" data-icon="video"></button>
+        <button class="icon edit-only" id="shotBtn" aria-pressed="false" title="Scene picture" data-icon="image"></button>
+        <button class="icon edit-only" id="edSound" aria-pressed="true" title="Source sound" data-icon="speaker"></button>
       </div>
       <span class="div"></span>
       <div class="group">
-        <button class="icon" id="zoomOut" type="button" title="Zoom out" data-icon="minus"></button>
-        <button class="icon zoom" id="zoomBtn" type="button" title="Zoom (Ctrl and the wheel; the middle button drags)">Fit</button>
-        <button class="icon" id="zoomIn" type="button" title="Zoom in" data-icon="plus"></button>
-        <button class="icon" id="rulerBtn" type="button" aria-pressed="false" title="Rulers: drag from one to pull out a guide" data-icon="ruler"></button>
-        <button class="icon" id="seekBtn" type="button" aria-pressed="false" title="Hide the player controls (seek bar, play, volume)" data-icon="seeker"></button>
-        <button class="icon" id="panelsBtn" type="button" aria-pressed="false" title="Hide the side panels" data-icon="panels"></button>
-        <button class="icon drop" id="bgBtn" type="button" title="What is behind the sources when there is no video" data-icon="look" data-drop></button>
+        <button class="icon" id="rulerBtn" type="button" aria-pressed="false" title="Rulers and guides" data-icon="ruler"></button>
+        <button class="icon" id="seekBtn" type="button" aria-pressed="false" title="Player controls" data-icon="seeker"></button>
+        <button class="icon drop" id="bgBtn" type="button" title="Background" data-icon="look" data-drop></button>
       </div>
       <span class="div"></span>
       <div class="group">
-        <button class="icon edit-only" id="gridBtn" aria-pressed="false" title="Grid: sources snap to it" data-icon="grid"></button>
-        <button class="icon" id="snap" aria-pressed="true" title="Snap (hold Alt to skip)" data-icon="magnet"></button>
-        <button class="icon drop" id="snapMenu" type="button" title="What to snap to, and the grid size" data-icon="gear" data-drop></button>
+        <button class="icon edit-only" id="gridBtn" aria-pressed="false" title="Grid" data-icon="grid"></button>
+        <button class="icon" id="snap" aria-pressed="true" title="Snap (Alt skips)" data-icon="magnet"></button>
+        <button class="icon drop" id="snapMenu" type="button" title="Snap options" data-icon="gear" data-drop></button>
       </div>
       <span class="div"></span>
       <div class="group sel">
-        <button class="icon drop" id="alignBtn" type="button" title="Align and spread" data-icon="al-hcenter" data-drop></button>
-        <button class="icon drop" id="arrangeBtn" type="button" title="Fit, fill, center, match, flip, rotate, reset" data-icon="transform" data-drop></button>
-        <button class="icon drop" id="orderBtn" type="button" title="Order: front, forward, backward, back" data-icon="layers" data-drop></button>
-        <button class="icon" id="aspectBtn" type="button" aria-pressed="true" title="Keep the shape when resizing" data-icon="link"></button>
-        <button class="icon" id="lockBtn" type="button" title="Lock or unlock" data-icon="lock"></button>
+        <button class="icon drop" id="alignBtn" type="button" title="Align" data-icon="al-hcenter" data-drop></button>
+        <button class="icon drop" id="arrangeBtn" type="button" title="Arrange" data-icon="transform" data-drop></button>
+        <button class="icon drop" id="orderBtn" type="button" title="Order" data-icon="layers" data-drop></button>
+        <button class="icon" id="aspectBtn" type="button" aria-pressed="true" title="Keep shape" data-icon="link"></button>
+        <button class="icon" id="lockBtn" type="button" title="Lock" data-icon="lock"></button>
         <button class="icon" id="dupBtn" type="button" title="Duplicate" data-icon="copy"></button>
-        <button class="icon" id="delBtn" type="button" title="Remove from the scene" data-icon="trash"></button>
+        <button class="icon" id="delBtn" type="button" title="Remove" data-icon="trash"></button>
       </div>
       <span class="div"></span>
       <div class="group">
@@ -624,19 +615,20 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     </div>
   </div>
   <div class="t-right">
-    <span class="saved edit-only" id="saved"></span>
-    <button class="icon edit-only" id="undo" title="Undo (Ctrl+Z)" disabled data-icon="undo"></button>
-    <button class="icon edit-only" id="redo" title="Redo (Ctrl+Shift+Z)" disabled data-icon="redo"></button>
+    <button class="icon edit-only" id="rightToggle" type="button" title="Style panel" data-icon="panelR"></button>
+    <button class="icon edit-only" id="undo" title="Undo" disabled data-icon="undo"></button>
+    <button class="icon edit-only" id="redo" title="Redo" disabled data-icon="redo"></button>
     <button class="btn" id="edit"><span data-icon="pen"></span><span>Edit scenes</span></button>
   </div>
 </header>
+<span class="saved" id="saved"></span>
 <main>
   <aside class="layers">
     <div class="panel-head tight"><span class="grow">Layers</span>
-      <button class="icon" id="addSrc" type="button" title="Add a source to this scene" data-icon="plus" hidden></button>
-      <button class="icon" id="newFolder" type="button" title="New folder (the selected layers go in it)" data-icon="folder"></button>
-      <button class="icon" id="hideOff" type="button" aria-pressed="false" title="Hide the layers that are off" data-icon="eyeoff"></button>
-      <button class="icon" id="layerFilter" type="button" aria-pressed="false" title="Show only some types of layer" data-icon="filter"></button></div>
+      <button class="icon" id="addSrc" type="button" title="Add source" data-icon="plus" hidden></button>
+      <button class="icon" id="newFolder" type="button" title="New folder" data-icon="folder"></button>
+      <button class="icon" id="hideOff" type="button" aria-pressed="false" title="Hide off layers" data-icon="eyeoff"></button>
+      <button class="icon" id="layerFilter" type="button" aria-pressed="false" title="Filter" data-icon="filter"></button></div>
     <div class="scene"><select id="sceneSel" title="Scene to edit"></select></div>
     <div class="list" id="layerList"></div>
     <div class="panel-foot" id="layerEmpty" hidden>Nothing in this scene</div>
@@ -1204,6 +1196,13 @@ async function poll() {
     $("draft").hidden = !f.draft;
     $("scene").textContent = f.scene ? "scene: " + f.scene : "";
     programScene = f.scene;
+    // Back to normal: OBS returns to the scene it left, and the editor goes there too.
+    if (followProgram && Date.now() > followProgram) followProgram = 0;
+    if (followProgram && programScene && programScene !== scenes[1] && programScene !== scenes[2] && programScene !== scene && obsInfo && obsInfo.scenes.includes(programScene)) {
+      followProgram = 0;
+      $("sceneSel").value = programScene;
+      enterScene(programScene);
+    }
     onObs(f.obs);
     onItems(f.items);
     onSource(f.source);
@@ -1389,6 +1388,8 @@ const ICONS = {
   "al-bottom": '<path d="M3 20h18"/><rect x="6" y="4" width="4" height="12" rx="1"/><rect x="14" y="9" width="4" height="7" rx="1"/>',
   minus: '<path d="M5 12h14"/>',
   ruler: '<path d="M3 17 17 3l4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/>',
+  panelL: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  panelR: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
   panels: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M16 4v16"/>',
   seeker: '<rect x="3" y="14" width="18" height="6" rx="2"/><path d="M6 17h6"/>',
   flipH: '<path d="M12 3v18"/><path d="m8 7-5 5 5 5z"/><path d="m16 7 5 5-5 5z"/>',
@@ -1483,22 +1484,15 @@ const place = (node, f) => {
 // Sizes: the player as large as the space allows, the canvas scaled into it.
 // Editing: the video hangs from the top bar, as wide as the column while the space under
 // it (for skins) keeps at least a third of the height.
-// Zoom: null fits the space, else it is the screen pixels per canvas pixel (the player gets
-// that wide and the viewport around it scrolls).
-let zoomK = null;
 function fitPlayer() {
-  const vp = $("viewport"), sec = vp.parentElement;
-  if (!editing) { player.style.width = vp.style.width = vp.style.height = ""; vp.classList.remove("zoomed"); return; }
-  const fitW = Math.max(240, Math.min(sec.clientWidth, sec.clientHeight * 2 / 3 * 16 / 9));
-  vp.classList.toggle("zoomed", zoomK !== null);
-  if (zoomK === null) { player.style.width = fitW + "px"; vp.style.width = vp.style.height = ""; }
-  else { vp.style.width = fitW + "px"; vp.style.height = fitW * 9 / 16 + "px"; player.style.width = 1920 * zoomK + "px"; }
+  if (!editing) { player.style.width = ""; return; }
+  const sec = $("viewport").parentElement;
+  player.style.width = Math.max(240, Math.min(sec.clientWidth, sec.clientHeight * 2 / 3 * 16 / 9)) + "px";
 }
 function fit() {
   k = $("stage").clientWidth / 1920 || 1;
   $("canvas").style.transform = `scale(${k})`;
   $("canvas").style.setProperty("--k", 1 / k);
-  $("zoomBtn").textContent = zoomK === null ? "Fit" : Math.round(k * 100) + "%";
 }
 new ResizeObserver(fit).observe($("stage"));
 new ResizeObserver(fitPlayer).observe($("viewport").parentElement);
@@ -1837,8 +1831,8 @@ document.addEventListener("pointerdown", (e) => {
 function status(state, text) {
   const el = $("saved");
   el.classList.toggle("bad", state === "bad");
-  el.innerHTML = state === "ok" ? svg("check") + "Saved" : "";
-  if (state !== "ok") el.textContent = text;
+  // Saving is silent; what went wrong, and short notices, show.
+  el.textContent = state === "bad" ? text : "";
 }
 async function post(url, body) {
   status("busy", "Saving…");
@@ -1969,7 +1963,7 @@ function paintHidden(n) {
   rows[n].row.hidden = !h;
   rows[n].row.classList.toggle("off", !!h && off);
   rows[n].eye.innerHTML = svg(open ? "eye" : "eyeoff");
-  rows[n].eye.title = live() ? (open ? "Hide in OBS" : "Show in OBS") : open ? "Hide in preview" : "Show in preview";
+  rows[n].eye.title = open ? "Hide" : "Show";
   if (off && n === selected) select(null);
 }
 function enterScene(name) {
@@ -1987,6 +1981,9 @@ function enterScene(name) {
   select(null);
   paintScene();
   syncVideo();
+  // The picture of the scene just left must not stay: ask for the new one now, not in 4 s.
+  shotImg.hidden = true;
+  watchShot();
 }
 // The virtual scene shows a flat color where the video would be.
 function syncVideo() {
@@ -1999,9 +1996,9 @@ const MODE_ICON = { normal: "play", brb: "coffee", privacy: "eyeoff" };
 const MODE_NAME = { normal: "Normal", brb: "Be right back", privacy: "Privacy" };
 function paintMode() {
   $("modeBtn").innerHTML = svg(MODE_ICON[mode]) + svg("down");
-  $("modeBtn").title = `Mode: ${MODE_NAME[mode]}. What the preview imitates, and the scene it jumps to`;
+  $("modeBtn").title = `Mode: ${MODE_NAME[mode]}`;
 }
-let sessionMode = null;
+let sessionMode = null, followProgram = 0;
 function setMode(m) {
   mode = m;
   store.set("mode", m);
@@ -2009,6 +2006,7 @@ function setMode(m) {
   post("/rehearse/mode", { mode: m });
   if (scene === VIRTUAL) { paintMode(); return paintScene(); }
   // The scene for that mode, else (OBS has none by that name) the virtual scene.
+  followProgram = m === "normal" && live() ? Date.now() + 5000 : 0;
   const want = scenes[MODES.indexOf(m)];
   const have = [...$("sceneSel").options].some((o) => o.value === want);
   $("sceneSel").value = have ? want : VIRTUAL;
@@ -2084,7 +2082,7 @@ function makeRow(n) {
   name.textContent = META[n][0];
   const dock = document.createElement("span");
   dock.className = "dockb";
-  dock.title = "Shown in the status bar";
+  dock.title = "In the status bar";
   dock.innerHTML = svg("bar");
   const eye = document.createElement("button");
   eye.className = "icon eyeb";
@@ -2105,7 +2103,7 @@ function paintLock(n) {
   const on = locked.has(n);
   rows[n].row.classList.toggle("locked", on);
   rows[n].lock.innerHTML = svg(on ? "lock" : "unlock");
-  rows[n].lock.title = on ? "Unlock" : "Lock: it cannot be picked on the canvas";
+  rows[n].lock.title = on ? "Unlock" : "Lock";
   hits[n].style.pointerEvents = on ? "none" : "";
 }
 function setLocked(n, on) {
@@ -3341,7 +3339,7 @@ function folderRow(fd, members) {
   const eye = document.createElement("button");
   eye.className = "icon eyeb";
   eye.innerHTML = svg(off ? "eyeoff" : "eye");
-  eye.title = off ? "Show everything in the folder" : "Hide everything in the folder";
+  eye.title = off ? "Show all" : "Hide all";
   eye.onclick = (e) => { e.stopPropagation(); setFolderShown(members, off); };
   row.classList.toggle("off", off);
   row.append(chev, lead, name, count, eye);
@@ -3383,9 +3381,9 @@ function paintLayers() {
   const entries = layerEntries();
   $("layerList").replaceChildren(...layerNodes());
   $("layerFilter").setAttribute("aria-pressed", hiddenTypes.size > 0);
-  $("layerFilter").title = hiddenTypes.size ? "Some types are hidden: click to change" : "Show only some types of layer";
+  $("layerFilter").title = hiddenTypes.size ? "Filtered" : "Filter";
   $("hideOff").setAttribute("aria-pressed", hideOff);
-  $("hideOff").title = hideOff ? "Showing only the layers that are on: click to show all" : "Hide the layers that are off";
+  $("hideOff").title = hideOff ? "Show off layers" : "Hide off layers";
   $("layerEmpty").hidden = entries.length > 0 || !live();
   $("addSrc").hidden = !live();
 }
@@ -3441,7 +3439,7 @@ function sourceRow(it) {
   const eye = document.createElement("button");
   eye.className = "icon eyeb";
   eye.innerHTML = svg(it.enabled ? "eye" : "eyeoff");
-  eye.title = it.enabled ? "Hide in OBS" : "Show in OBS";
+  eye.title = it.enabled ? "Hide" : "Show";
   eye.onclick = (e) => { e.stopPropagation(); editNow(it, { enabled: !it.enabled }); paintSources(); };
   row.append(lead, name, lock, eye);
   row.onclick = (e) => selectItem(it.id, e.shiftKey || e.ctrlKey || e.metaKey);
@@ -4332,44 +4330,6 @@ function menuOf(btn, list) {
 const onBar = (id, fn) => { $(id).onclick = (e) => { e.stopPropagation(); fn(e); }; };
 const toggleKey = (key, on) => store.set(key, on ? "on" : "off");
 
-// Zoom: the player is made that wide and scrolls inside its viewport. Ctrl and the wheel zoom
-// around the pointer, the middle button drags the picture.
-const ZOOMS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
-function setZoom(z, ax, ay) {
-  const vp = $("viewport"), r = vp.getBoundingClientRect();
-  const px = ax === undefined ? vp.clientWidth / 2 : ax - r.left, py = ay === undefined ? vp.clientHeight / 2 : ay - r.top;
-  const fx = (vp.scrollLeft + px) / player.offsetWidth, fy = (vp.scrollTop + py) / player.offsetHeight;
-  zoomK = z === null ? null : Math.min(4, Math.max(0.1, z));
-  fitPlayer();
-  fit();
-  if (zoomK !== null) {
-    vp.scrollLeft = fx * player.offsetWidth - px;
-    vp.scrollTop = fy * player.offsetHeight - py;
-  }
-  $("zoomBtn").setAttribute("aria-pressed", zoomK !== null);
-}
-const nowK = () => zoomK ?? k;
-onBar("zoomIn", () => setZoom(ZOOMS.find((z) => z > nowK() * 1.01) ?? 4));
-onBar("zoomOut", () => setZoom([...ZOOMS].reverse().find((z) => z < nowK() * 0.99) ?? 0.1));
-onBar("zoomBtn", () => menuOf($("zoomBtn"), [
-  { label: "Fit", on: zoomK === null, fn: () => setZoom(null) },
-  ...[0.25, 0.5, 1, 2].map((z) => ({ label: `${z * 100}%`, on: zoomK === z, fn: () => setZoom(z) })),
-]));
-$("viewport").addEventListener("wheel", (e) => {
-  if (!e.ctrlKey || !editing) return;
-  e.preventDefault();
-  setZoom(nowK() * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY);
-}, { passive: false });
-$("viewport").addEventListener("pointerdown", (e) => {
-  if (e.button !== 1) return;
-  e.preventDefault();
-  const vp = $("viewport"), x0 = e.clientX, y0 = e.clientY, sl = vp.scrollLeft, st = vp.scrollTop;
-  const move = (m) => { vp.scrollLeft = sl - (m.clientX - x0); vp.scrollTop = st - (m.clientY - y0); };
-  const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
-  addEventListener("pointermove", move);
-  addEventListener("pointerup", up);
-});
-
 // Rulers (OBS's pixels, along the top and the left) and the guides pulled out of them.
 let rulerOn = store.get("rulers", "off") === "on";
 const GUIDES = JSON.parse(store.get("guides", "{}"));
@@ -4451,13 +4411,17 @@ paintRulers();
 
 // The player's controls and the side panels can be put away, to see only the picture.
 function paintView() {
-  document.body.classList.toggle("noseek", store.get("noseek", "off") === "on");
-  document.body.classList.toggle("focus", store.get("focus", "off") === "on");
-  $("seekBtn").setAttribute("aria-pressed", store.get("noseek", "off") === "on");
-  $("panelsBtn").setAttribute("aria-pressed", store.get("focus", "off") === "on");
+  const on = (key) => store.get(key, "off") === "on";
+  document.body.classList.toggle("noseek", on("noseek"));
+  document.body.classList.toggle("hideL", on("hideL"));
+  document.body.classList.toggle("hideR", on("hideR"));
+  $("seekBtn").setAttribute("aria-pressed", on("noseek"));
+  $("leftToggle").setAttribute("aria-pressed", !on("hideL"));
+  $("rightToggle").setAttribute("aria-pressed", !on("hideR"));
 }
-onBar("seekBtn", () => { toggleKey("noseek", store.get("noseek", "off") !== "on"); paintView(); });
-onBar("panelsBtn", () => { toggleKey("focus", store.get("focus", "off") !== "on"); paintView(); });
+for (const [id, key] of [["seekBtn", "noseek"], ["leftToggle", "hideL"], ["rightToggle", "hideR"]]) {
+  $(id).onclick = () => { toggleKey(key, store.get(key, "off") !== "on"); paintView(); };
+}
 paintView();
 
 // What is behind the sources where there is no video.

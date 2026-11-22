@@ -171,10 +171,10 @@ selected layers): drag a layer under a folder's name or between its members to p
 left past the last member to take it out; a folder opens and closes, renames (double click),
 hides everything it holds with its eye, and is kept per scene in `<home>\overlays\layers.json`
 (OBS is not touched). The crossed eye hides the layers that are off, to focus. The bar over the
-video: OBS video, OBS's picture of the scene and sound; zoom (Fit, 25% to 200%, Ctrl and the
-wheel, the middle button drags), rulers (drag from one to pull out a guide, back onto it to
-remove it), hiding the player controls and the side panels, and what shows behind the sources
-when there is no video; the grid, snapping and its menu (canvas edges and center, other layers,
+video: OBS video, OBS's picture of the scene (OBS's camera output only shows the scene that is on
+air; this takes pictures of the scene being edited) and sound; rulers (drag from one to pull out a
+guide, back onto it to remove it), hiding the player controls, and what shows behind the sources
+when there is no video (the corners of the top bar hide the layers and style panels); the grid, snapping and its menu (canvas edges and center, other layers,
 the grid, guides; the grid size); for the selection, align and spread, fit, fill, stretch,
 center, match size, flip, rotate 90 degrees, reset, order, keep the shape, lock, duplicate and
 remove; and the mode menu.
