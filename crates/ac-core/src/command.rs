@@ -75,6 +75,17 @@ pub enum Command {
         scene: String,
         overlay: String,
     },
+    /// The editor looks at a scene's sources: they are listed again about once a second while
+    /// this is repeated every few seconds.
+    WatchScene {
+        scene: String,
+    },
+    /// Changes one source of a scene in OBS (the editor).
+    EditItem {
+        scene: String,
+        id: i64,
+        edit: crate::obs::ItemEdit,
+    },
     /// Start, stop, pause or resume the OBS recording (`:record`).
     Record {
         action: OutputAction,

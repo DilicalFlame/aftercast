@@ -195,6 +195,8 @@ pub async fn bind(
         .route("/rehearse/pack", post(rehearse::pack))
         .route("/rehearse/options", post(rehearse::options))
         .route("/rehearse/source", post(rehearse::source))
+        .route("/rehearse/obs/watch", post(rehearse::watch))
+        .route("/rehearse/obs/item", post(rehearse::item))
         .route("/rehearse/add-source", post(rehearse::add_source))
         .route("/rehearse/mode", post(rehearse::mode))
         .with_state(Arc::new(shared));
@@ -739,6 +741,78 @@ mod tests {
             rx.recv().await,
             Some(Command::Mark { label: None, .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn the_editor_edits_obs_sources_through_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (feed_tx, feed_rx) = watch::channel(Feed::default());
+        let shared = Shared {
+            overlays: Overlays::default(),
+            state: watch::channel(SessionState::default()).1,
+            commands: tx,
+            clock: Arc::new(Clock::new()),
+            token: "secret".into(),
+            dir: dir.path().to_path_buf(),
+            config: dir.path().join("aftercast.toml"),
+            rehearse: Some(Rehearse::new(feed_rx, mpsc::unbounded_channel().0)),
+        };
+        let (addr, server) = bind(0, shared).await.unwrap();
+        tokio::spawn(server);
+        let http = reqwest::Client::new();
+        let base = format!("http://{addr}/rehearse");
+        let watch_it = http
+            .post(format!("{base}/obs/watch"))
+            .json(&json!({ "scene": "Code" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(watch_it.status(), 204);
+        assert_eq!(
+            rx.recv().await,
+            Some(Command::WatchScene {
+                scene: "Code".into()
+            })
+        );
+        let edit = http
+            .post(format!("{base}/obs/item"))
+            .json(&json!({ "scene": "Code", "id": 7, "x": 12.5, "locked": true, "crop": [1, 2, 3, 4] }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(edit.status(), 204);
+        let Some(Command::EditItem { scene, id, edit }) = rx.recv().await else {
+            panic!("an EditItem command");
+        };
+        assert_eq!((scene.as_str(), id), ("Code", 7));
+        assert_eq!(
+            (edit.x, edit.y, edit.locked, edit.crop),
+            (Some(12.5), None, Some(true), Some([1, 2, 3, 4]))
+        );
+        // The sources OBS listed come back in the feed.
+        feed_tx.send_replace(Feed {
+            items: Arc::new(ac_core::obs::SceneDetail {
+                scene: "Code".into(),
+                canvas: [2880.0, 1620.0],
+                items: vec![ac_core::obs::ItemDetail {
+                    id: 7,
+                    source: "Cam".into(),
+                    ..Default::default()
+                }],
+            }),
+            ..Feed::default()
+        });
+        let feed: Value = http
+            .get(format!("{base}/feed"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(feed["items"]["items"][0]["source"], "Cam");
+        assert_eq!(feed["items"]["canvas"], json!([2880.0, 1620.0]));
     }
 
     #[tokio::test]

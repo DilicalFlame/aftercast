@@ -418,6 +418,9 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         yt_status: None,
         going_live: false,
         auto_streamed: false,
+        obs_items: Arc::default(),
+        watch_scene: None,
+        watch_tick: 0,
         ending: None,
         starting_since: None,
         session,
@@ -928,6 +931,10 @@ struct Controller {
     going_live: bool,
     /// OBS streaming was started by itself (once, so a stream stopped by hand stays stopped).
     auto_streamed: bool,
+    /// The sources of the scene the editor looks at, and until when it keeps asking.
+    obs_items: Arc<ac_core::obs::SceneDetail>,
+    watch_scene: Option<(String, Instant)>,
+    watch_tick: u8,
     /// `:end` is showing the end screen until then (`:end cancel` clears it).
     ending: Option<Timestamp>,
     /// Since when OBS shows the starting scene.
@@ -1303,6 +1310,13 @@ impl Controller {
             Command::Mute { input, on } => self.mute(&input, on),
             Command::Volume { input, db } => self.volume(&input, db),
             Command::AddOverlay { scene, overlay } => self.add_overlay(scene, overlay),
+            Command::WatchScene { scene } => {
+                self.watch_scene = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
+                self.obs_request(ac_obs::Request::Items { scene });
+            }
+            Command::EditItem { scene, id, edit } => {
+                self.obs_request(ac_obs::Request::EditItem { scene, id, edit });
+            }
             Command::Source {
                 source,
                 scene,
@@ -2014,6 +2028,7 @@ impl Controller {
                 scene: self.state.scene.clone(),
                 chat: self.chat.clone(),
                 media: self.obs_media.clone(),
+                items: self.obs_items.clone(),
                 brb: self.state.brb,
                 privacy: self.state.privacy,
             });

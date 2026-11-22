@@ -37,6 +37,8 @@ pub struct Feed {
     pub chat: Arc<VecDeque<ChatMessage>>,
     /// The scenes and sources OBS has (empty while OBS is not connected).
     pub media: Arc<ac_core::obs::Media>,
+    /// The sources of the scene being edited.
+    pub items: Arc<ac_core::obs::SceneDetail>,
     pub brb: bool,
     pub privacy: bool,
 }
@@ -111,6 +113,7 @@ pub(crate) async fn feed(State(s): State<Arc<Shared>>) -> Response {
         // Which overlay sources each scene has, and whether they show: the editor lists
         // those. Null without OBS.
         "obs": overlays_in(&f.media),
+        "items": &*f.items,
         "mode": if f.privacy { "privacy" } else if f.brb { "brb" } else { "normal" },
     }))
     .into_response()
@@ -148,6 +151,42 @@ pub(crate) async fn source(State(s): State<Arc<Shared>>, Json(p): Json<Source>) 
         source: p.source,
         scene: Some(p.scene),
         visible: Some(p.enabled),
+    });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct Watch {
+    scene: String,
+}
+
+/// The editor looks at a scene of OBS: its sources are listed in the feed (repeated every few
+/// seconds while it does).
+pub(crate) async fn watch(State(s): State<Arc<Shared>>, Json(p): Json<Watch>) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let _ = s.commands.send(Command::WatchScene { scene: p.scene });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct ItemChange {
+    scene: String,
+    id: i64,
+    #[serde(flatten)]
+    edit: ac_core::obs::ItemEdit,
+}
+
+/// Changes a source of a scene in OBS: its place, lock, order, crop, name (the editor).
+pub(crate) async fn item(State(s): State<Arc<Shared>>, Json(p): Json<ItemChange>) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let _ = s.commands.send(Command::EditItem {
+        scene: p.scene,
+        id: p.id,
+        edit: p.edit,
     });
     StatusCode::NO_CONTENT.into_response()
 }

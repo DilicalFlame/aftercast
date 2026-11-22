@@ -210,6 +210,7 @@ impl Controller {
                     map.extend(levels);
                 }
             }
+            Update::Items(detail) => self.obs_items = Arc::new(detail),
             Update::Stream(state) => {
                 self.stream_changed(state);
                 self.quit_ready();
@@ -751,6 +752,17 @@ impl Controller {
     /// Every 100 ms: hides the facecam while the mouse pointer is over it, shows it again a
     /// moment after the pointer left (`[obs.facecam]`).
     pub(super) fn pointer_tick(&mut self) {
+        // The scene the editor looks at is listed again about once a second.
+        self.watch_tick = (self.watch_tick + 1) % 10;
+        if self.watch_tick == 0
+            && let Some((scene, until)) = self.watch_scene.clone()
+        {
+            if crate::live::Instant::now() < until {
+                self.obs_request(Request::Items { scene });
+            } else {
+                self.watch_scene = None;
+            }
+        }
         let cam = &self.config.obs.facecam;
         if !cam.enabled || self.obs_scenes.is_none() {
             // Switched off meanwhile: the camera must not stay hidden.

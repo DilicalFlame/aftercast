@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
+
 /// Live audio peaks in dBFS per input, written by the controller as OBS reports them
 /// (about 10 times a second, only while a page with meters asks) and read by the TUI each
 /// frame. Shared rather than published, so meters never rebuild the whole view.
@@ -233,4 +235,66 @@ mod placed_tests {
             [900.0, 450.0, 200.0, 100.0]
         );
     }
+}
+
+/// One source in a scene as the editor shows and edits it (an OBS scene item).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ItemDetail {
+    pub id: i64,
+    pub source: String,
+    /// The input kind (`dshow_input`, `monitor_capture`, ...), `scene` or `group`.
+    pub kind: String,
+    pub enabled: bool,
+    pub locked: bool,
+    /// Place in the stack: 0 is the backmost.
+    pub index: u32,
+    /// Where the alignment point is, on OBS's canvas.
+    pub x: f32,
+    pub y: f32,
+    /// The size on the canvas (the source's size times its scale).
+    pub width: f32,
+    pub height: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub rotation: f32,
+    pub source_w: f32,
+    pub source_h: f32,
+    /// OBS's alignment bits: 1 left, 2 right, 4 top, 8 bottom, none centered.
+    pub alignment: u8,
+    /// Fitted into a bounding box (then `bounds_w` and `bounds_h` are the size).
+    pub bounds: bool,
+    pub bounds_w: f32,
+    pub bounds_h: f32,
+    /// Left, right, top, bottom, in source pixels.
+    pub crop: [u32; 4],
+}
+
+/// The sources of the scene the editor is watching, and OBS's canvas size.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct SceneDetail {
+    pub scene: String,
+    pub canvas: [f32; 2],
+    pub items: Vec<ItemDetail>,
+}
+
+/// A change to a scene item: only what is set is changed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ItemEdit {
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub scale_x: Option<f32>,
+    pub scale_y: Option<f32>,
+    pub rotation: Option<f32>,
+    pub bounds_w: Option<f32>,
+    pub bounds_h: Option<f32>,
+    pub crop: Option<[u32; 4]>,
+    pub enabled: Option<bool>,
+    pub locked: Option<bool>,
+    pub index: Option<u32>,
+    /// With `name`: the source's current name (the rename is of the source, shared by scenes).
+    pub source: String,
+    pub name: Option<String>,
+    pub remove: bool,
+    pub duplicate: bool,
 }

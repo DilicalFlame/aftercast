@@ -77,6 +77,8 @@ pub enum Update {
         /// Its `monitor` index.
         index: Option<usize>,
     },
+    /// The sources of a scene with their places (the answer to [`Request::Items`]).
+    Items(ac_core::obs::SceneDetail),
     /// Audio peaks in dBFS per input (only while meters are on).
     Levels(Vec<(String, f32)>),
     /// Where OBS records now (after aftercast set it).
@@ -124,6 +126,16 @@ pub enum Request {
     Place {
         scene: String,
         id: i64,
+    },
+    /// Lists the sources of `scene` with their places; answered with [`Update::Items`].
+    Items {
+        scene: String,
+    },
+    /// Changes a source of `scene` (then the list comes again).
+    EditItem {
+        scene: String,
+        id: i64,
+        edit: ac_core::obs::ItemEdit,
     },
     /// Asks which monitor the display capture in `scene` shows; answered with
     /// [`Update::Screen`] (nothing when the scene has none).
@@ -476,6 +488,18 @@ async fn serve(
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
                     }
                 }
+                Some(Request::Items { scene }) => match scene_detail(client, &scene).await {
+                    Ok(d) => send(Update::Items(d)),
+                    Err(e) => send(Update::Failed(format!("listing {scene:?}: {}", error_chain(&e)))),
+                },
+                Some(Request::EditItem { scene, id, edit }) => {
+                    if let Err(e) = edit_item(client, &scene, id, &edit).await {
+                        send(Update::Failed(format!("editing a source in {scene:?}: {}", error_chain(&e))));
+                    }
+                    if let Ok(d) = scene_detail(client, &scene).await {
+                        send(Update::Items(d));
+                    }
+                }
                 Some(Request::Place { scene, id }) => {
                     let t = client.scene_items().transform(scene.as_str().into(), id).await;
                     let v = client.config().video_settings().await;
@@ -725,6 +749,147 @@ fn has_live_video(kind: &str) -> bool {
         "slideshow",
     ];
     !STILL_OR_AUDIO.iter().any(|p| kind.starts_with(p))
+}
+
+/// The sources of a scene with their places on OBS's canvas.
+async fn scene_detail(
+    client: &obws::Client,
+    scene: &str,
+) -> obws::error::Result<ac_core::obs::SceneDetail> {
+    let video = client.config().video_settings().await?;
+    let items = client.scene_items();
+    let mut out = Vec::new();
+    for it in items.list(scene.into()).await? {
+        let t = items.transform(scene.into(), it.id).await?;
+        let enabled = items.enabled(scene.into(), it.id).await?;
+        let locked = items.locked(scene.into(), it.id).await?;
+        let kind = match (it.is_group, it.input_kind) {
+            (Some(true), _) => "group".to_owned(),
+            (_, Some(kind)) => kind,
+            _ => "scene".to_owned(),
+        };
+        out.push(ac_core::obs::ItemDetail {
+            id: it.id,
+            source: it.source_name,
+            kind,
+            enabled,
+            locked,
+            index: it.index,
+            x: t.position_x,
+            y: t.position_y,
+            width: t.width,
+            height: t.height,
+            scale_x: t.scale_x,
+            scale_y: t.scale_y,
+            rotation: t.rotation,
+            source_w: t.source_width,
+            source_h: t.source_height,
+            alignment: u8::from(t.alignment),
+            bounds: t.bounds_type != obws::common::BoundsType::None,
+            bounds_w: t.bounds_width,
+            bounds_h: t.bounds_height,
+            crop: [t.crop_left, t.crop_right, t.crop_top, t.crop_bottom],
+        });
+    }
+    Ok(ac_core::obs::SceneDetail {
+        scene: scene.to_owned(),
+        canvas: [video.base_width as f32, video.base_height as f32],
+        items: out,
+    })
+}
+
+/// Applies an editor change to a source of a scene.
+async fn edit_item(
+    client: &obws::Client,
+    scene: &str,
+    id: i64,
+    e: &ac_core::obs::ItemEdit,
+) -> obws::error::Result<()> {
+    use obws::requests::scene_items as r;
+    let items = client.scene_items();
+    if e.remove {
+        return items.remove(scene.into(), id).await;
+    }
+    if e.duplicate {
+        let dup = r::Duplicate {
+            scene: scene.into(),
+            item_id: id,
+            destination: None,
+        };
+        items.duplicate(dup).await?;
+        return Ok(());
+    }
+    if let Some(enabled) = e.enabled {
+        items
+            .set_enabled(r::SetEnabled {
+                scene: scene.into(),
+                item_id: id,
+                enabled,
+            })
+            .await?;
+    }
+    if let Some(locked) = e.locked {
+        items
+            .set_locked(r::SetLocked {
+                scene: scene.into(),
+                item_id: id,
+                locked,
+            })
+            .await?;
+    }
+    if let Some(index) = e.index {
+        items
+            .set_index(r::SetIndex {
+                scene: scene.into(),
+                item_id: id,
+                index,
+            })
+            .await?;
+    }
+    let transform = r::SceneItemTransform {
+        position: (e.x.is_some() || e.y.is_some()).then_some(r::Position { x: e.x, y: e.y }),
+        rotation: e.rotation,
+        scale: (e.scale_x.is_some() || e.scale_y.is_some()).then_some(r::Scale {
+            x: e.scale_x,
+            y: e.scale_y,
+        }),
+        alignment: None,
+        bounds: (e.bounds_w.is_some() || e.bounds_h.is_some()).then_some(r::Bounds {
+            width: e.bounds_w,
+            height: e.bounds_h,
+            ..Default::default()
+        }),
+        crop: e.crop.map(|c| r::Crop {
+            left: Some(c[0]),
+            right: Some(c[1]),
+            top: Some(c[2]),
+            bottom: Some(c[3]),
+        }),
+    };
+    if e.x.is_some()
+        || e.y.is_some()
+        || e.rotation.is_some()
+        || e.scale_x.is_some()
+        || e.scale_y.is_some()
+        || e.bounds_w.is_some()
+        || e.bounds_h.is_some()
+        || e.crop.is_some()
+    {
+        items
+            .set_transform(r::SetTransform {
+                scene: scene.into(),
+                item_id: id,
+                transform,
+            })
+            .await?;
+    }
+    if let Some(name) = &e.name {
+        client
+            .inputs()
+            .set_name(e.source.as_str().into(), name)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Stacks aftercast's overlay sources (Browser sources whose URL starts with one of
