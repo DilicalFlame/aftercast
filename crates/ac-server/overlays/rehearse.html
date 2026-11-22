@@ -401,7 +401,8 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   line-height: 1.4; color: var(--dim); background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
 .note.warn { margin: 0; color: #f3d9a4; box-shadow: inset 0 0 0 1px #6a5322; background: #2a2314; flex-direction: column; align-items: stretch; }
 .note.warn .btn { height: 28px; justify-content: center; }
-.bar.docked .group.sel { opacity: .35; pointer-events: none; }
+#numsBox.docked { opacity: .35; pointer-events: none; }
+#numsBox .num { background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
 
 /* Style panel. */
 .style { padding: 0 14px 12px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
@@ -465,7 +466,6 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; bord
 .brbel:hover { background: color-mix(in srgb, var(--ui) 14%, transparent); }
 .subhead { padding: 10px 18px 4px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .srclist { flex: none; max-height: 42%; }
-.layer.src .lead .kind { opacity: 1 !important; }
 .layer.src.sel { background: var(--selected-row, #26262d); }
 .layer.src.off .name { color: var(--faint); }
 .srcbox { position: absolute; pointer-events: auto; cursor: move; outline: 1px solid transparent; }
@@ -565,21 +565,6 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
   <div class="t-mid">
     <span class="hint view-only">Simulated YouTube, video from OBS Virtual Camera</span>
     <div class="bar empty" id="bar">
-      <div class="group sel">
-        <label class="num"><b title="Drag to change">X</b><input type="number" data-f="x"></label>
-        <label class="num"><b title="Drag to change">Y</b><input type="number" data-f="y"></label>
-      </div>
-      <span class="div"></span>
-      <div class="group sel">
-        <label class="num"><b title="Width, drag to change">W</b><input type="number" data-f="width"></label>
-        <label class="num"><b title="Height, drag to change">H</b><input type="number" data-f="height"></label>
-      </div>
-      <span class="div"></span>
-      <div class="group sel">
-        <label class="num"><b title="Scale, drag to change" data-icon="scale"></b><input class="short" type="number" data-f="size"><i>%</i></label>
-        <label class="num"><b title="Rotation, drag to change" data-icon="rotate"></b><input class="short" type="number" data-f="rotate"><i>°</i></label>
-      </div>
-      <span class="div"></span>
       <div class="group">
         <button class="icon" id="showVideo" aria-pressed="true" title="OBS video behind the overlays" data-icon="video"></button>
         <button class="icon edit-only" id="edSound" aria-pressed="true" title="Play the selected overlay's sound while editing" data-icon="speaker"></button>
@@ -598,7 +583,9 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
 </header>
 <main>
   <aside class="layers">
-    <div class="panel-head"><span data-icon="layers"></span><span class="grow">Layers</span></div>
+    <div class="panel-head"><span data-icon="layers"></span><span class="grow">Layers</span>
+      <button class="icon" id="addSrc" type="button" title="Add a source to this scene" data-icon="plus" hidden></button>
+      <button class="icon" id="layerFilter" type="button" aria-pressed="false" title="Show only some types of layer" data-icon="filter"></button></div>
     <div class="modes seg" id="modes">
       <button type="button" data-mode="normal" title="The normal scenes">Normal</button>
       <button type="button" data-mode="brb" title="Be right back: the BRB scene and its overlay">BRB</button>
@@ -606,9 +593,7 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     </div>
     <div class="scene"><select id="sceneSel" title="Scene to edit"></select><input type="color" id="vColor" title="Color behind the overlays" hidden></div>
     <div class="list" id="layerList"></div>
-    <div class="subhead" id="srcHead" hidden>OBS sources</div>
-    <div class="list srclist" id="srcList" hidden></div>
-    <div class="panel-foot" id="layerEmpty" hidden>No overlays in this scene</div>
+    <div class="panel-foot" id="layerEmpty" hidden>Nothing in this scene</div>
   </aside>
   <section>
     <div class="player">
@@ -793,9 +778,17 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
         </div>
         <div id="props" hidden>
 
-          <section class="pnl" data-tab="layout" data-title="Position" id="pnlPos">
+          <section class="pnl" data-tab="layout" data-title="Transform" id="pnlPos">
             <div class="prop">
-              <div class="seg">
+              <div class="grid2" id="numsBox">
+                <label class="num"><b title="Drag to change">X</b><input type="number" data-f="x"></label>
+                <label class="num"><b title="Drag to change">Y</b><input type="number" data-f="y"></label>
+                <label class="num"><b title="Width, drag to change">W</b><input type="number" data-f="width"></label>
+                <label class="num"><b title="Height, drag to change">H</b><input type="number" data-f="height"></label>
+                <label class="num"><b title="Scale, drag to change" data-icon="scale"></b><input class="short" type="number" data-f="size"><i>%</i></label>
+                <label class="num"><b title="Rotation, drag to change" data-icon="rotate"></b><input class="short" type="number" data-f="rotate"><i>°</i></label>
+              </div>
+              <div class="seg" style="margin-top:10px">
                 <button type="button" data-align="left" title="Align left" data-icon="al-left"></button>
                 <button type="button" data-align="hcenter" title="Center horizontally" data-icon="al-hcenter"></button>
                 <button type="button" data-align="right" title="Align right" data-icon="al-right"></button>
@@ -1299,6 +1292,7 @@ const ICONS = {
   folder: '<path d="M3 6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   redo: '<path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/>',
   grid: '<path d="M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18"/>',
+  filter: '<path d="M3 5h18l-7 8v6l-4 2v-8z"/>',
   tri: '<path d="M7 4.5v15l12-7.5z"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
   mute: '<path d="M11 5 6 9H2v6h4l5 4Z"/><path d="m22 9-6 6M16 9l6 6"/>',
@@ -1502,7 +1496,6 @@ const CURSORS = ["ns-resize", "nesw-resize", "ew-resize", "nwse-resize"];
 const ANGLE = { n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315 };
 function inspect() {
   const has = selected !== null;
-  $("bar").classList.toggle("empty", !has);
   $("selection").hidden = !has || F[selected].dock;
   $("noSel").hidden = has;
   $("props").hidden = !has;
@@ -1518,7 +1511,7 @@ function inspect() {
   for (const h of $("selection").querySelectorAll(".h")) {
     h.style.cursor = CURSORS[Math.round((((ANGLE[h.dataset.h] + f.rotate) % 180) + 180) % 180 / 45) % 4];
   }
-  for (const input of document.querySelectorAll("#bar [data-f]")) {
+  for (const input of document.querySelectorAll("[data-f]")) {
     if (document.activeElement !== input) input.value = f[input.dataset.f];
   }
   for (const b of $("align").children) b.setAttribute("aria-pressed", b.dataset.a === f.align);
@@ -1561,7 +1554,7 @@ function inspect() {
   $("alignProp").hidden = no.includes("align");
   $("bgProp").hidden = no.includes("bg");
   $("bgProp").classList.toggle("off", docked);
-  $("bar").classList.toggle("docked", docked);
+  $("numsBox").classList.toggle("docked", docked);
   $("posHint").textContent = docked ? "In the bar: left, center or right of it." : "";
   $("opProp").hidden = no.includes("bg");
   // In the status bar Position places the segment inside the bar: left, center or right.
@@ -1963,7 +1956,7 @@ function paintScene() {
   layerRows();
   for (const n of order) paintHidden(n);
   syncDock();
-  const none = live() && !order.some((n) => here(n));
+  const none = live() && !order.some((n) => here(n)) && !shownItems().length;
   $("layerEmpty").hidden = !none;
 }
 // The scene list: OBS's scenes when it is connected, else the configured ones.
@@ -2001,11 +1994,12 @@ function restack() {
 
 // Layers: the icon is the grip. Drag a row to restack; others make room as it passes.
 function layerRows() {
-  $("layerList").replaceChildren(...order.filter((n) => here(n)).map((n) => rows[n].row));
+  paintLayers();
 }
 function makeRow(n) {
   const row = document.createElement("div");
   row.className = "layer";
+  row.dataset.overlay = n;
   row.tabIndex = 0;
   const lead = document.createElement("span");
   lead.className = "lead";
@@ -2031,46 +2025,7 @@ function makeRow(n) {
   row.oncontextmenu = (e) => openCtx(e, n);
   row.onclick = () => { if (!locked.has(n)) select(n); };
   row.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !locked.has(n)) { e.preventDefault(); select(n); } };
-  lead.onpointerdown = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const list = [...$("layerList").children], from = list.indexOf(row), step = row.offsetHeight;
-    const y0 = e.clientY;
-    let to = from, moved = false;
-    const move = (m) => {
-      const dy = m.clientY - y0;
-      if (!moved && Math.abs(dy) < 3) return;
-      if (!moved) { moved = true; row.classList.add("lifted"); document.body.classList.add("restacking"); }
-      row.style.transform = `translateY(${dy}px)`;
-      to = Math.max(0, Math.min(list.length - 1, Math.round(from + dy / step)));
-      list.forEach((r, i) => {
-        if (r === row) return;
-        const shift = from < to && i > from && i <= to ? -step : from > to && i >= to && i < from ? step : 0;
-        r.style.transform = shift ? `translateY(${shift}px)` : "";
-      });
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      list.forEach((r) => (r.style.transform = ""));
-      row.classList.remove("lifted");
-      document.body.classList.remove("restacking");
-      if (!moved) return select(n);
-      if (to === from) return;
-      history.push({ order: [...order] });
-      $("undo").disabled = false;
-      // `from` and `to` count the listed rows; the others keep their places.
-      const listed = order.filter((n) => here(n));
-      listed.splice(to, 0, listed.splice(from, 1)[0]);
-      const slots = order.map((n, i) => (here(n) ? i : -1)).filter((i) => i >= 0);
-      slots.forEach((slot, i) => (order[slot] = listed[i]));
-      layerRows();
-      restack();
-      saveOrder();
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
+  lead.onpointerdown = (e) => dragLayer(e, row);
   paintLock(n);
 }
 function paintLock(n) {
@@ -2347,7 +2302,7 @@ for (const b of document.querySelectorAll("[data-align]")) {
     commit(selected);
   };
 }
-for (const input of document.querySelectorAll("#bar [data-f]")) {
+for (const input of document.querySelectorAll("[data-f]")) {
   const f = input.dataset.f;
   input.oninput = () => { if (input.value !== "") { F[selected][f] = clamp(f, input.valueAsNumber); apply(selected); } };
   input.onchange = () => { apply(selected); commit(selected); };
@@ -3040,7 +2995,7 @@ ctlPaint();
 // OBS sources: every source of the scene being edited is a layer and a box on the canvas, moved,
 // resized, rotated, cropped, locked, ordered and renamed here, and OBS follows (aftercast
 // relays the changes over its WebSocket; the feed brings OBS's own view back about once a second).
-let items = { scene: null, canvas: [1920, 1080], items: [] };
+let items = { scene: null, canvas: [1920, 1080], items: [], input_kinds: [] };
 let selItem = null;
 let selMulti = new Set();
 let itemsQuiet = 0;
@@ -3106,6 +3061,10 @@ function onItems(d) {
   const changed = key(d) !== key(items);
   items = d;
   if (changed) paintSources();
+  if (newSource && Date.now() < newSource.until) {
+    const made = d.items.find((i) => !newSource.ids.has(i.id));
+    if (made) { newSource = null; selectItem(made.id); }
+  }
 }
 // Asks OBS to keep listing this scene (it stops after 10 s of silence).
 function watchScene() {
@@ -3154,36 +3113,258 @@ const editNow = (it, edit) => {
 };
 
 // The layer rows.
+// The layers: overlays and OBS sources together, in the order OBS stacks them (front on top).
+// A filter picks which types show; the plus adds a new source to the scene.
+const TYPE_NAMES = {
+  overlay: "Overlays (aftercast)", camera: "Cameras", screen: "Screen capture", window: "Window capture",
+  game: "Game capture", browser: "Browser sources", text: "Text", image: "Images", audio: "Audio",
+  media: "Media", color: "Colors", scene: "Scenes", group: "Groups",
+};
+// A source's type, from the kind OBS gives it.
+function typeOf(it) {
+  const k = it.kind;
+  return k === "group" || k === "scene" ? k
+    : /dshow|av_capture|v4l2/.test(k) ? "camera"
+    : /monitor|display|screen|xshm|pipewire/.test(k) ? "screen"
+    : /window|xcomposite/.test(k) ? "window"
+    : /game_capture/.test(k) ? "game"
+    : /browser/.test(k) ? "browser"
+    : /text/.test(k) ? "text"
+    : /image|slideshow/.test(k) ? "image"
+    : /wasapi|coreaudio|pulse|alsa|jack/.test(k) ? "audio"
+    : /ffmpeg|vlc|media/.test(k) ? "media"
+    : /color/.test(k) ? "color" : k;
+}
+let hiddenTypes = new Set(JSON.parse(store.get("layer-hidden-types", "[]")));
+// Everything the scene has, front first: an entry is an overlay (its own row) or a source.
+function layerEntries() {
+  if (live() && items.scene === scene) {
+    const mine = new Map(obsInfo.overlays.filter((o) => o.scene === scene).map((o) => [o.source, o.overlay]));
+    const out = [];
+    for (const it of [...items.items].sort((a, b) => b.index - a.index)) {
+      const ov = mine.get(it.source);
+      if (!ov) out.push({ type: typeOf(it), item: it });
+      else if (rows[ov] && here(ov)) out.push({ type: "overlay", name: ov });
+    }
+    // Overlays OBS has not listed yet go in front until it does.
+    const listed = new Set(out.filter((e) => e.name).map((e) => e.name));
+    const early = order.filter((n) => here(n) && !listed.has(n)).map((n) => ({ type: "overlay", name: n }));
+    return [...early, ...out];
+  }
+  return order.filter((n) => here(n)).map((n) => ({ type: "overlay", name: n }));
+}
+function paintLayers() {
+  const entries = layerEntries();
+  const nodes = entries.filter((e) => !hiddenTypes.has(e.type)).map((e) => (e.name ? rows[e.name].row : sourceRow(e.item)));
+  $("layerList").replaceChildren(...nodes);
+  $("layerFilter").setAttribute("aria-pressed", hiddenTypes.size > 0);
+  $("layerFilter").title = hiddenTypes.size ? "Some types are hidden: click to change" : "Show only some types of layer";
+  $("layerEmpty").hidden = entries.length > 0 || !live();
+  $("addSrc").hidden = !live();
+}
+// One OBS source as a row.
+function sourceRow(it) {
+  const row = document.createElement("div");
+  row.className = "layer src" + (selMulti.has(it.id) ? " sel" : "") + (it.locked ? " locked" : "") + (it.enabled ? "" : " off");
+  row.tabIndex = 0;
+  row.dataset.src = it.id;
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.innerHTML = svg(KIND_ICON(it.kind)).replace('class="i"', 'class="i kind"') + svg("grip").replace('class="i"', 'class="i grip"');
+  lead.title = `${it.kind}. Drag to restack`;
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = it.source;
+  const lock = document.createElement("button");
+  lock.className = "icon lockb";
+  lock.innerHTML = svg(it.locked ? "lock" : "unlock");
+  lock.title = it.locked ? "Unlock" : "Lock";
+  lock.onclick = (e) => { e.stopPropagation(); editNow(it, { locked: !it.locked }); paintSources(); };
+  const eye = document.createElement("button");
+  eye.className = "icon";
+  eye.innerHTML = svg(it.enabled ? "eye" : "eyeoff");
+  eye.title = it.enabled ? "Hide in OBS" : "Show in OBS";
+  eye.onclick = (e) => { e.stopPropagation(); editNow(it, { enabled: !it.enabled }); paintSources(); };
+  row.append(lead, name, lock, eye);
+  row.onclick = (e) => selectItem(it.id, e.shiftKey || e.ctrlKey || e.metaKey);
+  row.oncontextmenu = (e) => openItemCtx(e, it);
+  row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectItem(it.id); } };
+  lead.onpointerdown = (e) => dragLayer(e, row);
+  return row;
+}
+// Dragging a row restacks: an overlay among the overlays (the others keep their places, as
+// before), a source to the place in OBS's stack where it is dropped.
+function dragLayer(e, row) {
+  e.preventDefault();
+  e.stopPropagation();
+  const list = [...$("layerList").children], from = list.indexOf(row), step = row.offsetHeight;
+  const y0 = e.clientY;
+  let to = from, moved = false;
+  const pick = () => (row.dataset.overlay ? (locked.has(row.dataset.overlay) || select(row.dataset.overlay)) : selectItem(Number(row.dataset.src)));
+  const move = (m) => {
+    const dy = m.clientY - y0;
+    if (!moved && Math.abs(dy) < 3) return;
+    if (!moved) { moved = true; row.classList.add("lifted"); document.body.classList.add("restacking"); }
+    row.style.transform = `translateY(${dy}px)`;
+    to = Math.max(0, Math.min(list.length - 1, Math.round(from + dy / step)));
+    list.forEach((r, i) => {
+      if (r === row) return;
+      const shift = from < to && i > from && i <= to ? -step : from > to && i >= to && i < from ? step : 0;
+      r.style.transform = shift ? `translateY(${shift}px)` : "";
+    });
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    list.forEach((r) => (r.style.transform = ""));
+    row.classList.remove("lifted");
+    document.body.classList.remove("restacking");
+    if (!moved) return pick();
+    if (to === from) return;
+    if (hiddenTypes.size) return flash("Show every type to restack");
+    const visual = list.slice();
+    visual.splice(to, 0, visual.splice(from, 1)[0]);
+    if (row.dataset.overlay) {
+      history.push({ order: [...order] });
+      $("undo").disabled = false;
+      const names = visual.map((r) => r.dataset.overlay).filter(Boolean);
+      const slots = order.map((n, i) => (here(n) ? i : -1)).filter((i) => i >= 0);
+      slots.forEach((slot, i) => (order[slot] = names[i]));
+      layerRows();
+      restack();
+      saveOrder();
+    } else {
+      const it = itemById(Number(row.dataset.src));
+      if (it) editNow(it, { index: visual.length - 1 - visual.indexOf(row) });
+    }
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+// The filter: which types of layer show.
+function openMenu(btn, build) {
+  closeCtx();
+  const m = document.createElement("div");
+  m.className = "ctx";
+  build(m);
+  document.body.append(m);
+  const r = btn.getBoundingClientRect();
+  m.style.left = Math.min(r.left, innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8) + "px";
+  ctx = m;
+}
+$("layerFilter").onclick = (e) => {
+  e.stopPropagation();
+  const counts = {};
+  for (const en of layerEntries()) counts[en.type] = (counts[en.type] || 0) + 1;
+  openMenu($("layerFilter"), (m) => {
+    const head = document.createElement("div");
+    head.className = "head";
+    head.textContent = "Show these types";
+    m.append(head);
+    const all = document.createElement("button");
+    all.innerHTML = `${svg("check")}<span>Everything</span>`;
+    all.onclick = () => { hiddenTypes = new Set(); saveTypes(); closeCtx(); };
+    m.append(all);
+    for (const t of Object.keys(counts)) {
+      const b = document.createElement("button");
+      const on = !hiddenTypes.has(t);
+      b.innerHTML = `${svg(on ? "check" : "plus")}<span>${TYPE_NAMES[t] || t}</span><em>${counts[t]}</em>`;
+      b.onclick = () => { on ? hiddenTypes.add(t) : hiddenTypes.delete(t); saveTypes(); b.innerHTML = `${svg(hiddenTypes.has(t) ? "plus" : "check")}<span>${TYPE_NAMES[t] || t}</span><em>${counts[t]}</em>`; };
+      m.append(b);
+    }
+  });
+};
+function saveTypes() {
+  store.set("layer-hidden-types", JSON.stringify([...hiddenTypes]));
+  paintLayers();
+}
+
+// The plus: a new source in the scene.
+const ADD = [
+  ["camera", "Camera", ["dshow_input", "av_capture_input", "v4l2_input"], "camera"],
+  ["screen", "Screen capture", ["monitor_capture", "display_capture", "screen_capture", "xshm_input", "pipewire-desktop-capture-source"], "monitor"],
+  ["window", "Window capture", ["window_capture", "xcomposite_input"], "window"],
+  ["browser", "Browser (a page)", ["browser_source"], "globe"],
+  ["text", "Text", ["text_gdiplus_v3", "text_gdiplus_v2", "text_gdiplus", "text_ft2_source_v2", "text_ft2_source"], "text"],
+  ["image", "Image", ["image_source"], "image"],
+  ["media", "Video file", ["ffmpeg_source"], "film"],
+  ["color", "Color", ["color_source_v3", "color_source_v2", "color_source"], "square"],
+  ["mic", "Microphone", ["wasapi_input_capture", "coreaudio_input_capture", "pulse_input_capture"], "mic"],
+  ["desktop", "Desktop audio", ["wasapi_output_capture", "coreaudio_output_capture", "pulse_output_capture"], "speaker"],
+];
+let newSource = null;
+function addSource(kind, name, settings) {
+  newSource = { ids: new Set(items.items.map((i) => i.id)), until: Date.now() + 5000 };
+  fetch("/rehearse/obs/add", { method: "POST", headers: { "content-type": "application/json" },
+                                body: JSON.stringify({ scene, kind, name, settings }) }).catch(() => {});
+  itemsQuiet = 0;
+  flash(`Adding ${name}`);
+}
+const freeName = (base) => {
+  const taken = new Set(items.items.map((i) => i.source));
+  let n = base, i = 2;
+  while (taken.has(n)) n = `${base} ${i++}`;
+  return n;
+};
+function startAdd(group, label, kinds) {
+  const kind = kinds.find((k) => (items.input_kinds || []).includes(k));
+  if (!kind) return flash(`This OBS has no ${label.toLowerCase()} source`);
+  const name = prompt("Name of the new source", freeName(label));
+  if (!name) return;
+  let settings = {};
+  if (group === "browser") {
+    const url = prompt("The page's address", "https://");
+    if (!url) return;
+    settings = { url, width: Math.round(items.canvas[0]), height: Math.round(items.canvas[1]) };
+  } else if (group === "text") {
+    const text = prompt("The text", "Hello");
+    if (text === null) return;
+    settings = { text };
+  } else if (group === "image") {
+    const file = prompt("The image file (its full path)");
+    if (!file) return;
+    settings = { file };
+  } else if (group === "media") {
+    const local_file = prompt("The video file (its full path)");
+    if (!local_file) return;
+    settings = { local_file, looping: true };
+  }
+  addSource(kind, name, settings);
+}
+$("addSrc").onclick = (e) => {
+  e.stopPropagation();
+  openMenu($("addSrc"), (m) => {
+    const head = document.createElement("div");
+    head.className = "head";
+    head.textContent = `Add to ${scene}`;
+    m.append(head);
+    for (const [group, label, kinds, icon] of ADD) {
+      const b = document.createElement("button");
+      b.innerHTML = `${svg(icon)}<span>${label}</span>`;
+      b.onclick = () => { closeCtx(); startAdd(group, label, kinds); };
+      m.append(b);
+    }
+    const others = (obsInfo ? obsInfo.scenes : []).filter((s) => s !== scene);
+    if (others.length) {
+      m.append(Object.assign(document.createElement("hr")));
+      const h2 = document.createElement("div");
+      h2.className = "head";
+      h2.textContent = "A scene as a source";
+      m.append(h2);
+      for (const s of others) {
+        const b = document.createElement("button");
+        b.innerHTML = `${svg("layers")}<span>${s}</span>`;
+        b.onclick = () => { closeCtx(); addSource("scene", s, {}); };
+        m.append(b);
+      }
+    }
+  });
+};
+
 function paintSources() {
-  const list = shownItems();
-  $("srcHead").hidden = $("srcList").hidden = !list.length;
-  $("srcList").replaceChildren(...list.map((it) => {
-    const row = document.createElement("div");
-    row.className = "layer src" + (selMulti.has(it.id) ? " sel" : "") + (it.locked ? " locked" : "") + (it.enabled ? "" : " off");
-    row.tabIndex = 0;
-    const lead = document.createElement("span");
-    lead.className = "lead";
-    lead.innerHTML = svg(KIND_ICON(it.kind)).replace('class="i"', 'class="i kind"');
-    lead.title = it.kind;
-    const name = document.createElement("span");
-    name.className = "name";
-    name.textContent = it.source;
-    const lock = document.createElement("button");
-    lock.className = "icon lockb";
-    lock.innerHTML = svg(it.locked ? "lock" : "unlock");
-    lock.title = it.locked ? "Unlock" : "Lock";
-    lock.onclick = (e) => { e.stopPropagation(); editNow(it, { locked: !it.locked }); paintSources(); };
-    const eye = document.createElement("button");
-    eye.className = "icon";
-    eye.innerHTML = svg(it.enabled ? "eye" : "eyeoff");
-    eye.title = it.enabled ? "Hide in OBS" : "Show in OBS";
-    eye.onclick = (e) => { e.stopPropagation(); editNow(it, { enabled: !it.enabled }); paintSources(); };
-    row.append(lead, name, lock, eye);
-    row.onclick = (e) => selectItem(it.id, e.shiftKey || e.ctrlKey || e.metaKey);
-    row.oncontextmenu = (e) => openItemCtx(e, it);
-    row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectItem(it.id); } };
-    return row;
-  }));
+  paintLayers();
   paintBoxes();
   if (selectedItem()) paintItemProps();
 }
@@ -3530,10 +3711,8 @@ function openItemCtx(e, it) {
   ctx = m;
 }
 // A new scene or leaving the editor: nothing selected, the list asked for again.
-const baseLayerRows = layerRows;
 let srcScene = null;
 layerRows = function () {
-  baseLayerRows();
   if (scene !== srcScene) { srcScene = scene; selItem = null; }
   paintSources();
   watchScene();
