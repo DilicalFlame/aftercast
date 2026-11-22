@@ -376,7 +376,7 @@ impl Controller {
         let (brb, privacy) = (scenes.brb.clone(), scenes.privacy.clone());
         let left = |name: &str| from.as_deref() == Some(name);
         if to == brb && !self.state.brb {
-            self.emit(
+            self.emit_render(
                 "obs",
                 EventKind::BrbStart {
                     return_scene: from.clone(),
@@ -384,7 +384,7 @@ impl Controller {
                 },
             );
         } else if left(&brb) && self.state.brb {
-            self.emit("obs", EventKind::BrbEnd {});
+            self.emit_render("obs", EventKind::BrbEnd {});
         }
         if to == privacy && !self.state.privacy {
             self.privacy_return = from.clone();
@@ -486,7 +486,7 @@ impl Controller {
                 .scene
                 .clone()
                 .filter(|s| *s != scenes.brb && *s != scenes.privacy);
-            self.emit(
+            self.emit_render(
                 by_src(by),
                 EventKind::BrbStart {
                     return_scene,
@@ -496,7 +496,7 @@ impl Controller {
             self.switch_scene(scenes.brb);
         } else {
             let back = self.state.brb_return.clone().unwrap_or(scenes.main);
-            self.emit(by_src(by), EventKind::BrbEnd {});
+            self.emit_render(by_src(by), EventKind::BrbEnd {});
             self.switch_scene(back);
         }
     }

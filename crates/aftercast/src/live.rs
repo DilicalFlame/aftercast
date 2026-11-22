@@ -1483,7 +1483,7 @@ impl Controller {
     }
 
     /// Emits an event that changes chapters or quest, then re-renders.
-    fn emit_render(&mut self, src: &str, kind: EventKind) {
+    pub(super) fn emit_render(&mut self, src: &str, kind: EventKind) {
         self.emit(src, kind);
         self.render();
     }
