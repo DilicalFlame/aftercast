@@ -13,4 +13,6 @@ futures-util = { version = "0.3", default-features = false }
 obws = { version = "0.15", features = ["events"] }
 serde.workspace = true
 serde_json.workspace = true
+time = "0.3"
+tracing.workspace = true
 tokio = { workspace = true, features = ["sync", "time", "macros", "rt"] }
