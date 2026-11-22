@@ -92,6 +92,30 @@ aftercast connects to OBS it refreshes these sources, so a page that failed to l
 | `latency` | the counter used by `:latency` |
 | `chapters` | the latest chapter title |
 | `keys` | what you type (last 24 characters); shortcuts and keys that type nothing as key chips (`Ctrl` `S`, `←`, `Shift` `→`, `Enter`, `Esc`, `F5`) |
+| `captions` | live captions of what you say (needs `[captions]`, below) |
+| `starting` | the starting screen: your picture (`[overlay] avatar`, a file in `<home>\overlays`), "Stream Starting" and a clock counting up; put it in the `Starting Soon` scene |
+
+With `[stream] starting_screen` on, Go Live opens on the starting scene and the TUI shows a
+Starting Soon banner; Enter moves on to the main scene (`[obs.scenes] main`).
+
+**Live captions.** Set `[captions] enabled = true` and `device` to your microphone's name
+(`ffmpeg -list_devices true -f dshow -i dummy` lists them). aftercast then runs
+faster-whisper (from `aftercast setup`) on the microphone the way
+[WhisperLive](https://github.com/collabora/WhisperLive) does: words appear as you speak and a
+line settles about a second after you stop. Lines also go to `captions.jsonl` in the
+session. Nothing is captioned before the session starts or in privacy mode. Problems are
+logged to `<home>\logs\captions.log`. Captions and the stream delay below can be changed
+mid-stream on the settings page (`,`), in the Captions section, applied at once.
+
+Captions still trail your voice a little. `[stream] delay_ms` (up to 500) makes OBS show
+your cameras, screen captures and audio that much later (a Render Delay filter named
+`aftercast delay` on each video source, and the audio sync offset on each audio source),
+while captions go out at once, so they land on the words. Every other overlay and scene
+switch waits as long to stay with the picture; turning privacy on stays instant, turning
+it off waits. Recording anchors move back by the delay so `post` still lines up. aftercast
+removes the filters and offsets when it exits (and after a crash, on the next start). Each
+filter keeps up to 500 ms of frames in video memory. Scene switches made in OBS itself are
+not delayed.
 
 Pages are transparent and reconnect by themselves when aftercast restarts. To restyle, put
 `overlay.css`, `overlay.js` or `<name>.html` in `<home>\overlays\`; theme colors and fonts
@@ -119,6 +143,116 @@ the description as last pushed (with a note when the README changed since), and 
 Type into the chat as a viewer, member, moderator or yourself (the owner), with any name, or
 send a Super Chat; command chips fill in `!q`, `!chapter`, `!lat` and the rest. Bot replies
 appear in the chat like on YouTube. The video has no sound; listen in OBS.
+
+**Edit overlays** on the rehearse page turns it into an overlay editor: layers on the left,
+the video in the middle with every overlay playing sample content, and the selected
+overlay's style on the right. Each overlay lays out in a frame, as in a design tool: drag it
+to move (it snaps to the canvas edges and center), drag a corner to scale it, a side to
+resize it, and just outside a corner to rotate it; the bar under the video sets the same by
+number. With OBS connected the layer list is OBS's: the scene picker at its top lists your OBS scenes,
+each shows only the overlay Browser sources it has (found by their address, `.../overlay/keys`),
+and the eye shows or hides that source in OBS itself, for that scene. Without OBS (a mock run)
+every overlay is listed and the eye only hides it in the preview. Drag a layer by its icon to
+restack it. The first scene in the list, **Virtual scene**, is not in OBS: it shows every
+overlay on a flat color (pick it beside the scene picker) so overlays no scene has yet can be
+styled too; its eye only hides in the preview. Every layer shows the overlay's Browser source address
+(Browser source address in the style panel, or the link button in the virtual scene), and a
+right-click on a layer adds it to any OBS scene as a Browser source the size of the canvas
+(a scene that has it already shares the same source). **Normal, BRB and Privacy** above the
+scene picker really put the rehearse in that mode (BRB switches the OBS scene and shows the BRB
+overlay on the video; Done ends it) and show it: BRB shows the BRB overlay, privacy hides keys and captions;
+each jumps to the scene of that name when OBS has one, else to the virtual scene. Only the
+selected overlay plays its sound while editing (the speaker button in the top bar mutes it).
+Frames snap to the canvas and to the edges and centers of the other overlays (Alt skips it);
+the lock on a layer takes it off the canvas so what is under it can be picked, and clicking
+again on a selected overlay walks down the pile of overlays beneath the pointer. An overlay
+only offers the editing that applies to it. Number fields take the arrow keys (Shift for 10) and have a stepper. Restack it: OBS restacks the overlay sources in every
+scene the same way (`[overlay] order`). Each change is saved to `[overlay.<name>]` in
+`aftercast.toml` and OBS follows at once; the same settings are in the TUI next to what
+drives each overlay (keys under Capture, captions under Captions, questions under Chat bot).
+
+The **status bar** (`/overlay/status`, add it as a Browser source like the others) is a thin
+bar; its height is its frame's height. Now, BRB, latency, chapters and toast can **dock** in it
+(`dock = true`, the switch in the editor): they give up their own frame and share the bar as
+segments, each wearing its own overlay's skin (select a docked overlay and the strip under the
+video offers its status bar looks); the bar itself only has a color and opacity. A docked overlay
+whose source is switched off in the scene on air leaves the bar. **Hide while these show** (`hide_when = ["question"]`) fades an overlay out while any
+of the picked overlays is on screen, e.g. keys while a question shows.
+
+**Status bar options** (`[overlay.bar]`, also in the editor when the bar is selected): `order`
+of the docked segments, `animate` (they slide in and out, a changed value flashes) and
+`marquee` (they scroll left forever like a ticker, `speed` in px/s).
+
+**Super Chat alert** (`/overlay/alert`, another Browser source): every Super Chat and
+membership plays an animation in the alert's frame, with sound effects. Skins: `dino` (a
+Chrome dino jumps over the words of "viewer donated 500", then grabs a coin), `pacman` (eats
+the sentence, a ghost behind), `moonwalk` (a dancer moonwalks along the frame's bottom edge:
+put that edge on the top of your facecam), `coins` (the amount bounces in and bursts into
+coins) and `neon` (a sign powers on). Everything is drawn and synthesized in code, no files.
+The editor's **Play alert** and **Play sound** buttons try one; `[overlay.sound]` (`enabled`,
+`volume`) sets the sound. The alert's audio goes through OBS (tick "Control audio via OBS" on
+its Browser source); the rehearse page's mock player plays the same effects for a Super Chat
+(the speaker button in its chat turns that off). Pair it with `hide_when = ["alert"]` on the
+status bar to let the alert take over the bar's place.
+
+The coin shower throws one coin for every 10 of the amount (at least 5, at most 250).
+
+**Sound** is files, nothing is made in code. A sound folder (`[overlay.sound] skin`, default
+`default`, or the select in the editor's alert panel) is a folder in
+`<home>\overlays\sounds\<name>\`; the alert plays the file named after its animation once
+when it starts: `dino`, `pacman`, `moonwalk`, `coins` or `neon` (wav, mp3, ogg, flac or m4a),
+else `alert`. The alert and the BRB each have a Play sound switch in the editor (`mute = true`
+per overlay in the TOML).
+
+**Be right back** shows the music that plays, the time away and your UPI QR code. Music is a
+playlist: a folder in `<home>\overlays\playlists\<name>\` of audio files (mp3, ogg, opus, wav,
+flac, m4a), played shuffled in a loop while the BRB is on; pick it in the editor (`playlist =
+"name"` on `[overlay.brb]`). Each track shows its album card (the picture in the file's tags, else
+`<track>.jpg`/`.png` or `cover.jpg`/`.png` in the folder), its title, artist and album from the
+tags, and bars that move with the sound. The QR code is made from `[vars.support] upi` (the
+overlay picture, `[overlay] avatar`, sits in its middle; its dots are round and the finder eyes
+use the overlay accent color) and is also at `/overlay/upi.svg`. Without a playlist or without a
+UPI id that half is left out. A `brb.html` of your own in `<home>\overlays` replaces this
+screen.
+
+**Skins keep their own frames.** Position, size, rotation, alignment and background are saved per
+skin (`[overlay.<name>.skins.<skin>]`), so scaling the coin shower leaves the other alert
+animations as they are; the editor reads and writes the frame of the skin being worn.
+
+**Desktop notifications** (`[notify]`, also in the TUI settings under Chat bot): every Super Chat,
+Super Sticker and membership pops up a native Windows notification, even while another app has
+focus: the amount (or "New member") in bold, who wrote what under it, the aftercast mark on the
+left, and Windows' notification sound (`sound = false` for silence, `supporters = false` for
+none). aftercast registers its name and icon for notifications under your user the first time one
+shows. Windows still decides whether a banner is shown: Focus assist or Do not disturb hold it
+back (the notification then waits in the notification center), and a fullscreen game or
+presentation may too. Set `AFTERCAST_NO_TOAST=1` to turn them off for a run.
+
+**Facecam out of the way:** with `[obs.facecam] enabled = true` the camera source (`source`,
+default `Video Capture Device`) hides in OBS while the mouse pointer is over its place on the
+screen and comes back `return_ms` after the pointer left, so you can read what is under it.
+With `auto = true` (the default) aftercast asks OBS where the camera is, in the scene on air,
+every second, so it can sit elsewhere in each scene (position, size, alignment, bounding box
+and crop are taken into account; rotation is not). `x`, `y`, `width`, `height` on the
+1920x1080 canvas are the fallback until OBS answers, or when `auto` is off; `margin` is added
+around the camera either way.
+
+Which screen the pointer is measured on follows the scene too: aftercast looks up the display
+capture in the scene on air, matches its monitor to a Windows screen, and measures the pointer
+on that screen only (a pointer on another screen never hides the camera). With several
+screens you can pin it with `monitor = 2` (the number Windows Settings shows; 0 is automatic).
+Without a display capture in the scene it uses the primary screen. Set it in the TUI settings under OBS, Facecam. Typing position is
+not used: terminals and editors do not expose their caret.
+
+The status bar, docking and hide-while settings are in the TUI settings too, next to each
+overlay's frame (hide-while takes comma separated names).
+
+Under the video, **skins** switch how an overlay looks: Neovim, Clean, Broadcast, Glass and
+Minimal are built in for every overlay. Hover a skin to preview it on the canvas, click to wear it. With
+nothing selected the strip shows skin packs, worn by every overlay without its own skin
+(`[overlay] skin`). Your own skins are stylesheets in
+`<home>\overlays\skins\<overlay>\<name>.css`; they show up in the strip and reload in OBS
+when saved.
 
 The rehearse is a real session, **episode 0** (`sessions\<year>\<date>_ep000`), so record in
 OBS during it and the whole pipeline works on it like on a stream: `aftercast post rehearse`,
@@ -240,6 +374,7 @@ the suggestion while a name is half typed). Names match regardless of case.
 | `:volume <input> <dB>` | Set an input's volume, e.g. `:volume Mic/Aux -6` |
 | `:hide <source>`, `:show <source>` | Hide or show a source in the scene on air, e.g. `:hide Camera` |
 | `:brb`, `:back`, `:privacy [on\|off]` | BRB and privacy |
+| `:end [seconds\|now\|cancel]` | End the stream: the ending scene for a while (asks how long with `[stream] end_screen` on), then OBS stops streaming, recording and the virtual camera |
 | `:set <setting> [value]` | Change any setting on the settings page, e.g. `:set stream.chapter_on_brb off`; without a value a switch flips and anything else shows its value |
 | `:reset <setting>` | Back to the default |
 | `:settings` | The settings page |
