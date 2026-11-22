@@ -30,6 +30,12 @@ main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; pa
   overflow: hidden; }
 video { width: 100%; height: 100%; object-fit: contain; display: block; }
 #dvr { position: absolute; inset: 0; background: #000; }
+.obsshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.obsshot[hidden] { display: none; }
+.ruler { position: absolute; z-index: 48; pointer-events: none; background: rgb(0 0 0 / 55%); color: #cfd2da; font: 600 calc(10px * var(--k)) var(--ui-font, sans-serif); }
+.ruler span { position: absolute; }
+.ruler.h { left: 0; top: 0; width: 1920px; height: calc(16px * var(--k)); }
+.ruler.v { left: 0; top: 0; width: calc(16px * var(--k)); height: 1080px; }
 #dvr[hidden] { display: none; }
 .ctl { position: absolute; left: 0; right: 0; bottom: 0; z-index: 80; padding: 30px 12px 6px;
   background: linear-gradient(transparent, rgb(0 0 0 / 72%)); opacity: 0; transition: opacity .2s; }
@@ -577,6 +583,7 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
       <div class="group">
         <button class="icon" id="showVideo" aria-pressed="true" title="OBS video behind the overlays" data-icon="video"></button>
         <button class="icon edit-only" id="edSound" aria-pressed="true" title="Play the selected overlay's sound while editing" data-icon="speaker"></button>
+        <button class="icon edit-only" id="shotBtn" aria-pressed="false" title="Show OBS's own picture of this scene behind the overlays" data-icon="image"></button>
         <button class="icon edit-only" id="gridBtn" aria-pressed="false" title="Grid: sources snap to it" data-icon="grid"></button>
         <button class="icon" id="snap" aria-pressed="true" title="Snap to the canvas edges and center (hold Alt to skip)" data-icon="magnet"></button>
       </div>
@@ -607,6 +614,7 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     <div class="player">
       <video id="video" autoplay muted playsinline></video>
       <video id="dvr" playsinline hidden></video>
+      <img id="obsShot" class="obsshot" alt="" hidden>
       <div class="novideo" id="novideo">
         <div>Waiting for <b>OBS Virtual Camera</b>.</div>
         <div>aftercast starts it when OBS connects; you can also press <i>Start Virtual Camera</i> in OBS.
@@ -3799,6 +3807,57 @@ selectItem = function (id, add) {
   paintSource();
   watchSource();
 };
+
+// OBS's own picture of the scene being edited (a few screenshots a second), behind the overlays:
+// the camera shows the program scene only, this shows the scene being edited.
+let shotOn = store.get("obs-shot", "off") === "on";
+const shotImg = $("obsShot");
+$("shotBtn").setAttribute("aria-pressed", shotOn);
+$("shotBtn").onclick = () => {
+  shotOn = !shotOn;
+  store.set("obs-shot", shotOn ? "on" : "off");
+  $("shotBtn").setAttribute("aria-pressed", shotOn);
+  if (!shotOn) { shotImg.hidden = true; syncVideo(); } else watchShot();
+};
+function watchShot() {
+  if (!shotOn || !editing || !live()) return;
+  fetch("/rehearse/obs/watch-shot", { method: "POST", headers: { "content-type": "application/json" },
+                                       body: JSON.stringify({ scene }) }).catch(() => {});
+}
+setInterval(watchShot, 4000);
+let shotBusy = false;
+setInterval(async () => {
+  const show = shotOn && editing && live();
+  if (!show) { if (!shotImg.hidden) { shotImg.hidden = true; syncVideo(); } return; }
+  if (shotBusy) return;
+  shotBusy = true;
+  try {
+    const r = await fetch("/rehearse/obs/shot", { cache: "no-store" });
+    if (r.ok) {
+      shotImg.src = await r.text();
+      shotImg.hidden = false;
+      $("video").style.visibility = "hidden";
+    }
+  } catch { /* the next one */ }
+  shotBusy = false;
+}, 350);
+
+// Rulers (with the grid): OBS's canvas in its own pixels, along the top and the left.
+const rulerH = document.createElement("div"), rulerV = document.createElement("div");
+rulerH.className = "ruler h";
+rulerV.className = "ruler v";
+for (let x = 0; x < 1920; x += 120) rulerH.append(Object.assign(document.createElement("span"), { style: `left:${x}px;top:0`, textContent: Math.round((x / k0()) / 10) * 10 }));
+for (let y = 0; y < 1080; y += 120) rulerV.append(Object.assign(document.createElement("span"), { style: `top:${y}px;left:0`, textContent: Math.round((y / k0()) / 10) * 10 }));
+rulerH.hidden = rulerV.hidden = !gridOn;
+$("canvas").append(rulerH, rulerV);
+const keepGridClick = $("gridBtn").onclick;
+$("gridBtn").onclick = () => { keepGridClick(); rulerH.hidden = rulerV.hidden = !gridOn; };
+function refreshRulers() {
+  const s = k0();
+  [...rulerH.children].forEach((e, i) => (e.textContent = Math.round((i * 120) / s / 10) * 10));
+  [...rulerV.children].forEach((e, i) => (e.textContent = Math.round((i * 120) / s / 10) * 10));
+}
+setInterval(refreshRulers, 1500);
 </script>
 </body>
 </html>
