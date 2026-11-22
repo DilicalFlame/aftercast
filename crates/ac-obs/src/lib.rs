@@ -956,13 +956,30 @@ async fn scene_detail(
     client: &obws::Client,
     scene: &str,
 ) -> obws::error::Result<ac_core::obs::SceneDetail> {
-    let video = client.config().video_settings().await?;
+    // One round trip for all of it: the requests share the connection, and this is asked every
+    // second and after each edit, ahead of whatever the editor sends next (an eye toggle).
     let items = client.scene_items();
+    let inputs = client.inputs();
+    let config = client.config();
+    let (video, list, kinds) = futures_util::future::join3(
+        config.video_settings(),
+        items.list(scene.into()),
+        inputs.list_kinds(false),
+    )
+    .await;
+    let video = video?;
+    let rows = futures_util::future::try_join_all(list?.into_iter().map(|it| async {
+        let (t, enabled, locked) = futures_util::future::try_join3(
+            items.transform(scene.into(), it.id),
+            items.enabled(scene.into(), it.id),
+            items.locked(scene.into(), it.id),
+        )
+        .await?;
+        Ok::<_, obws::error::Error>((it, t, enabled, locked))
+    }))
+    .await?;
     let mut out = Vec::new();
-    for it in items.list(scene.into()).await? {
-        let t = items.transform(scene.into(), it.id).await?;
-        let enabled = items.enabled(scene.into(), it.id).await?;
-        let locked = items.locked(scene.into(), it.id).await?;
+    for (it, t, enabled, locked) in rows {
         let kind = match (it.is_group, it.input_kind) {
             (Some(true), _) => "group".to_owned(),
             (_, Some(kind)) => kind,
@@ -995,7 +1012,7 @@ async fn scene_detail(
         scene: scene.to_owned(),
         canvas: [video.base_width as f32, video.base_height as f32],
         items: out,
-        input_kinds: client.inputs().list_kinds(false).await.unwrap_or_default(),
+        input_kinds: kinds.unwrap_or_default(),
     })
 }
 
