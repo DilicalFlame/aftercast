@@ -174,6 +174,46 @@ pub fn draw(frame: &mut Frame, area: Rect, up: Duration, t: Duration, motion: bo
     );
 }
 
+/// The end screen's banner: ENDING and the seconds left before the stream stops.
+pub fn draw_ending(frame: &mut Frame, area: Rect, left: Duration, t: Duration, motion: bool) {
+    let t = t.as_secs_f64();
+    let one = letters("ENDING");
+    let art: Vec<Line<'static>> = if area.width >= one[0].chars().count() as u16 + 8 {
+        shimmer(&one, t, motion)
+    } else {
+        vec![Line::styled("ENDING", Style::new().fg(PINK).bold())]
+    };
+    let art_width = art.iter().map(Line::width).max().unwrap_or(6) as u16;
+    let secs = left.as_secs_f64().ceil() as u64;
+    let clock = format!("{:02}:{:02}", secs / 60, secs % 60);
+    let mut lines = art;
+    lines.push(Line::raw(""));
+    lines.push(Line::from(vec![
+        Span::styled("The stream ends in  ", Style::new().fg(MUTED)),
+        Span::styled(clock, Style::new().fg(PINK).bold()),
+    ]));
+    lines.push(Line::from(hint(":end cancel", "stay live").into_iter().collect::<Vec<_>>()));
+    let width = (art_width + 8).max(34).min(area.width);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
+        width,
+        height,
+    };
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(VIOLET))
+        .title(Line::styled(" Ending ", Style::new().fg(PINK).bold()).centered());
+    frame.render_widget(Clear, rect);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .block(block),
+        rect,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

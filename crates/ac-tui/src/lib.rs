@@ -87,6 +87,8 @@ pub struct View {
     pub latency_running: bool,
     /// When OBS put the starting scene on air: the clock the overlay counts from too.
     pub starting_since: Option<Timestamp>,
+    /// When the end screen runs out and the stream ends (`:end`), while it shows.
+    pub ending_at: Option<Timestamp>,
     /// Measured latency, else the configured default.
     pub latency_s: f64,
     pub keys: KeysStatus,
@@ -1495,6 +1497,11 @@ impl App {
             let up = view.starting_since.map_or(0.0, |t| self.clock.now_ts().secs_since(t));
             let up = Duration::from_secs_f64(up.max(0.0));
             starting::draw(frame, body, up, self.tick(), self.motion, main);
+        } else if let Some(at) = view.ending_at
+            && self.mode == Mode::Normal
+        {
+            let left = Duration::from_secs_f64(at.secs_since(self.clock.now_ts()).max(0.0));
+            starting::draw_ending(frame, body, left, self.tick(), self.motion);
         }
 
         // The notice wins on the info line; the README summary gives way.
@@ -3435,6 +3442,7 @@ mod tests {
             pending_title: None,
             latency_running: false,
             starting_since: None,
+            ending_at: None,
             latency_s: 4.2,
             keys: KeysStatus::On,
             keys_per_min: vec![0, 10, 40],
