@@ -515,11 +515,11 @@ impl Controller {
     }
 
     /// Title of the chapter the stream is in now (last checkpoint, quest, ... so far).
-    fn current_chapter(&self) -> String {
+    pub(super) fn current_chapter(&self) -> String {
         let now = self.clock.now_ts();
         ac_template::chapters::candidates(&self.state, &self.config.stream)
             .into_iter()
-            .filter(|c| c.0 <= now)
+            .filter(|c| c.0 <= now && c.1 != ac_template::chapters::BREAK)
             .max_by_key(|c| c.0)
             .map_or_else(|| self.config.stream.first_chapter_title.clone(), |c| c.1)
     }

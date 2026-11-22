@@ -335,6 +335,19 @@ impl Controller {
         self.save_recordings();
     }
 
+    /// BRB is a chapter of its own: "Break" from its start, then back to the chapter before it.
+    fn brb_chapter(&mut self, start: bool) {
+        if !self.begun || !self.config.stream.chapter_on_brb {
+            return;
+        }
+        let title = if start {
+            ac_template::chapters::BREAK.to_owned()
+        } else {
+            self.current_chapter()
+        };
+        self.latency_chapter(title);
+    }
+
     /// A program scene change. `infer` is false for switches aftercast requested itself;
     /// otherwise switching to or from the BRB/privacy scene toggles that mode.
     fn scene_changed(&mut self, to: String, infer: bool) {
@@ -383,8 +396,10 @@ impl Controller {
                     countdown_s: None,
                 },
             );
+            self.brb_chapter(true);
         } else if left(&brb) && self.state.brb {
             self.emit("obs", EventKind::BrbEnd {});
+            self.brb_chapter(false);
         }
         if to == privacy && !self.state.privacy {
             self.privacy_return = from.clone();
@@ -493,10 +508,12 @@ impl Controller {
                     countdown_s: None,
                 },
             );
+            self.brb_chapter(true);
             self.switch_scene(scenes.brb);
         } else {
             let back = self.state.brb_return.clone().unwrap_or(scenes.main);
             self.emit(by_src(by), EventKind::BrbEnd {});
+            self.brb_chapter(false);
             self.switch_scene(back);
         }
     }

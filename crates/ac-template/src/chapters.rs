@@ -5,7 +5,7 @@ use ac_core::session_state::{QuestionState, SessionState};
 use ac_core::time::{Timestamp, chapter_ts};
 use serde::Serialize;
 
-/// Title of a BRB chapter (`stream.chapter_on_brb`).
+/// Title of a BRB chapter (`stream.chapter_on_brb`); aftercast saves it as a checkpoint.
 pub const BREAK: &str = "Break";
 /// Minimum distance between chapters, and the window for the first one.
 const MIN_GAP_S: f64 = 10.0;
@@ -48,29 +48,6 @@ pub fn candidates(state: &SessionState, stream: &config::Stream) -> Vec<Candidat
                 .iter()
                 .map(|q| (q.t, q.title.clone(), ChapterKind::Quest)),
         );
-    }
-    if stream.chapter_on_brb {
-        // After a break the stream is back in the chapter it was in (or one started during
-        // the break), so viewers can skip exactly the break.
-        let resume: Vec<Candidate> = state
-            .brb_ends
-            .iter()
-            .map(|&end| {
-                let title = out
-                    .iter()
-                    .filter(|c| c.0 <= end)
-                    .max_by_key(|c| c.0)
-                    .map_or_else(|| stream.first_chapter_title.clone(), |c| c.1.clone());
-                (end, title, ChapterKind::Checkpoint)
-            })
-            .collect();
-        out.extend(
-            state
-                .brb_starts
-                .iter()
-                .map(|&t| (t, BREAK.to_owned(), ChapterKind::Break)),
-        );
-        out.extend(resume);
     }
     if stream.chapter_on_question {
         out.extend(state.questions.iter().filter_map(|q| {
@@ -150,36 +127,6 @@ fn clean_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_break_returns_to_the_chapter_before_it() {
-        use ac_core::session_state::Checkpoint;
-        let at = |s: f64| {
-            "2026-11-20T10:00:00Z"
-                .parse::<Timestamp>()
-                .unwrap()
-                .add_secs(s)
-        };
-        let mut state = SessionState::default();
-        state.checkpoints.push(Checkpoint {
-            cid: "c".into(),
-            title: "Parser".into(),
-            pressed_at: at(100.0),
-            by: ac_core::event::By::Tui,
-        });
-        state.brb_starts = vec![at(200.0), at(400.0)];
-        state.brb_ends = vec![at(260.0), at(460.0)];
-        let mut c = candidates(&state, &config::Stream::default());
-        c.sort_by_key(|c| c.0);
-        let titles: Vec<&str> = c.iter().map(|c| c.1.as_str()).collect();
-        assert_eq!(titles, ["Parser", "Break", "Parser", "Break", "Parser"]);
-        // Off: no break chapters at all.
-        let off = config::Stream {
-            chapter_on_brb: false,
-            ..config::Stream::default()
-        };
-        assert_eq!(candidates(&state, &off).len(), 1);
-    }
 
     fn cp(t: f64, title: &str) -> (f64, String, ChapterKind) {
         (t, title.to_owned(), ChapterKind::Checkpoint)
