@@ -467,6 +467,19 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; bord
 .srcbox.off { pointer-events: none; }
 .ipnl { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
 .ipnl .ih { font-size: 12.5px; font-weight: 600; }
+.sform { display: grid; gap: 8px; }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+.srow > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: capitalize; }
+.srow input[type=text], .srow input[type=number], .srow select { width: 100%; min-width: 0; box-sizing: border-box; height: 28px; padding: 0 8px; border: 0;
+  border-radius: 7px; background: var(--well); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: inherit; font-size: 12px; outline: none; }
+.frow { display: grid; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); }
+.frow:first-child { border-top: 0; }
+.fhead { display: flex; align-items: center; gap: 4px; }
+.fhead .fname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; cursor: pointer; }
+.fhead .fname small { color: var(--faint); margin-left: 6px; font-size: 11px; }
+.fhead .icon { width: 24px; height: 24px; }
+.fhead.off .fname { color: var(--faint); }
+.pair select { min-width: 0; height: 32px; }
 .grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .txt { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 0; border-radius: 8px; background: var(--well);
   box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: inherit; font-size: 12.5px; outline: none; resize: vertical; }
@@ -734,6 +747,15 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
             <input type="text" class="txt" id="iName" spellcheck="false" aria-label="Source name">
             <div class="hint" id="iKind"></div>
             <div class="pair"><button class="btn" id="iVis" type="button">Hide</button><button class="btn" id="iLock" type="button">Lock</button></div>
+          </div>
+          <div class="ipnl" id="srcSettingsP" hidden>
+            <div class="ih">Settings</div>
+            <div id="srcSettings"></div>
+          </div>
+          <div class="ipnl" id="srcFiltersP" hidden>
+            <div class="ih">Filters</div>
+            <div id="srcFilters"></div>
+            <div class="pair"><select id="fKind" aria-label="Filter to add"></select><button class="btn" id="fAdd" type="button">Add</button></div>
           </div>
           <div class="ipnl">
             <div class="ih">Transform</div>
@@ -1135,6 +1157,7 @@ async function poll() {
     programScene = f.scene;
     onObs(f.obs);
     onItems(f.items);
+    onSource(f.source);
     liveSince = f.live_since ? Date.parse(f.live_since) : null;
     skew = Date.parse(f.now) - Date.now();
     for (const m of f.chat) if (!seen.has(m.id)) { seen.add(m.id); addMsg(m); }
@@ -3611,6 +3634,171 @@ undo = function () {
   baseUndo();
 };
 $("undo").onclick = () => undo();
+
+// A source's own settings and filters: the settings are laid out from what OBS says they are
+// (every setting its kind has, as a switch, a number, a text or a list to pick from), the
+// filters listed with an eye, order, removal and their settings. The feed brings OBS's view back.
+let srcDetail = { source: null, filters: [], settings: {}, defaults: {}, choices: {}, filter_kinds: [], kind: "" };
+let srcQuiet = 0, openFilter = null;
+const FILTER_NAMES = {
+  chroma_key_filter_v2: "Chroma key", color_key_filter_v2: "Color key", luma_key_filter_v2: "Luma key",
+  color_filter_v2: "Color correction", crop_filter: "Crop and pad", scale_filter: "Scaling",
+  mask_filter_v2: "Image mask", sharpness_filter_v2: "Sharpen", scroll_filter: "Scroll", gpu_delay: "Render delay",
+  gain_filter: "Gain", noise_suppress_filter_v2: "Noise suppression", noise_gate_filter: "Noise gate",
+  compressor_filter: "Compressor", limiter_filter: "Limiter", expander_filter: "Expander", invert_polarity_filter: "Invert polarity",
+  async_delay_filter: "Video delay", eq_filter: "Equalizer", vst_filter: "VST plugin", lut_filter: "Apply LUT",
+};
+const filterName = (k) => FILTER_NAMES[k] || k.replace(/_filter(_v\d)?$/, "").replace(/_/g, " ");
+
+function onSource(d) {
+  if (!d || Date.now() < srcQuiet) return;
+  const changed = JSON.stringify(d) !== JSON.stringify(srcDetail);
+  srcDetail = d;
+  if (changed) paintSource();
+}
+function watchSource() {
+  const it = selectedItem();
+  if (!editing || !it || chosen().length !== 1) return;
+  fetch("/rehearse/obs/watch-source", { method: "POST", headers: { "content-type": "application/json" },
+                                         body: JSON.stringify({ source: it.source }) }).catch(() => {});
+}
+setInterval(watchSource, 4000);
+const sendSource = (edit) => {
+  const it = selectedItem();
+  if (!it) return;
+  srcQuiet = Date.now() + 1200;
+  fetch("/rehearse/obs/source", { method: "POST", headers: { "content-type": "application/json" },
+                                   body: JSON.stringify({ source: it.source, ...edit }) }).catch(() => {});
+};
+
+// One setting as a row: a switch, a number, a text, or a list to pick from.
+function settingRow(key, cur, def, choices, change) {
+  const row = document.createElement("label");
+  row.className = "srow";
+  const name = document.createElement("span");
+  name.textContent = key.replace(/_/g, " ");
+  name.title = key;
+  row.append(name);
+  const type = typeof (cur ?? def);
+  let input;
+  if (choices && choices.length) {
+    input = document.createElement("select");
+    const at = choices.findIndex(([, v]) => JSON.stringify(v) === JSON.stringify(cur));
+    if (at < 0) input.add(new Option(String(cur ?? ""), "-1"));
+    choices.forEach(([n], i) => input.add(new Option(n, String(i))));
+    input.value = String(at);
+    input.onchange = () => change(choices[Number(input.value)][1]);
+  } else if (type === "boolean") {
+    const sw = document.createElement("span");
+    sw.className = "switch";
+    input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = !!cur;
+    input.onchange = () => change(input.checked);
+    sw.append(input);
+    row.append(sw);
+    return row;
+  } else if (type === "number") {
+    input = document.createElement("input");
+    input.type = "number";
+    input.step = Number.isInteger(def ?? cur) ? "1" : "any";
+    input.value = cur;
+    input.onchange = () => Number.isFinite(input.valueAsNumber) && change(input.valueAsNumber);
+  } else if (type === "string") {
+    input = document.createElement("input");
+    input.type = "text";
+    input.spellcheck = false;
+    input.value = cur;
+    input.onchange = () => change(input.value);
+  } else return null;
+  row.append(input);
+  return row;
+}
+function settingsForm(settings, defaults, choices, change) {
+  const form = document.createElement("div");
+  form.className = "sform";
+  const keys = [...new Set([...Object.keys(defaults || {}), ...Object.keys(settings || {})])].filter((k) => !k.startsWith("_"));
+  for (const key of keys.slice(0, 60)) {
+    const cur = settings && key in settings ? settings[key] : defaults?.[key];
+    const row = settingRow(key, cur, defaults?.[key], choices?.[key], (v) => change({ [key]: v }));
+    if (row) form.append(row);
+  }
+  return form;
+}
+function paintSource() {
+  const it = selectedItem();
+  const mine = it && srcDetail.source === it.source && chosen().length === 1;
+  $("srcSettingsP").hidden = !mine || !srcDetail.kind;
+  $("srcFiltersP").hidden = !mine;
+  if (!mine) return;
+  // Not while one of the fields is being typed in.
+  if (!$("srcSettings").contains(document.activeElement)) {
+    $("srcSettings").replaceChildren(settingsForm(srcDetail.settings, srcDetail.defaults, srcDetail.choices, (settings) => {
+      Object.assign(srcDetail.settings, settings);
+      sendSource({ settings });
+    }));
+  }
+  if (!$("srcFilters").contains(document.activeElement)) {
+    $("srcFilters").replaceChildren(...srcDetail.filters.map((f, i, all) => {
+      const row = document.createElement("div");
+      row.className = "frow";
+      const head = document.createElement("div");
+      head.className = "fhead" + (f.enabled ? "" : " off");
+      const btn = (icon, title, fn, disabled) => {
+        const b = document.createElement("button");
+        b.className = "icon";
+        b.type = "button";
+        b.title = title;
+        b.innerHTML = svg(icon);
+        b.disabled = !!disabled;
+        b.onclick = fn;
+        return b;
+      };
+      const nm = document.createElement("span");
+      nm.className = "fname";
+      nm.innerHTML = "";
+      nm.append(f.name, Object.assign(document.createElement("small"), { textContent: filterName(f.kind) }));
+      nm.onclick = () => { openFilter = openFilter === f.name ? null : f.name; paintSource(); };
+      head.append(
+        btn(f.enabled ? "eye" : "eyeoff", f.enabled ? "Turn off" : "Turn on", () => { f.enabled = !f.enabled; sendSource({ filter: f.name, filter_enabled: f.enabled }); paintSource(); }),
+        nm,
+        btn("up", "Earlier", () => sendSource({ filter: f.name, filter_index: f.index - 1 }), i === 0),
+        btn("down", "Later", () => sendSource({ filter: f.name, filter_index: f.index + 1 }), i === all.length - 1),
+        btn("x", "Remove", () => { if (confirm(`Remove the filter "${f.name}"?`)) { srcDetail.filters = srcDetail.filters.filter((x) => x !== f); sendSource({ filter: f.name, filter_remove: true }); paintSource(); } }),
+      );
+      row.append(head);
+      if (openFilter === f.name) {
+        row.append(settingsForm(f.settings, f.defaults, {}, (filter_settings) => {
+          Object.assign(f.settings, filter_settings);
+          sendSource({ filter: f.name, filter_settings });
+        }));
+      }
+      return row;
+    }));
+  }
+  const have = [...$("fKind").options].map((o) => o.value).join();
+  if (have !== srcDetail.filter_kinds.join()) {
+    $("fKind").replaceChildren(...srcDetail.filter_kinds.map((k) => new Option(filterName(k), k)));
+  }
+}
+$("fAdd").onclick = () => {
+  const kind = $("fKind").value;
+  if (!kind) return;
+  const taken = new Set(srcDetail.filters.map((f) => f.name));
+  let name = filterName(kind), n = 2;
+  while (taken.has(name)) name = `${filterName(kind)} ${n++}`;
+  srcDetail.filters.push({ name, kind, enabled: true, index: srcDetail.filters.length, settings: {}, defaults: {} });
+  openFilter = name;
+  sendSource({ filter: name, add_filter: kind });
+  paintSource();
+};
+const keepSelect = selectItem;
+selectItem = function (id, add) {
+  keepSelect(id, add);
+  srcDetail = { ...srcDetail, source: null };
+  paintSource();
+  watchSource();
+};
 </script>
 </body>
 </html>
