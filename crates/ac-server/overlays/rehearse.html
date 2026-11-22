@@ -1824,10 +1824,12 @@ $("edSound").onclick = () => {
   liveSound();
 };
 
-// A click on the empty space around the video, or beside the layers, deselects.
+// A click on any empty space (the top bar, the panels, around the video) deselects, sources and
+// browser sources alike. Controls, menus, layer rows and the canvas keep the selection.
 document.addEventListener("pointerdown", (e) => {
-  if (!editing || selected === null) return;
-  if (e.target.closest(".player, .inspector, .skins, .top, .ctx, .layer, .scene, select, input, button, label")) return;
+  if (!editing || (selected === null && selItem === null)) return;
+  if (e.target.closest(".player, .ctx, .layer, .scene, select, input, textarea, button, label, a, .pnl, .ipnl, .skin, .note, .seg, .color, .num, .panel-head")) return;
+  selectItem(null);
   select(null);
 });
 
@@ -2356,7 +2358,7 @@ function build() {
   t.hidden = true;
   canvas.append(sel, t);
   // A click on the empty canvas clears the selection.
-  $("stage").onpointerdown = (e) => { if (e.target === $("stage") || e.target === canvas) select(null); };
+  $("stage").onpointerdown = (e) => { if (e.target === $("stage") || e.target === canvas) { selectItem(null); select(null); } };
   layerRows();
   restack();
   $("sceneSel").onchange = () => enterScene($("sceneSel").value);
