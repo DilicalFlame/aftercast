@@ -419,6 +419,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ins-body .color { min-width: 0; overflow: hidden; }
 .ins-body select, .ins-body .txt { max-width: 100%; }
 .note .btn { flex: none; white-space: nowrap; }
+.note.dock { margin: 0 12px 6px; padding: 5px 5px 5px 10px; gap: 8px; font-size: 12.5px; }
+.note.dock [data-icon] { display: grid; flex: none; color: var(--dim); }
+.note.dock [data-icon] svg { width: 15px; height: 15px; }
+.note.dock .grow { flex: 1; min-width: 0; }
+.note.dock .btn { height: 26px; padding: 0 10px; font-size: 12px; }
 .pnl { border-bottom: 1px solid var(--line); }
 .pnl.other { display: none; }
 .pnl-h { display: flex; align-items: center; gap: 6px; width: 100%; height: 34px; padding: 0; border: 0; background: none;
@@ -736,8 +741,8 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
   <aside class="inspector">
     <div class="panel-head"><span id="insIcon"></span><span class="grow" id="insName">Style</span>
       <button class="icon" id="resetFrame" title="Reset to default" data-icon="reset" hidden></button></div>
-    <div class="note" id="dockedNote" hidden>
-      <span>In the status bar. What needs its own space on the canvas is off.</span>
+    <div class="note dock" id="dockedNote" hidden>
+      <span data-icon="bar"></span><span class="grow">In the status bar</span>
       <button class="btn" id="undock" type="button">Take out</button>
     </div>
     <div class="ins-body">
