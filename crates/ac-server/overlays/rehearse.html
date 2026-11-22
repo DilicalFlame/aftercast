@@ -798,7 +798,7 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
               <label class="num"><b title="Scale">%</b><input type="number" id="iScale" min="1" max="10000" step="1"></label><label class="num"><b title="Rotation">°</b><input type="number" id="iRot" min="0" max="360" step="1"></label>
             </div>
             <label class="switch"><input type="checkbox" id="iAspect" checked><span>Keep the shape</span></label>
-            <div class="hint">Drag on the canvas, corners resize, the round grip rotates. Arrows nudge (Shift: 10). Shift or Ctrl click adds sources to the selection.</div>
+            <div class="hint">Drag on the canvas, corners resize (Alt crops), the round grip rotates. Arrows nudge (Shift: 10). Shift or Ctrl click adds sources to the selection.</div>
           </div>
           <div class="ipnl">
             <div class="ih">Crop</div>
@@ -3811,6 +3811,21 @@ function itemResize(it, hx, hy, e) {
   document.body.style.setProperty("--gesture", "nwse-resize");
   const move = (m) => {
     const dx = (m.clientX - x0) / conv, dy = (m.clientY - y0) / conv;
+    // Alt: the handle crops (the picture stays where it is) instead of scaling.
+    if (m.altKey && !it.bounds && it.source_w > 0) {
+      const sx = Math.abs(it.scale_x) || 1, sy = Math.abs(it.scale_y) || 1, c = [...before.crop];
+      // A flipped picture has its crop on the other side.
+      const li = it.scale_x < 0 ? 1 : 0, ri = 1 - li, ti = it.scale_y < 0 ? 3 : 2, bi = 5 - ti;
+      const room = (o, size, sc) => Math.max(0, size - before.crop[o] - 8 / sc);
+      if (hx < 0) c[li] = Math.min(room(ri, it.source_w, sx), Math.max(0, before.crop[li] + dx / sx));
+      if (hx > 0) c[ri] = Math.min(room(li, it.source_w, sx), Math.max(0, before.crop[ri] - dx / sx));
+      if (hy < 0) c[ti] = Math.min(room(bi, it.source_h, sy), Math.max(0, before.crop[ti] + dy / sy));
+      if (hy > 0) c[bi] = Math.min(room(ti, it.source_h, sy), Math.max(0, before.crop[bi] - dy / sy));
+      const w2 = (it.source_w - c[li] - c[ri]) * sx, h2 = (it.source_h - c[ti] - c[bi]) * sy;
+      const left = hx < 0 ? b.left + (c[li] - before.crop[li]) * sx : b.left;
+      const top = hy < 0 ? b.top + (c[ti] - before.crop[ti]) * sy : b.top;
+      return editItem(it, { crop: c.map(Math.round), x: r1(left + b.ax * w2), y: r1(top + b.ay * h2) });
+    }
     let w = hx ? Math.max(8, b.w + hx * dx) : b.w, h = hy ? Math.max(8, b.h + hy * dy) : b.h;
     if ((hx && hy || $("iAspect").checked) && !m.shiftKey) {
       const f = Math.abs(w / b.w - 1) > Math.abs(h / b.h - 1) ? w / b.w : h / b.h;
