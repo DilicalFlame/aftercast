@@ -594,7 +594,6 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     <button class="icon edit-only" id="leftToggle" type="button" title="Layers panel" data-icon="panelL" style="margin-left:auto;margin-right:10px"></button>
   </div>
   <div class="t-mid">
-    <span class="hint view-only">Simulated YouTube, video from OBS Virtual Camera</span>
     <div class="bar empty" id="bar">
       <div class="group">
         <button class="icon" id="showVideo" aria-pressed="true" title="OBS video" data-icon="video"></button>
@@ -633,7 +632,7 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     <button class="icon edit-only" id="rightToggle" type="button" title="Style panel" data-icon="panelR"></button>
     <button class="icon edit-only" id="undo" title="Undo" disabled data-icon="undo"></button>
     <button class="icon edit-only" id="redo" title="Redo" disabled data-icon="redo"></button>
-    <button class="btn" id="edit"><span data-icon="pen"></span><span>Edit scenes</span></button>
+    <button class="btn" id="edit"><span data-icon="pen"></span><span>Edit</span></button>
   </div>
 </header>
 <span class="saved" id="saved"></span>
@@ -2908,7 +2907,7 @@ $("edit").onclick = async () => {
   editing = !editing;
   document.body.classList.toggle("editing", editing);
   $("edit").classList.toggle("primary", editing);
-  $("edit").lastElementChild.textContent = editing ? "Done" : "Edit scenes";
+  $("edit").lastElementChild.textContent = editing ? "Done" : "Edit";
   $("edit").firstElementChild.hidden = editing;
   $("stage").hidden = !editing;
   fitPlayer();
