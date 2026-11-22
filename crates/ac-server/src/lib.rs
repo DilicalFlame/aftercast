@@ -192,6 +192,10 @@ pub async fn bind(
             get(rehearse::frames).post(rehearse::frame),
         )
         .route("/rehearse/order", post(rehearse::order))
+        .route(
+            "/rehearse/layers",
+            get(rehearse::layers).post(rehearse::save_layers),
+        )
         .route("/rehearse/pack", post(rehearse::pack))
         .route("/rehearse/options", post(rehearse::options))
         .route("/rehearse/source", post(rehearse::source))
@@ -973,6 +977,32 @@ mod tests {
             .post(&order_url)
             .json(&json!({ "order": ["nope"] }))
             .send();
+        assert_eq!(r.await.unwrap().status(), 400);
+
+        // Layer folders: empty before the first save, kept in the home, only an object accepted.
+        let layers_url = format!("http://{addr}/rehearse/layers");
+        let got: Value = http
+            .get(&layers_url)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(got, json!({}));
+        let doc = json!({ "folders": { "Scene": { "list": [{ "id": "f1", "name": "Camera" }] } } });
+        let r = http.post(&layers_url).json(&doc).send();
+        assert_eq!(r.await.unwrap().status(), 204);
+        let got: Value = http
+            .get(&layers_url)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(got, doc);
+        let r = http.post(&layers_url).json(&json!([1])).send();
         assert_eq!(r.await.unwrap().status(), 400);
 
         // Skins: a pack, an overlay's own, custom files listed and served, odd names refused.

@@ -750,3 +750,38 @@ pub(crate) async fn pack(State(s): State<Arc<Shared>>, Json(p): Json<Pack>) -> R
     let _ = s.commands.send(Command::Reload);
     StatusCode::NO_CONTENT.into_response()
 }
+
+/// The editor's virtual folders and view settings can be this big, no more.
+const LAYERS_MAX: usize = 256 * 1024;
+
+/// `/rehearse/layers`: the layer panel's virtual folders (kept in aftercast, not in OBS), as
+/// saved in `<home>/overlays/layers.json` (`{}` before the first save).
+pub(crate) async fn layers(State(s): State<Arc<Shared>>) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let text = std::fs::read_to_string(s.dir.join("layers.json")).unwrap_or_else(|_| "{}".into());
+    ([(header::CONTENT_TYPE, "application/json")], text).into_response()
+}
+
+pub(crate) async fn save_layers(
+    State(s): State<Arc<Shared>>,
+    Json(doc): Json<serde_json::Value>,
+) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    if !doc.is_object() {
+        return (StatusCode::BAD_REQUEST, "an object is expected").into_response();
+    }
+    let text = doc.to_string();
+    if text.len() > LAYERS_MAX {
+        return (StatusCode::PAYLOAD_TOO_LARGE, "too many folders").into_response();
+    }
+    let saved = std::fs::create_dir_all(&s.dir)
+        .and_then(|()| std::fs::write(s.dir.join("layers.json"), text));
+    match saved {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
