@@ -80,6 +80,11 @@ pub enum Command {
     WatchScene {
         scene: String,
     },
+    /// The editor shows OBS's own picture of a scene (repeated every few seconds): a few
+    /// screenshots a second while it does.
+    WatchShot {
+        scene: String,
+    },
     /// The editor looks at a source's settings and filters (repeated every few seconds).
     WatchSource {
         source: String,

@@ -77,6 +77,8 @@ pub enum Update {
         /// Its `monitor` index.
         index: Option<usize>,
     },
+    /// A scene's picture as a `data:image/jpeg;base64,...` address (the answer to [`Request::Shot`]).
+    Shot(String),
     /// A source's settings and filters (the answer to [`Request::Source`]).
     Source(ac_core::obs::SourceDetail),
     /// The sources of a scene with their places (the answer to [`Request::Items`]).
@@ -128,6 +130,10 @@ pub enum Request {
     Place {
         scene: String,
         id: i64,
+    },
+    /// A screenshot of a scene (a small JPEG); answered with [`Update::Shot`].
+    Shot {
+        scene: String,
     },
     /// Reads a source's settings and filters; answered with [`Update::Source`].
     Source {
@@ -497,6 +503,18 @@ async fn serve(
                     };
                     if let Err(e) = client.scene_items().set_enabled(set).await {
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::Shot { scene }) => {
+                    let shot = obws::requests::sources::TakeScreenshot {
+                        source: scene.as_str().into(),
+                        format: "jpg",
+                        width: Some(960),
+                        height: None,
+                        compression_quality: Some(55),
+                    };
+                    if let Ok(image) = client.sources().take_screenshot(shot).await {
+                        send(Update::Shot(image));
                     }
                 }
                 Some(Request::Source { name }) => {

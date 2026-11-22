@@ -52,6 +52,8 @@ pub struct Rehearse {
     next_id: AtomicU64,
     /// The session's `media` folder: the recording the player can go back in.
     media: Option<std::path::PathBuf>,
+    /// OBS's latest picture of the scene being edited, as an image address.
+    shot: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 impl Rehearse {
@@ -59,6 +61,11 @@ impl Rehearse {
     pub fn with_media(mut self, dir: std::path::PathBuf) -> Self {
         self.media = Some(dir);
         self
+    }
+
+    /// Where the controller puts OBS's latest picture of the scene being edited.
+    pub fn shot_slot(&self) -> std::sync::Arc<std::sync::Mutex<String>> {
+        self.shot.clone()
     }
 
     pub(crate) fn media(&self) -> Option<&std::path::Path> {
@@ -71,6 +78,7 @@ impl Rehearse {
             chat,
             next_id: AtomicU64::new(1),
             media: None,
+            shot: Default::default(),
         }
     }
 }
@@ -171,6 +179,30 @@ pub(crate) async fn watch(State(s): State<Arc<Shared>>, Json(p): Json<Watch>) ->
     }
     let _ = s.commands.send(Command::WatchScene { scene: p.scene });
     StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WatchPic {
+    scene: String,
+}
+
+/// The editor wants OBS's own picture of a scene (repeated every few seconds while it does).
+pub(crate) async fn watch_shot(State(s): State<Arc<Shared>>, Json(p): Json<WatchPic>) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let _ = s.commands.send(Command::WatchShot { scene: p.scene });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// `/rehearse/obs/shot`: OBS's latest picture of the scene, as an image address (404 before one).
+pub(crate) async fn shot(State(s): State<Arc<Shared>>) -> Response {
+    let Some(r) = &s.rehearse else { return off() };
+    let text = r.shot.lock().map(|g| g.clone()).unwrap_or_default();
+    if text.is_empty() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    ([(header::CACHE_CONTROL, "no-store")], text).into_response()
 }
 
 #[derive(Deserialize)]

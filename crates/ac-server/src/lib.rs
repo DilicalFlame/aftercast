@@ -198,6 +198,8 @@ pub async fn bind(
         .route("/rehearse/obs/watch", post(rehearse::watch))
         .route("/rehearse/obs/item", post(rehearse::item))
         .route("/rehearse/obs/watch-source", post(rehearse::watch_source))
+        .route("/rehearse/obs/watch-shot", post(rehearse::watch_shot))
+        .route("/rehearse/obs/shot", get(rehearse::shot))
         .route("/rehearse/obs/source", post(rehearse::source_edit))
         .route("/rehearse/add-source", post(rehearse::add_source))
         .route("/rehearse/mode", post(rehearse::mode))

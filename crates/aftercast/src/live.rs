@@ -284,6 +284,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         }
         None => (None, None),
     };
+    let shot_slot = page.as_ref().map(ac_server::Rehearse::shot_slot);
     let yt = Arc::new(yt);
     let begun_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let started = clock.now_ts();
@@ -420,6 +421,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         auto_streamed: false,
         obs_items: Arc::default(),
         obs_source: Arc::default(),
+        shot_slot,
+        watch_shot: None,
         watch_source: None,
         watch_scene: None,
         watch_tick: 0,
@@ -938,6 +941,9 @@ struct Controller {
     /// The settings and filters of the source the editor looks at, and until when it asks.
     obs_source: Arc<ac_core::obs::SourceDetail>,
     watch_source: Option<(String, Instant)>,
+    /// OBS's picture of the scene the editor shows, and until when it keeps asking.
+    shot_slot: Option<Arc<std::sync::Mutex<String>>>,
+    watch_shot: Option<(String, Instant)>,
     watch_scene: Option<(String, Instant)>,
     watch_tick: u8,
     /// `:end` is showing the end screen until then (`:end cancel` clears it).
@@ -1318,6 +1324,10 @@ impl Controller {
             Command::WatchScene { scene } => {
                 self.watch_scene = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
                 self.obs_request(ac_obs::Request::Items { scene });
+            }
+            Command::WatchShot { scene } => {
+                self.watch_shot = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
+                self.obs_request(ac_obs::Request::Shot { scene });
             }
             Command::WatchSource { source } => {
                 self.watch_source =

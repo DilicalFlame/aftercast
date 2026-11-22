@@ -212,6 +212,13 @@ impl Controller {
             }
             Update::Items(detail) => self.obs_items = Arc::new(detail),
             Update::Source(detail) => self.obs_source = Arc::new(detail),
+            Update::Shot(image) => {
+                if let Some(slot) = &self.shot_slot
+                    && let Ok(mut g) = slot.lock()
+                {
+                    *g = image;
+                }
+            }
             Update::Stream(state) => {
                 self.stream_changed(state);
                 self.quit_ready();
@@ -762,6 +769,16 @@ impl Controller {
                 self.obs_request(Request::Items { scene });
             } else {
                 self.watch_scene = None;
+            }
+        }
+        // A few pictures a second of the scene being edited.
+        if self.watch_tick % 3 == 1
+            && let Some((scene, until)) = self.watch_shot.clone()
+        {
+            if crate::live::Instant::now() < until {
+                self.obs_request(Request::Shot { scene });
+            } else {
+                self.watch_shot = None;
             }
         }
         if self.watch_tick == 5
