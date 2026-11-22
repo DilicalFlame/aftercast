@@ -355,6 +355,9 @@ struct App {
     motion: bool,
     /// When the TUI first saw OBS on the starting scene (the banner's clock).
     starting_seen: Option<Instant>,
+    /// Go Live was just pressed: the Starting Soon banner is up at once, without waiting for
+    /// the session to begin and OBS to switch scenes (until OBS shows it, or a few seconds).
+    banner_hold: Option<Instant>,
     /// The highlighted palette suggestion, and whether ↑/↓ chose it.
     pick: usize,
     picked: bool,
@@ -403,6 +406,7 @@ impl App {
             users: UserColors::default(),
             motion: true,
             starting_seen: None,
+            banner_hold: None,
             pick: 0,
             picked: false,
             meters: false,
@@ -502,6 +506,15 @@ impl App {
         }
     }
 
+    /// The Starting Soon banner shows: OBS is on the starting scene, or Go Live was pressed a
+    /// moment ago and OBS is about to be.
+    fn banner_up(&self, view: &View) -> bool {
+        on_starting(view)
+            || self
+                .banner_hold
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(6))
+    }
+
     fn resizing(&self) -> bool {
         self.split != self.split_target
     }
@@ -510,6 +523,10 @@ impl App {
         while !self.exit {
             let view = self.view.borrow_and_update().clone();
             self.poll_external(&view);
+            if on_starting(&view) {
+                // OBS has the scene: from here it decides (leaving it hides the banner).
+                self.banner_hold = None;
+            }
             // Until the session starts, Home is where everything returns to.
             // (Start was just pressed: Home waits a few seconds for the session to begin; if it
             // cannot, Home stays with the reason.)
@@ -837,7 +854,7 @@ impl App {
     fn normal_key(&mut self, code: KeyCode, view: &View) {
         self.message = None;
         // The Starting Soon banner: Enter moves on to the main scene.
-        if code == KeyCode::Enter && on_starting(view) {
+        if code == KeyCode::Enter && self.banner_up(view) {
             let name = view.config.obs.scenes.main.clone();
             self.send(Command::Scene { name });
             return;
@@ -1129,6 +1146,12 @@ impl App {
                     Command::Begin
                 });
                 self.starting_at = Some(std::time::Instant::now());
+                if home::go_live(view)
+                    && view.config.stream.starting_screen
+                    && view.obs.scenes.contains(&view.config.obs.scenes.starting)
+                {
+                    self.banner_hold = Some(Instant::now());
+                }
                 self.mode = Mode::Normal;
             }
             KeyCode::Char(c @ ('R' | 'S' | 'M' | ',' | ':')) => self.home_key(c, view),
@@ -1420,11 +1443,12 @@ impl App {
         self.draw_questions(frame, questions, view);
         self.draw_chapters(frame, chapters, view);
         self.draw_log(frame, log, view);
-        if on_starting(view) && self.mode == Mode::Normal {
+        let banner = self.banner_up(view);
+        if banner && self.mode == Mode::Normal {
             let since = *self.starting_seen.get_or_insert_with(Instant::now);
             let main = &view.config.obs.scenes.main;
             starting::draw(frame, body, since.elapsed(), self.tick(), self.motion, main);
-        } else if !on_starting(view) {
+        } else if !banner {
             self.starting_seen = None;
         }
 
@@ -4296,6 +4320,29 @@ mute Mic/Aux
         let mut app = App::new(clock, rx, cmd_tx);
         app.mode = Mode::Normal;
         assert!(screen(&mut app, &view).contains("MIC MUTED"));
+    }
+
+    #[test]
+    fn go_live_shows_the_starting_banner_at_once() {
+        let clock = Arc::new(Clock::new());
+        let mut view = sample_view(&clock);
+        view.begun = false;
+        view.state.stream = Some(StreamStatus::Upcoming);
+        let starting = view.config.obs.scenes.starting.clone();
+        let scenes = &mut Arc::make_mut(&mut view.obs).scenes;
+        if !scenes.contains(&starting) {
+            scenes.push(starting);
+        }
+        let (_tx, rx) = watch::channel(view.clone());
+        let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(clock, rx, cmd_tx);
+        app.mode = Mode::Preflight;
+        app.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE), &view);
+        assert_eq!(cmd_rx.try_recv().unwrap(), Command::GoLive);
+        // OBS has not switched scenes yet, and the banner is already up.
+        assert!(!on_starting(&view));
+        let text = screen(&mut app, &view);
+        assert!(text.contains("On air soon"), "{text}");
     }
 
     #[test]
