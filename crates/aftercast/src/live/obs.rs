@@ -210,18 +210,40 @@ impl Controller {
                     map.extend(levels);
                 }
             }
-            Update::Stream(state) => self.stream_changed(state),
+            Update::Stream(state) => {
+                self.stream_changed(state);
+                self.quit_ready();
+            }
             Update::Record { state, path } => {
                 self.record_changed(state, path);
-                // Quitting a draft waited for this: OBS has let go of the file.
-                if self.quit_by.is_some() && state == OutputState::Stopped {
-                    self.done = true;
-                }
+                self.quit_ready();
             }
             Update::Failed(error) => {
                 self.pending_scenes.pop_front();
                 self.notice = Some(format!("OBS: {error}"));
             }
+        }
+    }
+
+    /// Quitting from Home waited for this: OBS has stopped the stream and let go of the
+    /// recording's file.
+    fn quit_ready(&mut self) {
+        let busy = |s: Option<OutputState>, on: &[OutputState]| s.is_some_and(|s| on.contains(&s));
+        if self.quit_by.is_some()
+            && !busy(
+                self.state.obs_record,
+                &[
+                    OutputState::Started,
+                    OutputState::Resumed,
+                    OutputState::Paused,
+                ],
+            )
+            && !busy(
+                self.state.obs_stream,
+                &[OutputState::Started, OutputState::Reconnecting],
+            )
+        {
+            self.done = true;
         }
     }
 

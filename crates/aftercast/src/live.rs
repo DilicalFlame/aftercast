@@ -1329,23 +1329,50 @@ impl Controller {
             Command::Finalize => self.finalize().await,
             Command::PostProcess => self.post_process(),
             Command::Reload => self.reload(),
-            // Quitting a draft that never started keeps nothing: a recording in it is
-            // stopped first (its file is deleted with the draft once OBS lets go of it).
-            Command::Quit if !self.begun && !self.resumed => {
-                self.discard = true;
+            // Quitting from Home, before the session began: what aftercast started in OBS
+            // (the stream, the rehearse page's Virtual Camera) is stopped, and a recording too
+            // (a new draft keeps nothing: its file is deleted once OBS lets go of it).
+            Command::Quit if !self.begun => {
+                if self.resumed {
+                    self.emit(
+                        "core",
+                        EventKind::SessionEnd {
+                            reason: Some(EndReason::Quit),
+                        },
+                    );
+                } else {
+                    self.discard = true;
+                }
                 let recording = matches!(
                     self.state.obs_record,
                     Some(OutputState::Started | OutputState::Resumed | OutputState::Paused)
                 );
-                if recording && matches!(self.obs, obs::ObsLink::Real(_)) {
+                let streaming = matches!(
+                    self.state.obs_stream,
+                    Some(OutputState::Started | OutputState::Reconnecting)
+                );
+                let camera = self.rehearse_feed.is_some();
+                if !matches!(self.obs, obs::ObsLink::Real(_)) || !(recording || streaming || camera)
+                {
+                    self.done = true;
+                    return;
+                }
+                if recording {
                     self.obs_request(ac_obs::Request::Record(
                         ac_core::command::OutputAction::Stop,
                     ));
-                    self.quit_by = Some(Instant::now() + Duration::from_secs(8));
-                    self.notice = Some("stopping the recording, then quitting".into());
-                } else {
-                    self.done = true;
                 }
+                if streaming {
+                    self.obs_request(ac_obs::Request::Stream(false));
+                }
+                if camera {
+                    self.obs_request(ac_obs::Request::StopVirtualCam);
+                }
+                // Waits for OBS to say the outputs stopped (quit_ready), but not for long; with
+                // only the camera to stop, just long enough for the request to leave.
+                let wait = if recording || streaming { 8_000 } else { 700 };
+                self.quit_by = Some(Instant::now() + Duration::from_millis(wait));
+                self.notice = Some("stopping OBS, then quitting".into());
             }
             Command::Quit => {
                 self.emit(
