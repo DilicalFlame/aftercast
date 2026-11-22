@@ -358,6 +358,8 @@ struct App {
     /// Go Live was just pressed: the Starting Soon banner is up at once, without waiting for
     /// the session to begin and OBS to switch scenes (until OBS shows it, or a few seconds).
     banner_hold: Option<Instant>,
+    /// When the end prompt came up (the on-air time stops there when YouTube has not said).
+    ended_at: Option<Timestamp>,
     /// The highlighted palette suggestion, and whether ↑/↓ chose it.
     pick: usize,
     picked: bool,
@@ -407,6 +409,7 @@ impl App {
             motion: true,
             starting_seen: None,
             banner_hold: None,
+            ended_at: None,
             pick: 0,
             picked: false,
             meters: false,
@@ -541,6 +544,7 @@ impl App {
             }
             if view.state.ended && !self.end_prompted && self.mode == Mode::Normal {
                 self.end_prompted = true;
+                self.ended_at = Some(self.clock.now_ts());
                 self.mode = Mode::Ended;
                 // One bell, so the prompt is noticed from another window.
                 let _ = io::Write::write_all(&mut io::stdout(), b"");
@@ -2317,7 +2321,10 @@ impl App {
             Mode::Ended => {
                 let anchors = &view.meta.anchors;
                 let on_air = anchors.yt_actual_start.map(|start| {
-                    let end = anchors.yt_actual_end.unwrap_or(self.clock.now_ts());
+                    let end = anchors
+                        .yt_actual_end
+                        .or(self.ended_at)
+                        .unwrap_or(self.clock.now_ts());
                     Duration::from_secs_f64(end.secs_since(start).max(0.0))
                 });
                 ended::draw(frame, frame.area(), on_air, t, self.motion);

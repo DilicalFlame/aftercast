@@ -541,6 +541,17 @@ impl Controller {
             self.obs_request(Request::Record(ac_core::command::OutputAction::Stop));
         }
         self.obs_request(Request::StopVirtualCam);
+        // The stream is over from here: say so now (OBS takes seconds to report its output
+        // stopped), so the end prompt is up the moment the end screen's time is.
+        if !self.state.ended {
+            self.emit(
+                "obs",
+                EventKind::StreamEnded {
+                    source: Source::Obs,
+                },
+            );
+            self.set_status(Status::Ended);
+        }
         self.notice = Some("stream ended: OBS stopped streaming, recording and the virtual camera; :finalize when ready".into());
     }
 
