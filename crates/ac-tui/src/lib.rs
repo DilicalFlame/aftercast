@@ -518,6 +518,48 @@ impl App {
                 .is_some_and(|t| t.elapsed() < Duration::from_secs(6))
     }
 
+    /// What the stream's end is still getting through, for the end prompt: OBS stopping the
+    /// stream and closing the recording, YouTube ending the broadcast.
+    fn ended_steps(&self, view: &View) -> Vec<ended::Step> {
+        use OutputState as O;
+        use ended::Step::{Done, Note, Working};
+        let mut steps = vec![];
+        match view.state.obs_stream {
+            Some(O::Started | O::Reconnecting) => {
+                steps.push(Working("OBS is stopping the stream".into()))
+            }
+            Some(_) => steps.push(Done("OBS stopped the stream".into())),
+            None => {}
+        }
+        match view.state.obs_record {
+            Some(O::Started | O::Resumed | O::Paused) => {
+                steps.push(Working("OBS is closing the recording".into()));
+            }
+            Some(O::Stopped) => steps.push(Done("OBS saved the recording".into())),
+            _ => {}
+        }
+        if let Some(yt) = &view.youtube {
+            let waited = self
+                .ended_at
+                .map_or(0.0, |at| self.clock.now_ts().secs_since(at));
+            steps.push(
+                if view.meta.anchors.yt_actual_end.is_some() || yt.life_cycle == "complete" {
+                    Done("YouTube ended the broadcast".into())
+                } else if yt.auto_stop == Some(false) {
+                    Note(
+                        "YouTube keeps the broadcast open (auto stop is off): end it in Studio"
+                            .into(),
+                    )
+                } else if waited > 60.0 {
+                    Note("YouTube has not ended the broadcast yet".into())
+                } else {
+                    Working("YouTube is ending the broadcast".into())
+                },
+            );
+        }
+        steps
+    }
+
     fn resizing(&self) -> bool {
         self.split != self.split_target
     }
@@ -2327,7 +2369,16 @@ impl App {
                         .unwrap_or(self.clock.now_ts());
                     Duration::from_secs_f64(end.secs_since(start).max(0.0))
                 });
-                ended::draw(frame, frame.area(), on_air, t, self.motion);
+                let steps = self.ended_steps(view);
+                ended::draw(
+                    frame,
+                    frame.area(),
+                    on_air,
+                    t,
+                    self.motion,
+                    self.spin(),
+                    &steps,
+                );
                 return;
             }
         };
@@ -4397,6 +4448,20 @@ mute Mic/Aux
 {text}"
             );
         }
+        // It lists what the end is still getting through, and ticks it off when done.
+        let mut busy = view.clone();
+        busy.state.obs_stream = Some(OutputState::Started);
+        busy.state.obs_record = Some(OutputState::Started);
+        let text = screen_sized(&mut app, &busy, 120, 30);
+        assert!(text.contains("OBS is stopping the stream"), "{text}");
+        assert!(text.contains("OBS is closing the recording"), "{text}");
+        busy.state.obs_stream = Some(OutputState::Stopped);
+        busy.state.obs_record = Some(OutputState::Stopped);
+        let text = screen_sized(&mut app, &busy, 120, 30);
+        assert!(
+            text.contains("OBS stopped the stream") && text.contains("✓"),
+            "{text}"
+        );
         app.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE), &view);
         assert_eq!(cmd_rx.try_recv().unwrap(), Command::Finalize);
     }

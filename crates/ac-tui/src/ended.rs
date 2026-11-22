@@ -11,11 +11,38 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
 use crate::starting::letters;
-use crate::theme::{FAINT, MUTED, TEXT, hint, mix};
+use crate::theme::{FAINT, MUTED, OK, TEXT, hint, mix};
 
 const AMBER: Color = Color::Rgb(0xFF, 0xB3, 0x47);
 const EMBER: Color = Color::Rgb(0xFF, 0x5A, 0x3C);
 const DEEP: Color = Color::Rgb(0xB0, 0x20, 0x3A);
+
+/// One thing the end has to get through, as the prompt lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Step {
+    /// Still going: a spinner.
+    Working(String),
+    Done(String),
+    /// Will not happen by itself, or is taking long: a plain note.
+    Note(String),
+}
+
+fn step_line(step: &Step, spin: &str) -> Line<'static> {
+    let (mark, color, text) = match step {
+        Step::Working(t) => (spin.to_owned(), AMBER, t),
+        Step::Done(t) => ("✓".to_owned(), OK, t),
+        Step::Note(t) => ("·".to_owned(), MUTED, t),
+    };
+    let text_color = if matches!(step, Step::Done(_)) {
+        MUTED
+    } else {
+        TEXT
+    };
+    Line::from(vec![
+        Span::styled(format!("{mark} "), Style::new().fg(color).bold()),
+        Span::styled(text.clone(), Style::new().fg(text_color)),
+    ])
+}
 
 /// Colors each ink cell: amber to ember to deep red, a glow sweeping through.
 fn glow(rows: &[String], t: f64, motion: bool) -> Vec<Line<'static>> {
@@ -102,7 +129,15 @@ fn keys(t: f64, motion: bool) -> Line<'static> {
 
 /// Draws the prompt centered in `area`. `on_air` is how long the stream ran, `t` the animation
 /// clock.
-pub fn draw(frame: &mut Frame, area: Rect, on_air: Option<Duration>, t: Duration, motion: bool) {
+pub fn draw(
+    frame: &mut Frame,
+    area: Rect,
+    on_air: Option<Duration>,
+    t: Duration,
+    motion: bool,
+    spin: &str,
+    steps: &[Step],
+) {
     let t = t.as_secs_f64();
     let one = letters("STREAM ENDED");
     let wide = one[0].chars().count() as u16 + 8;
@@ -127,7 +162,7 @@ pub fn draw(frame: &mut Frame, area: Rect, on_air: Option<Duration>, t: Duration
     if on_air.is_some() {
         info.push(Span::styled(clock, Style::new().fg(AMBER).bold()));
     }
-    let roomy = art.len() as u16 + 10 <= area.height;
+    let roomy = art.len() as u16 + 10 + (steps.len() as u16) < area.height;
     let mut lines = vec![];
     if roomy {
         lines.extend([embers(art_width as usize, t, motion, 0.0), Line::raw("")]);
@@ -146,6 +181,11 @@ pub fn draw(frame: &mut Frame, area: Rect, on_air: Option<Duration>, t: Duration
         Style::new().fg(FAINT),
     ));
     lines.push(Line::raw(""));
+    // What the end is still getting through (OBS stopping, YouTube ending the broadcast).
+    if !steps.is_empty() {
+        lines.extend(steps.iter().map(|s| step_line(s, spin)));
+        lines.push(Line::raw(""));
+    }
     lines.push(keys(t, motion));
 
     let width = (art_width + 10).max(70).min(area.width);
