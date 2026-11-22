@@ -39,6 +39,8 @@ pub struct Feed {
     pub media: Arc<ac_core::obs::Media>,
     /// The sources of the scene being edited.
     pub items: Arc<ac_core::obs::SceneDetail>,
+    /// The settings and filters of the source being edited.
+    pub source: Arc<ac_core::obs::SourceDetail>,
     pub brb: bool,
     pub privacy: bool,
 }
@@ -114,6 +116,7 @@ pub(crate) async fn feed(State(s): State<Arc<Shared>>) -> Response {
         // those. Null without OBS.
         "obs": overlays_in(&f.media),
         "items": &*f.items,
+        "source": &*f.source,
         "mode": if f.privacy { "privacy" } else if f.brb { "brb" } else { "normal" },
     }))
     .into_response()
@@ -167,6 +170,45 @@ pub(crate) async fn watch(State(s): State<Arc<Shared>>, Json(p): Json<Watch>) ->
         return off();
     }
     let _ = s.commands.send(Command::WatchScene { scene: p.scene });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WatchSrc {
+    source: String,
+}
+
+/// The editor looks at a source: its settings and filters are listed in the feed.
+pub(crate) async fn watch_source(
+    State(s): State<Arc<Shared>>,
+    Json(p): Json<WatchSrc>,
+) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let _ = s.commands.send(Command::WatchSource { source: p.source });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SourceChange {
+    source: String,
+    #[serde(flatten)]
+    edit: ac_core::obs::SourceEdit,
+}
+
+/// Changes a source's settings or one of its filters in OBS (the editor).
+pub(crate) async fn source_edit(
+    State(s): State<Arc<Shared>>,
+    Json(p): Json<SourceChange>,
+) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let _ = s.commands.send(Command::EditSource {
+        source: p.source,
+        edit: p.edit,
+    });
     StatusCode::NO_CONTENT.into_response()
 }
 

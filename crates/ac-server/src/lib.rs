@@ -197,6 +197,8 @@ pub async fn bind(
         .route("/rehearse/source", post(rehearse::source))
         .route("/rehearse/obs/watch", post(rehearse::watch))
         .route("/rehearse/obs/item", post(rehearse::item))
+        .route("/rehearse/obs/watch-source", post(rehearse::watch_source))
+        .route("/rehearse/obs/source", post(rehearse::source_edit))
         .route("/rehearse/add-source", post(rehearse::add_source))
         .route("/rehearse/mode", post(rehearse::mode))
         .with_state(Arc::new(shared));
@@ -790,6 +792,35 @@ mod tests {
             (edit.x, edit.y, edit.locked, edit.crop),
             (Some(12.5), None, Some(true), Some([1, 2, 3, 4]))
         );
+        // A source's settings and filters are watched and edited the same way.
+        let w = http
+            .post(format!("{base}/obs/watch-source"))
+            .json(&json!({ "source": "Cam" }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(w.status(), 204);
+        assert_eq!(
+            rx.recv().await,
+            Some(Command::WatchSource {
+                source: "Cam".into()
+            })
+        );
+        let e = http
+            .post(format!("{base}/obs/source"))
+            .json(&json!({ "source": "Cam", "settings": { "active": false }, "filter": "Key", "filter_enabled": false }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(e.status(), 204);
+        let Some(Command::EditSource { source, edit }) = rx.recv().await else {
+            panic!("an EditSource command");
+        };
+        assert_eq!(
+            (source.as_str(), edit.filter.as_str(), edit.filter_enabled),
+            ("Cam", "Key", Some(false))
+        );
+        assert_eq!(edit.settings, Some(json!({ "active": false })));
         // The sources OBS listed come back in the feed.
         feed_tx.send_replace(Feed {
             items: Arc::new(ac_core::obs::SceneDetail {

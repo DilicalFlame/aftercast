@@ -298,3 +298,47 @@ pub struct ItemEdit {
     pub remove: bool,
     pub duplicate: bool,
 }
+
+/// A filter on a source: its settings and the settings its kind starts with.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct FilterDetail {
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+    /// 0 is the first applied.
+    pub index: u32,
+    pub settings: serde_json::Value,
+    pub defaults: serde_json::Value,
+}
+
+/// A source's own settings and filters, as the editor shows them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct SourceDetail {
+    pub source: String,
+    pub kind: String,
+    pub settings: serde_json::Value,
+    /// The settings the kind starts with (they name every setting there is).
+    pub defaults: serde_json::Value,
+    /// For settings that pick from a list (a camera, a monitor, a window): name and value.
+    pub choices: std::collections::BTreeMap<String, Vec<(String, serde_json::Value)>>,
+    pub filters: Vec<FilterDetail>,
+    /// Every filter kind OBS can add.
+    pub filter_kinds: Vec<String>,
+}
+
+/// A change to a source or one of its filters: only what is set is changed.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SourceEdit {
+    /// Settings laid over the source's own.
+    pub settings: Option<serde_json::Value>,
+    /// The filter the rest is about (a new one's name with `add_filter`).
+    pub filter: String,
+    pub filter_enabled: Option<bool>,
+    pub filter_index: Option<u32>,
+    pub filter_settings: Option<serde_json::Value>,
+    pub filter_rename: Option<String>,
+    pub filter_remove: bool,
+    /// Adds a filter of this kind, named `filter`.
+    pub add_filter: Option<String>,
+}

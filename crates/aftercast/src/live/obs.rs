@@ -211,6 +211,7 @@ impl Controller {
                 }
             }
             Update::Items(detail) => self.obs_items = Arc::new(detail),
+            Update::Source(detail) => self.obs_source = Arc::new(detail),
             Update::Stream(state) => {
                 self.stream_changed(state);
                 self.quit_ready();
@@ -761,6 +762,15 @@ impl Controller {
                 self.obs_request(Request::Items { scene });
             } else {
                 self.watch_scene = None;
+            }
+        }
+        if self.watch_tick == 5
+            && let Some((name, until)) = self.watch_source.clone()
+        {
+            if crate::live::Instant::now() < until {
+                self.obs_request(Request::Source { name });
+            } else {
+                self.watch_source = None;
             }
         }
         let cam = &self.config.obs.facecam;

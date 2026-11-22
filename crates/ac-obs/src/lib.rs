@@ -77,6 +77,8 @@ pub enum Update {
         /// Its `monitor` index.
         index: Option<usize>,
     },
+    /// A source's settings and filters (the answer to [`Request::Source`]).
+    Source(ac_core::obs::SourceDetail),
     /// The sources of a scene with their places (the answer to [`Request::Items`]).
     Items(ac_core::obs::SceneDetail),
     /// Audio peaks in dBFS per input (only while meters are on).
@@ -126,6 +128,15 @@ pub enum Request {
     Place {
         scene: String,
         id: i64,
+    },
+    /// Reads a source's settings and filters; answered with [`Update::Source`].
+    Source {
+        name: String,
+    },
+    /// Changes a source's settings or a filter of it (then the details come again).
+    EditSource {
+        name: String,
+        edit: ac_core::obs::SourceEdit,
     },
     /// Lists the sources of `scene` with their places; answered with [`Update::Items`].
     Items {
@@ -488,6 +499,15 @@ async fn serve(
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
                     }
                 }
+                Some(Request::Source { name }) => {
+                    send(Update::Source(source_detail(client, &name).await));
+                }
+                Some(Request::EditSource { name, edit }) => {
+                    if let Err(e) = edit_source(client, &name, &edit).await {
+                        send(Update::Failed(format!("editing {name:?}: {}", error_chain(&e))));
+                    }
+                    send(Update::Source(source_detail(client, &name).await));
+                }
                 Some(Request::Items { scene }) => match scene_detail(client, &scene).await {
                     Ok(d) => send(Update::Items(d)),
                     Err(e) => send(Update::Failed(format!("listing {scene:?}: {}", error_chain(&e)))),
@@ -749,6 +769,136 @@ fn has_live_video(kind: &str) -> bool {
         "slideshow",
     ];
     !STILL_OR_AUDIO.iter().any(|p| kind.starts_with(p))
+}
+
+/// A source's settings, filters and the lists its settings pick from. What OBS will not say
+/// (a scene has no settings) stays empty.
+async fn source_detail(client: &obws::Client, name: &str) -> ac_core::obs::SourceDetail {
+    use serde_json::Value;
+    let mut out = ac_core::obs::SourceDetail {
+        source: name.to_owned(),
+        ..Default::default()
+    };
+    if let Ok(s) = client.inputs().settings::<Value>(name.into()).await {
+        out.kind = s.kind.clone();
+        out.settings = s.settings;
+        out.defaults = client
+            .inputs()
+            .default_settings::<Value>(&s.kind)
+            .await
+            .unwrap_or_default();
+        // Settings that pick from a list: the camera, the monitor, the window, the audio device.
+        for prop in [
+            "video_device_id",
+            "device_id",
+            "monitor_id",
+            "monitor",
+            "window",
+        ] {
+            if let Ok(list) = client
+                .inputs()
+                .properties_list_property_items(name.into(), prop)
+                .await
+            {
+                let items = list
+                    .into_iter()
+                    .filter(|i| i.enabled)
+                    .map(|i| (i.name, i.value))
+                    .collect();
+                out.choices.insert(prop.to_owned(), items);
+            }
+        }
+    }
+    if let Ok(list) = client.filters().list(name.into()).await {
+        for f in list {
+            let defaults = client
+                .filters()
+                .default_settings::<Value>(&f.kind)
+                .await
+                .unwrap_or_default();
+            out.filters.push(ac_core::obs::FilterDetail {
+                name: f.name,
+                kind: f.kind,
+                enabled: f.enabled,
+                index: f.index,
+                settings: f.settings,
+                defaults,
+            });
+        }
+    }
+    out.filter_kinds = client.filters().list_kinds().await.unwrap_or_default();
+    out
+}
+
+/// Applies an editor change to a source or one of its filters.
+async fn edit_source(
+    client: &obws::Client,
+    name: &str,
+    e: &ac_core::obs::SourceEdit,
+) -> obws::error::Result<()> {
+    use obws::requests::filters as f;
+    use serde_json::Value;
+    if let Some(settings) = &e.settings {
+        let set = obws::requests::inputs::SetSettings {
+            input: name.into(),
+            settings,
+            overlay: Some(true),
+        };
+        client.inputs().set_settings(set).await?;
+    }
+    let filters = client.filters();
+    if let Some(kind) = &e.add_filter {
+        let create = f::Create::<Value> {
+            source: name.into(),
+            filter: &e.filter,
+            kind,
+            settings: None,
+        };
+        return filters.create(create).await;
+    }
+    if e.filter.is_empty() {
+        return Ok(());
+    }
+    if e.filter_remove {
+        return filters.remove(name.into(), &e.filter).await;
+    }
+    if let Some(enabled) = e.filter_enabled {
+        filters
+            .set_enabled(f::SetEnabled {
+                source: name.into(),
+                filter: &e.filter,
+                enabled,
+            })
+            .await?;
+    }
+    if let Some(index) = e.filter_index {
+        filters
+            .set_index(f::SetIndex {
+                source: name.into(),
+                filter: &e.filter,
+                index,
+            })
+            .await?;
+    }
+    if let Some(settings) = &e.filter_settings {
+        let set = f::SetSettings {
+            source: name.into(),
+            filter: &e.filter,
+            settings,
+            overlay: Some(true),
+        };
+        filters.set_settings(set).await?;
+    }
+    if let Some(new_name) = &e.filter_rename {
+        filters
+            .set_name(f::SetName {
+                source: name.into(),
+                filter: &e.filter,
+                new_name,
+            })
+            .await?;
+    }
+    Ok(())
 }
 
 /// The sources of a scene with their places on OBS's canvas.

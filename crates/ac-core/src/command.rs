@@ -80,6 +80,15 @@ pub enum Command {
     WatchScene {
         scene: String,
     },
+    /// The editor looks at a source's settings and filters (repeated every few seconds).
+    WatchSource {
+        source: String,
+    },
+    /// Changes a source's settings or one of its filters in OBS (the editor).
+    EditSource {
+        source: String,
+        edit: crate::obs::SourceEdit,
+    },
     /// Changes one source of a scene in OBS (the editor).
     EditItem {
         scene: String,

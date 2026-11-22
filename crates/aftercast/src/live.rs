@@ -419,6 +419,8 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         going_live: false,
         auto_streamed: false,
         obs_items: Arc::default(),
+        obs_source: Arc::default(),
+        watch_source: None,
         watch_scene: None,
         watch_tick: 0,
         ending: None,
@@ -933,6 +935,9 @@ struct Controller {
     auto_streamed: bool,
     /// The sources of the scene the editor looks at, and until when it keeps asking.
     obs_items: Arc<ac_core::obs::SceneDetail>,
+    /// The settings and filters of the source the editor looks at, and until when it asks.
+    obs_source: Arc<ac_core::obs::SourceDetail>,
+    watch_source: Option<(String, Instant)>,
     watch_scene: Option<(String, Instant)>,
     watch_tick: u8,
     /// `:end` is showing the end screen until then (`:end cancel` clears it).
@@ -1313,6 +1318,14 @@ impl Controller {
             Command::WatchScene { scene } => {
                 self.watch_scene = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
                 self.obs_request(ac_obs::Request::Items { scene });
+            }
+            Command::WatchSource { source } => {
+                self.watch_source =
+                    Some((source.clone(), Instant::now() + Duration::from_secs(10)));
+                self.obs_request(ac_obs::Request::Source { name: source });
+            }
+            Command::EditSource { source, edit } => {
+                self.obs_request(ac_obs::Request::EditSource { name: source, edit });
             }
             Command::EditItem { scene, id, edit } => {
                 self.obs_request(ac_obs::Request::EditItem { scene, id, edit });
@@ -2029,6 +2042,7 @@ impl Controller {
                 chat: self.chat.clone(),
                 media: self.obs_media.clone(),
                 items: self.obs_items.clone(),
+                source: self.obs_source.clone(),
                 brb: self.state.brb,
                 privacy: self.state.privacy,
             });
