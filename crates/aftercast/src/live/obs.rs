@@ -464,7 +464,11 @@ impl Controller {
         }
         let scenes = self.config.obs.scenes.clone();
         if on {
-            let return_scene = self.state.scene.clone().filter(|s| *s != scenes.brb);
+            let return_scene = self
+                .state
+                .scene
+                .clone()
+                .filter(|s| *s != scenes.brb && *s != scenes.privacy);
             self.emit(
                 by_src(by),
                 EventKind::BrbStart {
@@ -492,7 +496,11 @@ impl Controller {
         }
         let scenes = self.config.obs.scenes.clone();
         if on {
-            self.privacy_return = self.state.scene.clone().filter(|s| *s != scenes.privacy);
+            self.privacy_return = self
+                .state
+                .scene
+                .clone()
+                .filter(|s| *s != scenes.privacy && *s != scenes.brb);
             self.emit(by_src(by), EventKind::PrivacyStart { by });
             self.switch_scene(scenes.privacy);
         } else {

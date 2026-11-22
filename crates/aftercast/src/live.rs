@@ -1339,6 +1339,16 @@ impl Controller {
                 });
             }
             Command::WatchShot { scene } => {
+                // Another scene: the last picture is of the old one, so it goes.
+                if self
+                    .watch_shot
+                    .as_ref()
+                    .is_none_or(|(old, _)| *old != scene)
+                    && let Some(slot) = &self.shot_slot
+                    && let Ok(mut image) = slot.lock()
+                {
+                    image.clear();
+                }
                 self.watch_shot = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
                 self.obs_request(ac_obs::Request::Shot { scene });
             }
