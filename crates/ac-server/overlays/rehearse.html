@@ -457,6 +457,17 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; bord
 .brbel .rz.w { bottom: 50%; margin-bottom: calc(-7px * var(--k)); border-radius: calc(4px * var(--k)); cursor: ew-resize;
   width: calc(10px * var(--k)); height: calc(28px * var(--k)); }
 .brbel:hover { background: color-mix(in srgb, var(--ui) 14%, transparent); }
+.subhead { padding: 10px 18px 4px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.srclist { flex: none; max-height: 42%; }
+.layer.src .lead .kind { opacity: 1 !important; }
+.layer.src.sel { background: var(--selected-row, #26262d); }
+.layer.src.off .name { color: var(--faint); }
+.srcbox { position: absolute; pointer-events: auto; cursor: move; outline: 1px solid transparent; }
+.srcbox:hover { outline: calc(1.5px * var(--k)) solid color-mix(in srgb, var(--ui) 70%, transparent); }
+.srcbox.off { pointer-events: none; }
+.ipnl { padding: 12px 0; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.ipnl .ih { font-size: 12.5px; font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
 .txt { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 0; border-radius: 8px; background: var(--well);
   box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: inherit; font-size: 12.5px; outline: none; resize: vertical; }
 .txt:focus { box-shadow: inset 0 0 0 1px var(--ui); }
@@ -573,6 +584,8 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     </div>
     <div class="scene"><select id="sceneSel" title="Scene to edit"></select><input type="color" id="vColor" title="Color behind the overlays" hidden></div>
     <div class="list" id="layerList"></div>
+    <div class="subhead" id="srcHead" hidden>OBS sources</div>
+    <div class="list srclist" id="srcList" hidden></div>
     <div class="panel-foot" id="layerEmpty" hidden>No overlays in this scene</div>
   </aside>
   <section>
@@ -687,6 +700,38 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
       </nav>
       <div class="style">
         <div class="empty" id="noSel">Nothing selected</div>
+        <div id="itemProps" hidden>
+          <div class="ipnl">
+            <div class="ih">Source</div>
+            <input type="text" class="txt" id="iName" spellcheck="false" aria-label="Source name">
+            <div class="hint" id="iKind"></div>
+            <div class="pair"><button class="btn" id="iVis" type="button">Hide</button><button class="btn" id="iLock" type="button">Lock</button></div>
+          </div>
+          <div class="ipnl">
+            <div class="ih">Transform</div>
+            <div class="grid2">
+              <label class="num"><b title="">X</b><input type="number" id="iX" min="-100000" max="100000" step="1"></label><label class="num"><b title="">Y</b><input type="number" id="iY" min="-100000" max="100000" step="1"></label>
+              <label class="num"><b title="">W</b><input type="number" id="iW" min="1" max="100000" step="1"></label><label class="num"><b title="">H</b><input type="number" id="iH" min="1" max="100000" step="1"></label>
+              <label class="num"><b title="Scale">%</b><input type="number" id="iScale" min="1" max="10000" step="1"></label><label class="num"><b title="Rotation">°</b><input type="number" id="iRot" min="0" max="360" step="1"></label>
+            </div>
+            <div class="hint">Drag on the canvas, corners resize, the round grip rotates. Arrows nudge (Shift: 10).</div>
+          </div>
+          <div class="ipnl">
+            <div class="ih">Crop</div>
+            <div class="grid2">
+              <label class="num"><b title="">L</b><input type="number" id="iCL" min="0" max="100000" step="1"></label><label class="num"><b title="">R</b><input type="number" id="iCR" min="0" max="100000" step="1"></label>
+              <label class="num"><b title="">T</b><input type="number" id="iCT" min="0" max="100000" step="1"></label><label class="num"><b title="">B</b><input type="number" id="iCB" min="0" max="100000" step="1"></label>
+            </div>
+          </div>
+          <div class="ipnl">
+            <div class="ih">Order and more</div>
+            <div class="grid2">
+              <button class="btn" id="iFront" type="button">Bring to front</button><button class="btn" id="iBack" type="button">Send to back</button>
+              <button class="btn" id="iFwd" type="button">Forward</button><button class="btn" id="iBwd" type="button">Backward</button>
+              <button class="btn" id="iDup" type="button">Duplicate</button><button class="btn" id="iDel" type="button">Remove</button>
+            </div>
+          </div>
+        </div>
         <div id="props" hidden>
 
           <section class="pnl" data-tab="layout" data-title="Position" id="pnlPos">
@@ -1060,6 +1105,7 @@ async function poll() {
     $("scene").textContent = f.scene ? "scene: " + f.scene : "";
     programScene = f.scene;
     onObs(f.obs);
+    onItems(f.items);
     liveSince = f.live_since ? Date.parse(f.live_since) : null;
     skew = Date.parse(f.now) - Date.now();
     for (const m of f.chat) if (!seen.has(m.id)) { seen.add(m.id); addMsg(m); }
@@ -1181,6 +1227,16 @@ $("form").onsubmit = async (e) => {
 const ICONS = {
   move: '<path d="M12 2v20M2 12h20"/><path d="m9 5 3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3"/>',
   look: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+  camera: '<path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="12.5" r="3.5"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  window: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/>',
+  text: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.6"/><path d="m21 15-5-5L5 21"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+  square: '<rect x="4" y="4" width="16" height="16" rx="2"/>',
+  folder: '<path d="M3 6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   tri: '<path d="M7 4.5v15l12-7.5z"/>',
   pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
   mute: '<path d="M11 5 6 9H2v6h4l5 4Z"/><path d="m22 9-6 6M16 9l6 6"/>',
@@ -2732,7 +2788,12 @@ $("edit").onclick = async () => {
 document.addEventListener("keydown", (e) => {
   if (!editing || e.target.closest?.("input, select, textarea")) return;
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); return undo(); }
-  if (e.key === "Escape") { if (brbSel) { brbSel = null; return brbBoxes(); } return select(null); }
+  if (e.key === "Escape") {
+    if (selItem !== null) return selectItem(null);
+    if (brbSel) { brbSel = null; return brbBoxes(); }
+    return select(null);
+  }
+  if (selItem !== null && itemNudge(e)) return;
   if (selected === "brb" && brbSel && $("bMove").checked && brbNudge(e)) return;
   const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
   if (!arrows[e.key] || selected === null || e.target.closest?.(".layer")) return;
@@ -2908,6 +2969,424 @@ document.addEventListener("keydown", (e) => {
 $("cSpeed").title = "Playback speed (< and >)";
 applyVol();
 ctlPaint();
+
+// OBS sources: every source of the scene being edited is a layer and a box on the canvas, moved,
+// resized, rotated, cropped, locked, ordered and renamed here, and OBS follows (aftercast
+// relays the changes over its WebSocket; the feed brings OBS's own view back about once a second).
+let items = { scene: null, canvas: [1920, 1080], items: [] };
+let selItem = null;
+let itemsQuiet = 0;
+const KIND_ICON = (k) => (
+  /dshow|av_capture|v4l2|camera/.test(k) ? "camera"
+  : /monitor|display|screen/.test(k) ? "monitor"
+  : /window|game_capture/.test(k) ? "window"
+  : /browser/.test(k) ? "globe"
+  : /text/.test(k) ? "text"
+  : /image|slideshow/.test(k) ? "image"
+  : /wasapi|coreaudio|pulse|alsa|jack/.test(k) ? "mic"
+  : /ffmpeg|vlc|media/.test(k) ? "film"
+  : /color/.test(k) ? "square"
+  : k === "group" ? "folder" : k === "scene" ? "layers" : "square");
+const shownItems = () => {
+  if (!live() || items.scene !== scene) return [];
+  const mine = new Set(obsInfo.overlays.filter((o) => o.scene === scene).map((o) => o.source));
+  return items.items.filter((i) => !mine.has(i.source)).sort((a, b) => b.index - a.index);
+};
+const itemById = (id) => items.items.find((i) => i.id === id) || null;
+const selectedItem = () => (selItem === null ? null : itemById(selItem));
+const k0 = () => 1920 / (items.canvas[0] || 1920);
+const alignOf = (a) => [a & 1 ? 0 : a & 2 ? 1 : 0.5, a & 4 ? 0 : a & 8 ? 1 : 0.5];
+// Where the source's box is on OBS's canvas, before it is rotated about its alignment point.
+const itemBox = (it) => {
+  const w = it.bounds ? it.bounds_w : it.width, h = it.bounds ? it.bounds_h : it.height;
+  const [ax, ay] = alignOf(it.alignment);
+  return { w, h, ax, ay, left: it.x - ax * w, top: it.y - ay * h };
+};
+
+// The feed brought OBS's list (ignored for a moment after our own edit, so nothing jumps back).
+function onItems(d) {
+  if (!d || Date.now() < itemsQuiet) return;
+  const key = (x) => JSON.stringify(x);
+  const changed = key(d) !== key(items);
+  items = d;
+  if (changed) paintSources();
+}
+// Asks OBS to keep listing this scene (it stops after 10 s of silence).
+function watchScene() {
+  if (!editing || !live()) return;
+  fetch("/rehearse/obs/watch", { method: "POST", headers: { "content-type": "application/json" },
+                                  body: JSON.stringify({ scene }) }).catch(() => {});
+}
+setInterval(watchScene, 4000);
+
+let editT = 0, pending = {}, pendingId = null;
+function flushEdit() {
+  editT = 0;
+  if (pendingId === null) return;
+  const body = { scene, id: pendingId, ...pending };
+  pending = {};
+  const id = pendingId;
+  pendingId = null;
+  fetch("/rehearse/obs/item", { method: "POST", headers: { "content-type": "application/json" },
+                                  body: JSON.stringify(body) }).catch(() => {});
+  itemsQuiet = Date.now() + 1500;
+  void id;
+}
+// Applies an edit here at once and sends it (the latest values, at most every 60 ms).
+function editItem(it, edit) {
+  const local = { ...edit };
+  if (local.scale_x !== undefined || local.scale_y !== undefined) {
+    const sx = local.scale_x ?? it.scale_x, sy = local.scale_y ?? it.scale_y;
+    it.width = (it.width / it.scale_x) * sx;
+    it.height = (it.height / it.scale_y) * sy;
+  }
+  for (const [k, v] of Object.entries(local)) if (k in it) it[k] = v;
+  if (pendingId !== null && pendingId !== it.id) flushEdit();
+  pendingId = it.id;
+  Object.assign(pending, edit);
+  itemsQuiet = Date.now() + 1500;
+  if (!editT) editT = setTimeout(flushEdit, 60);
+  paintBoxes();
+  paintItemProps();
+}
+const editNow = (it, edit) => { editItem(it, edit); clearTimeout(editT); flushEdit(); };
+
+// The layer rows.
+function paintSources() {
+  const list = shownItems();
+  $("srcHead").hidden = $("srcList").hidden = !list.length;
+  $("srcList").replaceChildren(...list.map((it) => {
+    const row = document.createElement("div");
+    row.className = "layer src" + (it.id === selItem ? " sel" : "") + (it.locked ? " locked" : "") + (it.enabled ? "" : " off");
+    row.tabIndex = 0;
+    const lead = document.createElement("span");
+    lead.className = "lead";
+    lead.innerHTML = svg(KIND_ICON(it.kind)).replace('class="i"', 'class="i kind"');
+    lead.title = it.kind;
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = it.source;
+    const lock = document.createElement("button");
+    lock.className = "icon lockb";
+    lock.innerHTML = svg(it.locked ? "lock" : "unlock");
+    lock.title = it.locked ? "Unlock" : "Lock";
+    lock.onclick = (e) => { e.stopPropagation(); editNow(it, { locked: !it.locked }); paintSources(); };
+    const eye = document.createElement("button");
+    eye.className = "icon";
+    eye.innerHTML = svg(it.enabled ? "eye" : "eyeoff");
+    eye.title = it.enabled ? "Hide in OBS" : "Show in OBS";
+    eye.onclick = (e) => { e.stopPropagation(); editNow(it, { enabled: !it.enabled }); paintSources(); };
+    row.append(lead, name, lock, eye);
+    row.onclick = () => selectItem(it.id);
+    row.oncontextmenu = (e) => openItemCtx(e, it);
+    row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectItem(it.id); } };
+    return row;
+  }));
+  paintBoxes();
+  if (selectedItem()) paintItemProps();
+}
+
+// The boxes on the canvas: one per shown source, the selected one with its handles.
+const srcBoxes = document.createElement("div");
+// A layer of its own under the overlays: the sources stack among themselves as in OBS.
+srcBoxes.style.cssText = "position:absolute;inset:0;z-index:10;pointer-events:none";
+$("canvas").prepend(srcBoxes);
+const itemSel = document.createElement("div");
+itemSel.className = "selection";
+itemSel.hidden = true;
+itemSel.style.zIndex = 49;
+$("canvas").append(itemSel);
+const ITEM_HANDLES = { nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0] };
+for (const [h, [hx, hy]] of Object.entries(ITEM_HANDLES)) {
+  const d = document.createElement("div");
+  d.className = "h" + (hx && hy ? "" : " side");
+  d.dataset.h = h;
+  Object.assign(d.style, { left: (hx + 1) * 50 + "%", top: (hy + 1) * 50 + "%" });
+  d.onpointerdown = (e) => itemResize(selectedItem(), hx, hy, e);
+  itemSel.append(d);
+}
+const itemRot = document.createElement("div");
+itemRot.className = "rot";
+Object.assign(itemRot.style, { left: "calc(50% - 11px * var(--k))", top: "calc(-34px * var(--k))", cursor: ROTATE_CURSOR });
+itemRot.onpointerdown = (e) => itemRotate(selectedItem(), e);
+itemSel.append(itemRot);
+const placeBox = (el, it) => {
+  const b = itemBox(it), s = k0();
+  Object.assign(el.style, {
+    left: b.left * s + "px", top: b.top * s + "px", width: b.w * s + "px", height: b.h * s + "px",
+    transformOrigin: `${b.ax * 100}% ${b.ay * 100}%`, transform: `rotate(${it.rotation}deg)`,
+  });
+};
+function paintBoxes() {
+  const show = editing && live();
+  const list = show ? shownItems() : [];
+  const have = new Map([...srcBoxes.children].map((b) => [Number(b.dataset.id), b]));
+  for (const [id, b] of have) if (!list.some((i) => i.id === id)) { b.remove(); have.delete(id); }
+  for (const it of list) {
+    let b = have.get(it.id);
+    if (!b) {
+      b = document.createElement("div");
+      b.className = "srcbox";
+      b.dataset.id = it.id;
+      b.onpointerdown = (e) => {
+        const cur = itemById(Number(b.dataset.id));
+        if (!cur || cur.locked) return;
+        if (selItem !== cur.id) selectItem(cur.id);
+        itemMove(cur, e);
+      };
+      b.oncontextmenu = (e) => { const cur = itemById(Number(b.dataset.id)); if (cur) openItemCtx(e, cur); };
+      srcBoxes.append(b);
+    }
+    b.classList.toggle("off", !it.enabled || it.locked);
+    b.style.zIndex = it.index;
+    b.title = it.source;
+    placeBox(b, it);
+  }
+  const sel = show ? selectedItem() : null;
+  itemSel.hidden = !sel || !shownItems().some((i) => i.id === sel.id);
+  if (sel && !itemSel.hidden) {
+    placeBox(itemSel, sel);
+    // A rotated box can only be moved, rotated or set by number: no resize handles.
+    const rotated = sel.rotation % 360 !== 0;
+    for (const h of itemSel.querySelectorAll(".h")) h.hidden = rotated;
+  }
+}
+
+function selectItem(id) {
+  if (id !== null && selected !== null) select(null);
+  selItem = id;
+  paintSources();
+  inspect();
+}
+const baseSelect = select;
+select = function (n) { if (n !== null) selItem = null; baseSelect(n); paintSources(); };
+
+// Moving: snaps to the canvas, the overlays and the other sources (Alt skips that).
+function itemMove(it, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const b = itemBox(it), s = k0(), w = b.w * s, h = b.h * s;
+  const T = snapTargets(null);
+  for (const o of shownItems()) {
+    if (o.id === it.id) continue;
+    const ob = itemBox(o);
+    T.xs.push(ob.left * s, (ob.left + ob.w / 2) * s, (ob.left + ob.w) * s);
+    T.ys.push(ob.top * s, (ob.top + ob.h / 2) * s, (ob.top + ob.h) * s);
+  }
+  const x0 = e.clientX, y0 = e.clientY;
+  let moved = false;
+  const move = (m) => {
+    if (!moved && Math.hypot(m.clientX - x0, m.clientY - y0) < 3) return;
+    moved = true;
+    document.body.classList.add("gesture");
+    document.body.style.setProperty("--gesture", "move");
+    let L = b.left * s + (m.clientX - x0) / k, Tp = b.top * s + (m.clientY - y0) / k;
+    if (snapOn(m)) {
+      const sx = pull([L, L + w / 2, L + w], T.xs), sy = pull([Tp, Tp + h / 2, Tp + h], T.ys);
+      if (sx !== null) L += sx;
+      if (sy !== null) Tp += sy;
+      showGuides(hits_([L, L + w / 2, L + w], T.xs), hits_([Tp, Tp + h / 2, Tp + h], T.ys));
+    } else showGuides([], []);
+    editItem(it, { x: Math.round(((L + b.ax * w) / s) * 10) / 10, y: Math.round(((Tp + b.ay * h) / s) * 10) / 10 });
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    showGuides([], []);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+// Resizing from a handle: a corner scales evenly (Shift: freely), a side stretches that way.
+function itemResize(it, hx, hy, e) {
+  if (!it) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const b = itemBox(it), conv = k * k0(), x0 = e.clientX, y0 = e.clientY;
+  const start = { sx: it.scale_x, sy: it.scale_y };
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", "nwse-resize");
+  const move = (m) => {
+    const dx = (m.clientX - x0) / conv, dy = (m.clientY - y0) / conv;
+    let w = hx ? Math.max(8, b.w + hx * dx) : b.w, h = hy ? Math.max(8, b.h + hy * dy) : b.h;
+    if (hx && hy && !m.shiftKey) {
+      const f = Math.abs(w / b.w - 1) > Math.abs(h / b.h - 1) ? w / b.w : h / b.h;
+      w = b.w * f;
+      h = b.h * f;
+    }
+    // The edge opposite the handle stays where it is.
+    const left = hx > 0 ? b.left : hx < 0 ? b.left + b.w - w : b.left;
+    const top = hy > 0 ? b.top : hy < 0 ? b.top + b.h - h : b.top;
+    const edit = { x: Math.round((left + b.ax * w) * 10) / 10, y: Math.round((top + b.ay * h) * 10) / 10 };
+    if (it.bounds) Object.assign(edit, { bounds_w: Math.round(w), bounds_h: Math.round(h) });
+    else Object.assign(edit, { scale_x: (start.sx * w) / b.w, scale_y: (start.sy * h) / b.h });
+    editItem(it, edit);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+// Rotating about the alignment point; Shift steps by 15 degrees, near a right angle it clicks in.
+function itemRotate(it, e) {
+  if (!it) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const r = $("canvas").getBoundingClientRect();
+  const cx = r.left + it.x * k0() * k, cy = r.top + it.y * k0() * k;
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", ROTATE_CURSOR);
+  const move = (m) => {
+    let a = (Math.atan2(m.clientY - cy, m.clientX - cx) * 180) / Math.PI + 90;
+    if (m.shiftKey) a = Math.round(a / 15) * 15;
+    else if (Math.abs(a - Math.round(a / 90) * 90) < 3) a = Math.round(a / 90) * 90;
+    editItem(it, { rotation: Math.round((((a % 360) + 360) % 360) * 10) / 10 });
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+// Arrow keys move the selected source (Shift: 10 px on OBS's canvas).
+function itemNudge(e) {
+  const it = selectedItem();
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!it || !d || it.locked) return false;
+  e.preventDefault();
+  const step = e.shiftKey ? 10 : 1;
+  editItem(it, { x: it.x + d[0] * step, y: it.y + d[1] * step });
+  return true;
+}
+
+// The right panel while a source is selected.
+function paintItemProps() {
+  const it = selectedItem();
+  const on = !!it && editing;
+  $("itemProps").hidden = !on;
+  if (on) {
+    $("noSel").hidden = true;
+    $("props").hidden = true;
+    $("tabs").style.display = "none";
+    $("dockedNote").hidden = true;
+    $("resetFrame").hidden = true;
+    $("insName").textContent = it.source;
+    $("insIcon").innerHTML = svg(KIND_ICON(it.kind));
+  } else $("tabs").style.display = "";
+  if (!it) return;
+  const act = document.activeElement;
+  const set = (id, v) => { if (act !== $(id)) $(id).value = v; };
+  const round = (v) => Math.round(v * 10) / 10;
+  set("iName", it.source);
+  $("iKind").textContent = `${it.kind}, ${Math.round(it.source_w)} x ${Math.round(it.source_h)}`;
+  set("iX", round(it.x));
+  set("iY", round(it.y));
+  set("iW", round(it.bounds ? it.bounds_w : it.width));
+  set("iH", round(it.bounds ? it.bounds_h : it.height));
+  set("iScale", round(it.scale_x * 100));
+  set("iRot", round(it.rotation));
+  ["iCL", "iCR", "iCT", "iCB"].forEach((id, i) => set(id, it.crop[i]));
+  $("iVis").textContent = it.enabled ? "Hide" : "Show";
+  $("iLock").textContent = it.locked ? "Unlock" : "Lock";
+}
+const keepInspect = inspect;
+inspect = function () {
+  keepInspect();
+  paintItemProps();
+};
+const num = (id) => $(id).valueAsNumber;
+const onNum = (id, fn) => {
+  $(id).onchange = () => {
+    const it = selectedItem();
+    if (it && Number.isFinite(num(id))) editNow(it, fn(it, num(id)));
+  };
+};
+onNum("iX", (it, v) => ({ x: v }));
+onNum("iY", (it, v) => ({ y: v }));
+onNum("iW", (it, v) => (it.bounds ? { bounds_w: v } : { scale_x: it.scale_x * (v / (it.width || 1)) }));
+onNum("iH", (it, v) => (it.bounds ? { bounds_h: v } : { scale_y: it.scale_y * (v / (it.height || 1)) }));
+onNum("iScale", (it, v) => ({ scale_x: v / 100, scale_y: v / 100 }));
+onNum("iRot", (it, v) => ({ rotation: ((v % 360) + 360) % 360 }));
+for (const [id, i] of [["iCL", 0], ["iCR", 1], ["iCT", 2], ["iCB", 3]]) {
+  onNum(id, (it, v) => { const c = [...it.crop]; c[i] = Math.max(0, Math.round(v)); return { crop: c }; });
+}
+$("iName").onchange = () => {
+  const it = selectedItem(), name = $("iName").value.trim();
+  if (!it || !name || name === it.source) return;
+  fetch("/rehearse/obs/item", { method: "POST", headers: { "content-type": "application/json" },
+                                 body: JSON.stringify({ scene, id: it.id, source: it.source, name }) }).catch(() => {});
+  it.source = name;
+  itemsQuiet = Date.now() + 1500;
+  paintSources();
+};
+$("iVis").onclick = () => { const it = selectedItem(); if (it) { editNow(it, { enabled: !it.enabled }); paintSources(); } };
+$("iLock").onclick = () => { const it = selectedItem(); if (it) { editNow(it, { locked: !it.locked }); paintSources(); } };
+const restackItem = (it, to) => {
+  const top = items.items.length - 1;
+  editNow(it, { index: Math.max(0, Math.min(top, to)) });
+  itemsQuiet = 0;
+};
+$("iFront").onclick = () => { const it = selectedItem(); if (it) restackItem(it, 1e6); };
+$("iBack").onclick = () => { const it = selectedItem(); if (it) restackItem(it, 0); };
+$("iFwd").onclick = () => { const it = selectedItem(); if (it) restackItem(it, it.index + 1); };
+$("iBwd").onclick = () => { const it = selectedItem(); if (it) restackItem(it, it.index - 1); };
+$("iDup").onclick = () => { const it = selectedItem(); if (it) { editNow(it, { duplicate: true }); itemsQuiet = 0; flash("Duplicated"); } };
+function deleteItem(it) {
+  if (!confirm(`Remove "${it.source}" from ${scene} in OBS?`)) return;
+  editNow(it, { remove: true });
+  items.items = items.items.filter((i) => i.id !== it.id);
+  itemsQuiet = 0;
+  selectItem(null);
+}
+$("iDel").onclick = () => { const it = selectedItem(); if (it) deleteItem(it); };
+
+// Right-click on a source (its layer or its box).
+function openItemCtx(e, it) {
+  e.preventDefault();
+  closeCtx();
+  const m = document.createElement("div");
+  m.className = "ctx";
+  const add = (label, icon, fn) => {
+    const b = document.createElement("button");
+    b.innerHTML = `${svg(icon)}${label}`;
+    b.onclick = () => { closeCtx(); fn(); };
+    m.append(b);
+  };
+  const head = document.createElement("div");
+  head.className = "head";
+  head.textContent = it.source;
+  m.append(head);
+  add(it.enabled ? "Hide in OBS" : "Show in OBS", it.enabled ? "eyeoff" : "eye", () => { editNow(it, { enabled: !it.enabled }); paintSources(); });
+  add(it.locked ? "Unlock" : "Lock", it.locked ? "unlock" : "lock", () => { editNow(it, { locked: !it.locked }); paintSources(); });
+  add("Duplicate", "copy", () => { editNow(it, { duplicate: true }); itemsQuiet = 0; });
+  add("Bring to front", "up", () => restackItem(it, 1e6));
+  add("Send to back", "down", () => restackItem(it, 0));
+  add("Copy the name", "copy", () => navigator.clipboard?.writeText(it.source).then(() => flash("Name copied")));
+  add("Rename", "pen", () => { selectItem(it.id); $("iName").focus(); $("iName").select(); });
+  add("Remove from the scene", "x", () => deleteItem(it));
+  document.body.append(m);
+  m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + "px";
+  ctx = m;
+}
+// A new scene or leaving the editor: nothing selected, the list asked for again.
+const baseLayerRows = layerRows;
+let srcScene = null;
+layerRows = function () {
+  baseLayerRows();
+  if (scene !== srcScene) { srcScene = scene; selItem = null; }
+  paintSources();
+  watchScene();
+};
+setInterval(paintBoxes, 600);
 </script>
 </body>
 </html>
