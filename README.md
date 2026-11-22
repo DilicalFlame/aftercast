@@ -144,7 +144,7 @@ Type into the chat as a viewer, member, moderator or yourself (the owner), with 
 send a Super Chat; command chips fill in `!q`, `!chapter`, `!lat` and the rest. Bot replies
 appear in the chat like on YouTube. The video has no sound; listen in OBS.
 
-**Edit overlays** on the rehearse page turns it into an overlay editor: layers on the left,
+**Edit scenes** on the rehearse page turns it into a scene editor: layers on the left,
 the video in the middle with every overlay playing sample content, and the selected
 overlay's style on the right. Each overlay lays out in a frame, as in a design tool: drag it
 to move (it snaps to the canvas edges and center), drag a corner to scale it, a side to
@@ -152,17 +152,32 @@ resize it, and just outside a corner to rotate it; the bar under the video sets 
 number. With OBS connected the layer list is OBS's: the scene picker at its top lists your OBS scenes,
 each shows only the overlay Browser sources it has (found by their address, `.../overlay/keys`),
 and the eye shows or hides that source in OBS itself, for that scene. Without OBS (a mock run)
-every overlay is listed and the eye only hides it in the preview. Drag a layer by its icon to
+every overlay is listed and the eye only hides it in the preview. Drag a layer to
 restack it. The first scene in the list, **Virtual scene**, is not in OBS: it shows every
 overlay on a flat color (pick it beside the scene picker) so overlays no scene has yet can be
 styled too; its eye only hides in the preview. Every layer shows the overlay's Browser source address
 (Browser source address in the style panel, or the link button in the virtual scene), and a
 right-click on a layer adds it to any OBS scene as a Browser source the size of the canvas
-(a scene that has it already shares the same source). **Normal, BRB and Privacy** above the
-scene picker really put the rehearse in that mode (BRB switches the OBS scene and shows the BRB
+(a scene that has it already shares the same source). **Normal, BRB and Privacy** (the mode menu
+in the top bar) really put the rehearse in that mode (BRB switches the OBS scene and shows the BRB
 overlay on the video; Done ends it) and show it: BRB shows the BRB overlay, privacy hides keys and captions;
 each jumps to the scene of that name when OBS has one, else to the virtual scene. Only the
 selected overlay plays its sound while editing (the speaker button in the top bar mutes it).
+
+The layer list works like a design tool's: compact rows, the buttons show on hover (an eye that
+is off stays visible), and every aftercast browser source has the same icon and is listed with
+the other Browser sources. The folder button makes a **virtual folder** (empty, or from the
+selected layers): drag a layer under a folder's name or between its members to put it in, to the
+left past the last member to take it out; a folder opens and closes, renames (double click),
+hides everything it holds with its eye, and is kept per scene in `<home>\overlays\layers.json`
+(OBS is not touched). The crossed eye hides the layers that are off, to focus. The bar over the
+video: OBS video, OBS's picture of the scene and sound; zoom (Fit, 25% to 200%, Ctrl and the
+wheel, the middle button drags), rulers (drag from one to pull out a guide, back onto it to
+remove it), hiding the player controls and the side panels, and what shows behind the sources
+when there is no video; the grid, snapping and its menu (canvas edges and center, other layers,
+the grid, guides; the grid size); for the selection, align and spread, fit, fill, stretch,
+center, match size, flip, rotate 90 degrees, reset, order, keep the shape, lock, duplicate and
+remove; and the mode menu.
 Frames snap to the canvas and to the edges and centers of the other overlays (Alt skips it);
 the lock on a layer takes it off the canvas so what is under it can be picked, and clicking
 again on a selected overlay walks down the pile of overlays beneath the pointer. An overlay

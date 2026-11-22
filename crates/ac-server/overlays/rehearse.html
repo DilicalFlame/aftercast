@@ -32,10 +32,10 @@ video { width: 100%; height: 100%; object-fit: contain; display: block; }
 #dvr { position: absolute; inset: 0; background: #000; }
 .obsshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 .obsshot[hidden] { display: none; }
-.ruler { position: absolute; z-index: 48; pointer-events: none; background: rgb(0 0 0 / 55%); color: #cfd2da; font: 600 calc(10px * var(--k)) var(--ui-font, sans-serif); }
+.ruler { position: absolute; z-index: 48; pointer-events: auto; background: rgb(0 0 0 / 55%); color: #cfd2da; font: 600 calc(10px * var(--k)) var(--ui-font, sans-serif); }
 .ruler span { position: absolute; }
-.ruler.h { left: 0; top: 0; width: 1920px; height: calc(16px * var(--k)); }
-.ruler.v { left: 0; top: 0; width: calc(16px * var(--k)); height: 1080px; }
+.ruler.h { cursor: s-resize; left: 0; top: 0; width: 1920px; height: calc(16px * var(--k)); }
+.ruler.v { cursor: e-resize; left: 0; top: 0; width: calc(16px * var(--k)); height: 1080px; }
 #dvr[hidden] { display: none; }
 .ctl { position: absolute; left: 0; right: 0; bottom: 0; z-index: 80; padding: 30px 12px 6px;
   background: linear-gradient(transparent, rgb(0 0 0 / 72%)); opacity: 0; transition: opacity .2s; }
@@ -264,34 +264,54 @@ body.editing section { display: flex; flex-direction: column; align-items: cente
 body.editing .player { border-radius: 0; background: #101012; flex: none; }
 /* Handles of a frame at the video's edge stay whole. */
 body.editing .player, body.editing .stage { overflow: visible; }
+/* The viewport holds the player; zoomed, it scrolls (the player is wider than it). */
+.viewport { display: contents; }
+body.editing .viewport { display: block; flex: none; max-width: 100%; }
+body.editing .viewport.zoomed { display: flex; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
+body.editing .viewport.zoomed .player { margin: auto; }
+/* Only the picture and the layers: no player controls, no side panels. */
+body.editing.noseek :is(.ctl, .skipfx, .bigicon, .spd) { display: none; }
+body.editing.focus main { grid-template-columns: minmax(0, 1fr); }
+body.editing.focus :is(.layers, .inspector) { display: none; }
+body.editing.focus .top { grid-template-columns: auto minmax(0, 1fr) auto; }
 body.editing video { overflow: hidden; }
 body.editing .bar { display: flex; }
 
 .panel-head { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 16px 0 18px;
   font-weight: 600; font-size: 14px; }
 .panel-head svg { width: 18px; height: 18px; color: var(--dim); }
+.panel-head.tight { gap: 2px; padding-right: 10px; }
+.panel-head.tight .icon { width: 28px; height: 28px; }
 .panel-head .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Layers: the icon turns into a grip on hover; drag it to restack (OBS restacks too). */
-.list { position: relative; padding: 4px 10px; overflow-y: auto; flex: 1; }
-.layer { position: relative; display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 6px 0 8px;
-  border-radius: 9px; color: var(--dim); cursor: pointer; user-select: none; font-size: 13.5px;
-  transition: background .12s, color .12s, transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s; }
+/* Layers, as in Figma: compact rows, the buttons show on hover (or when they mean something:
+   hidden, locked), folders open and close, a dragged row lifts and the others make room. */
+.list { position: relative; padding: 4px 8px 12px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
+.layer { position: relative; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 4px 0 8px;
+  border-radius: 6px; color: var(--dim); cursor: pointer; user-select: none; font-size: 13px;
+  transition: background .1s, color .1s, transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s; }
 .layer:hover { background: var(--hover); color: var(--text); }
 .layer.sel { background: var(--raised); color: var(--text); }
 .layer.off, .layer.off:hover { color: var(--faint); }
-.layer.docked .name::after { content: "in status bar"; margin-left: 8px; color: var(--faint); font-size: 11.5px; }
-.layer .lead { position: relative; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px;
-  flex: none; }
-.layer .lead svg { width: 18px; height: 18px; position: absolute; transition: opacity .12s; }
-.layer .lead .grip { opacity: 0; }
-.layer:hover .lead { cursor: grab; }
-.layer:hover .lead .kind { opacity: 0; }
-.layer:hover .lead .grip { opacity: 1; }
+.layer.in { margin-left: 18px; }
+.layer.in::before { content: ""; position: absolute; left: -10px; top: -1px; bottom: -1px; width: 1px; background: var(--line); }
+.layer .lead { display: grid; place-items: center; width: 16px; height: 16px; flex: none; }
+.layer .lead svg { width: 15px; height: 15px; }
 .layer .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.layer .icon { width: 28px; height: 28px; color: var(--dim); }
+.layer .icon { width: 24px; height: 24px; color: var(--dim); opacity: 0; }
+.layer:hover .icon, .layer.off .eyeb, .layer.locked .lockb { opacity: 1; }
 .layer .icon:hover { color: var(--text); }
 .layer.off .icon, .layer.off .icon:hover { color: var(--faint); }
+.layer .dockb { display: none; place-items: center; width: 16px; flex: none; color: var(--faint); }
+.layer .dockb svg { width: 14px; height: 14px; }
+.layer.docked .dockb { display: grid; }
+.layer.folder { color: var(--text); font-weight: 600; }
+.layer.folder .chev { display: grid; place-items: center; width: 14px; flex: none; color: var(--faint); transition: transform .12s; }
+.layer.folder .chev svg { width: 14px; height: 14px; }
+.layer.folder.shut .chev { transform: rotate(-90deg); }
+.layer.folder .count { color: var(--faint); font-weight: 500; font-size: 11.5px; }
+.layer .rename { flex: 1; min-width: 0; height: 22px; padding: 0 6px; border: 0; border-radius: 5px; background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--ui); color: var(--text); font: inherit; outline: none; }
 .layer.lifted { z-index: 2; background: var(--raised); color: var(--text); transition: none;
   box-shadow: 0 10px 30px rgb(0 0 0 / 55%), 0 0 0 1px var(--line); cursor: grabbing; }
 body.restacking, body.restacking * { cursor: grabbing !important; }
@@ -330,6 +350,13 @@ body.restacking, body.restacking * { cursor: grabbing !important; }
   font: 600 calc(12px * var(--k))/1 var(--ui-font); font-variant-numeric: tabular-nums;
   color: #fff; background: #111114; box-shadow: 0 0 0 calc(1px * var(--k)) #2a2a30;
   padding: calc(6px * var(--k)) calc(8px * var(--k)); border-radius: calc(6px * var(--k)); }
+/* A guide the owner pulled out of a ruler: a thin line with a wide grip. */
+.ug { position: absolute; z-index: 54; background: #19c3d6; }
+.ug::before { content: ""; position: absolute; }
+.ug.v { top: 0; bottom: 0; width: calc(1px * var(--k)); cursor: ew-resize; }
+.ug.v::before { top: 0; bottom: 0; left: calc(-4px * var(--k)); right: calc(-4px * var(--k)); }
+.ug.h { left: 0; right: 0; height: calc(1px * var(--k)); cursor: ns-resize; }
+.ug.h::before { left: 0; right: 0; top: calc(-4px * var(--k)); bottom: calc(-4px * var(--k)); }
 .guide { position: absolute; z-index: 55; background: #ff3ec9; pointer-events: none; }
 .guide.v { top: 0; bottom: 0; width: calc(1px * var(--k)); }
 .guide.h { left: 0; right: 0; height: calc(1px * var(--k)); }
@@ -338,6 +365,9 @@ body.gesture, body.gesture * { cursor: var(--gesture) !important; user-select: n
 /* The bar under the canvas: where the selection sits; view switches on the right. */
 .bar { align-items: center; gap: 2px; height: 100%; padding: 0 12px; max-width: 100%;
   overflow-x: auto; scrollbar-width: none; }
+.icon.drop { width: auto; padding: 0 5px 0 7px; gap: 2px; display: inline-flex; align-items: center; }
+.icon.drop svg:last-child:not(:first-child) { width: 10px; height: 10px; opacity: .6; }
+.icon.zoom { width: 50px; font: inherit; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .bar .div { width: 1px; height: 22px; background: var(--line); margin: 0 6px; flex: none; }
 .bar .group { display: flex; align-items: center; gap: 2px; transition: opacity .15s; }
 .bar.empty .group.sel { opacity: .35; pointer-events: none; }
@@ -466,8 +496,6 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; bord
 .brbel:hover { background: color-mix(in srgb, var(--ui) 14%, transparent); }
 .subhead { padding: 10px 18px 4px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .srclist { flex: none; max-height: 42%; }
-.layer.src.sel { background: var(--selected-row, #26262d); }
-.layer.src.off .name { color: var(--faint); }
 .srcbox { position: absolute; pointer-events: auto; cursor: move; outline: 1px solid transparent; }
 .srcbox:hover { outline: calc(1.5px * var(--k)) solid color-mix(in srgb, var(--ui) 70%, transparent); }
 .srcbox.off { pointer-events: none; }
@@ -503,14 +531,7 @@ input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; bord
 .check[aria-pressed="true"] .box svg { opacity: 1; }
 .check > svg { width: 14px; height: 14px; flex: none; }
 
-/* Modes: what the preview imitates (normal, BRB, privacy). */
-.modes { margin: 0 14px 8px; }
-/* Layer rows: a copy-address button in the virtual scene. */
-.layer .lockb { width: 26px; height: 26px; opacity: 0; }
-.layer:hover .lockb, .layer.locked .lockb { opacity: 1; }
-.layer.locked { color: var(--faint); cursor: default; }
-.layer .copy { display: none; width: 26px; height: 26px; }
-.virtual .layer .copy { display: inline-grid; }
+.layer.locked { color: var(--faint); }
 /* The right-click menu. */
 .ctx { position: fixed; z-index: 100; min-width: 230px; padding: 5px; border-radius: 10px; background: var(--raised);
   box-shadow: 0 0 0 1px #34353c, 0 16px 40px rgb(0 0 0 / 55%); font-size: 13px; }
@@ -566,11 +587,39 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     <span class="hint view-only">Simulated YouTube, video from OBS Virtual Camera</span>
     <div class="bar empty" id="bar">
       <div class="group">
-        <button class="icon" id="showVideo" aria-pressed="true" title="OBS video behind the overlays" data-icon="video"></button>
-        <button class="icon edit-only" id="edSound" aria-pressed="true" title="Play the selected overlay's sound while editing" data-icon="speaker"></button>
-        <button class="icon edit-only" id="shotBtn" aria-pressed="false" title="Show OBS's own picture of this scene behind the overlays" data-icon="image"></button>
+        <button class="icon" id="showVideo" aria-pressed="true" title="OBS video behind the sources" data-icon="video"></button>
+        <button class="icon edit-only" id="shotBtn" aria-pressed="false" title="Show OBS's own picture of this scene behind the sources" data-icon="image"></button>
+        <button class="icon edit-only" id="edSound" aria-pressed="true" title="Play the selected browser source's sound while editing" data-icon="speaker"></button>
+      </div>
+      <span class="div"></span>
+      <div class="group">
+        <button class="icon" id="zoomOut" type="button" title="Zoom out" data-icon="minus"></button>
+        <button class="icon zoom" id="zoomBtn" type="button" title="Zoom (Ctrl and the wheel; the middle button drags)">Fit</button>
+        <button class="icon" id="zoomIn" type="button" title="Zoom in" data-icon="plus"></button>
+        <button class="icon" id="rulerBtn" type="button" aria-pressed="false" title="Rulers: drag from one to pull out a guide" data-icon="ruler"></button>
+        <button class="icon" id="seekBtn" type="button" aria-pressed="false" title="Hide the player controls (seek bar, play, volume)" data-icon="seeker"></button>
+        <button class="icon" id="panelsBtn" type="button" aria-pressed="false" title="Hide the side panels" data-icon="panels"></button>
+        <button class="icon drop" id="bgBtn" type="button" title="What is behind the sources when there is no video" data-icon="look" data-drop></button>
+      </div>
+      <span class="div"></span>
+      <div class="group">
         <button class="icon edit-only" id="gridBtn" aria-pressed="false" title="Grid: sources snap to it" data-icon="grid"></button>
-        <button class="icon" id="snap" aria-pressed="true" title="Snap to the canvas edges and center (hold Alt to skip)" data-icon="magnet"></button>
+        <button class="icon" id="snap" aria-pressed="true" title="Snap (hold Alt to skip)" data-icon="magnet"></button>
+        <button class="icon drop" id="snapMenu" type="button" title="What to snap to, and the grid size" data-icon="gear" data-drop></button>
+      </div>
+      <span class="div"></span>
+      <div class="group sel">
+        <button class="icon drop" id="alignBtn" type="button" title="Align and spread" data-icon="al-hcenter" data-drop></button>
+        <button class="icon drop" id="arrangeBtn" type="button" title="Fit, fill, center, match, flip, rotate, reset" data-icon="transform" data-drop></button>
+        <button class="icon drop" id="orderBtn" type="button" title="Order: front, forward, backward, back" data-icon="layers" data-drop></button>
+        <button class="icon" id="aspectBtn" type="button" aria-pressed="true" title="Keep the shape when resizing" data-icon="link"></button>
+        <button class="icon" id="lockBtn" type="button" title="Lock or unlock" data-icon="lock"></button>
+        <button class="icon" id="dupBtn" type="button" title="Duplicate" data-icon="copy"></button>
+        <button class="icon" id="delBtn" type="button" title="Remove from the scene" data-icon="trash"></button>
+      </div>
+      <span class="div"></span>
+      <div class="group">
+        <button class="icon drop" id="modeBtn" type="button" title="Mode" data-drop></button>
       </div>
     </div>
   </div>
@@ -578,24 +627,22 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
     <span class="saved edit-only" id="saved"></span>
     <button class="icon edit-only" id="undo" title="Undo (Ctrl+Z)" disabled data-icon="undo"></button>
     <button class="icon edit-only" id="redo" title="Redo (Ctrl+Shift+Z)" disabled data-icon="redo"></button>
-    <button class="btn" id="edit"><span data-icon="pen"></span><span>Edit overlays</span></button>
+    <button class="btn" id="edit"><span data-icon="pen"></span><span>Edit scenes</span></button>
   </div>
 </header>
 <main>
   <aside class="layers">
-    <div class="panel-head"><span data-icon="layers"></span><span class="grow">Layers</span>
+    <div class="panel-head tight"><span class="grow">Layers</span>
       <button class="icon" id="addSrc" type="button" title="Add a source to this scene" data-icon="plus" hidden></button>
+      <button class="icon" id="newFolder" type="button" title="New folder (the selected layers go in it)" data-icon="folder"></button>
+      <button class="icon" id="hideOff" type="button" aria-pressed="false" title="Hide the layers that are off" data-icon="eyeoff"></button>
       <button class="icon" id="layerFilter" type="button" aria-pressed="false" title="Show only some types of layer" data-icon="filter"></button></div>
-    <div class="modes seg" id="modes">
-      <button type="button" data-mode="normal" title="The normal scenes">Normal</button>
-      <button type="button" data-mode="brb" title="Be right back: the BRB scene and its overlay">BRB</button>
-      <button type="button" data-mode="privacy" title="Privacy: keys and captions are not shown">Privacy</button>
-    </div>
-    <div class="scene"><select id="sceneSel" title="Scene to edit"></select><input type="color" id="vColor" title="Color behind the overlays" hidden></div>
+    <div class="scene"><select id="sceneSel" title="Scene to edit"></select></div>
     <div class="list" id="layerList"></div>
     <div class="panel-foot" id="layerEmpty" hidden>Nothing in this scene</div>
   </aside>
   <section>
+    <div class="viewport" id="viewport">
     <div class="player">
       <video id="video" autoplay muted playsinline></video>
       <video id="dvr" playsinline hidden></video>
@@ -634,6 +681,7 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
           <div class="guide h" id="guideH" hidden></div>
         </div>
       </div>
+    </div>
     </div>
     <div class="skins" id="skins" hidden>
       <div class="skins-head"><span id="skinsTitle">Skins</span><span class="skins-note" id="skinsNote"></span>
@@ -1339,6 +1387,19 @@ const ICONS = {
   "al-top": '<path d="M3 4h18"/><rect x="6" y="8" width="4" height="12" rx="1"/><rect x="14" y="8" width="4" height="7" rx="1"/>',
   "al-vcenter": '<path d="M3 12h18"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/>',
   "al-bottom": '<path d="M3 20h18"/><rect x="6" y="4" width="4" height="12" rx="1"/><rect x="14" y="9" width="4" height="7" rx="1"/>',
+  minus: '<path d="M5 12h14"/>',
+  ruler: '<path d="M3 17 17 3l4 4L7 21z"/><path d="m7 13 2 2M10 10l2 2M13 7l2 2"/>',
+  panels: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16M16 4v16"/>',
+  seeker: '<rect x="3" y="14" width="18" height="6" rx="2"/><path d="M6 17h6"/>',
+  flipH: '<path d="M12 3v18"/><path d="m8 7-5 5 5 5z"/><path d="m16 7 5 5-5 5z"/>',
+  flipV: '<path d="M3 12h18"/><path d="m7 8 5-5 5 5z"/><path d="m7 16 5 5 5-5z"/>',
+  rotccw: '<path d="M3 12a9 9 0 1 1 3 6.7L3 16"/><path d="M3 21v-5h5"/>',
+  fit: '<rect x="3" y="3" width="18" height="18" rx="2"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
+  fill: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9 9 3M3 15 15 3M3 21 21 3M9 21l12-12M15 21l6-6"/>',
+  center: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/>',
+  match: '<rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/><path d="M11 7h4a2 2 0 0 1 2 2v4"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v6M14 10v6"/>',
+  transform: '<path d="M4 4h4M4 4v4M20 4h-4M20 4v4M4 20h4M4 20v-4M20 20h-4M20 20v-4"/><rect x="9" y="9" width="6" height="6"/>',
   "tx-left": '<path d="M4 6h16M4 12h10M4 18h13"/>',
   "tx-center": '<path d="M4 6h16M7 12h10M5.5 18h13"/>',
   "tx-right": '<path d="M4 6h16M10 12h10M7 18h13"/>',
@@ -1347,9 +1408,9 @@ const svg = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${I
 for (const e of document.querySelectorAll("[data-icon]")) e.insertAdjacentHTML("afterbegin", svg(e.dataset.icon));
 
 const META = {
-  keys: ["Keys", "keyboard"], question: ["Question", "message"], now: ["Now", "clock"], toast: ["Toast", "bell"],
-  chapters: ["Chapters", "bookmark"], captions: ["Captions", "captions"], brb: ["BRB", "coffee"],
-  latency: ["Latency", "activity"], starting: ["Starting", "play"], status: ["Status bar", "bar"], alert: ["Alert", "sparkle"],
+  keys: ["Keys", "globe"], question: ["Question", "globe"], now: ["Now", "globe"], toast: ["Toast", "globe"],
+  chapters: ["Chapters", "globe"], captions: ["Captions", "globe"], brb: ["BRB", "globe"],
+  latency: ["Latency", "globe"], starting: ["Starting", "globe"], status: ["Status bar", "globe"], alert: ["Alert", "globe"],
 };
 const LIMITS = { x: [-1920, 3840], y: [-1080, 2160], width: [20, 3840], height: [20, 2160],
                  size: [10, 400], rotate: [-180, 180], opacity: [0, 100] };
@@ -1422,18 +1483,25 @@ const place = (node, f) => {
 // Sizes: the player as large as the space allows, the canvas scaled into it.
 // Editing: the video hangs from the top bar, as wide as the column while the space under
 // it (for skins) keeps at least a third of the height.
+// Zoom: null fits the space, else it is the screen pixels per canvas pixel (the player gets
+// that wide and the viewport around it scrolls).
+let zoomK = null;
 function fitPlayer() {
-  if (!editing) { player.style.width = ""; return; }
-  const sec = player.parentElement;
-  player.style.width = Math.max(240, Math.min(sec.clientWidth, sec.clientHeight * 2 / 3 * 16 / 9)) + "px";
+  const vp = $("viewport"), sec = vp.parentElement;
+  if (!editing) { player.style.width = vp.style.width = vp.style.height = ""; vp.classList.remove("zoomed"); return; }
+  const fitW = Math.max(240, Math.min(sec.clientWidth, sec.clientHeight * 2 / 3 * 16 / 9));
+  vp.classList.toggle("zoomed", zoomK !== null);
+  if (zoomK === null) { player.style.width = fitW + "px"; vp.style.width = vp.style.height = ""; }
+  else { vp.style.width = fitW + "px"; vp.style.height = fitW * 9 / 16 + "px"; player.style.width = 1920 * zoomK + "px"; }
 }
 function fit() {
   k = $("stage").clientWidth / 1920 || 1;
   $("canvas").style.transform = `scale(${k})`;
   $("canvas").style.setProperty("--k", 1 / k);
+  $("zoomBtn").textContent = zoomK === null ? "Fit" : Math.round(k * 100) + "%";
 }
 new ResizeObserver(fit).observe($("stage"));
-new ResizeObserver(fitPlayer).observe(player.parentElement);
+new ResizeObserver(fitPlayer).observe($("viewport").parentElement);
 
 // Drawing one overlay: its page's vars, its hit box, the selection and the panels.
 function apply(n) {
@@ -1668,9 +1736,11 @@ function openCtx(e, n) {
   const m = document.createElement("div");
   m.className = "ctx";
   const add = (tag, cls, html) => { const x = document.createElement(tag); if (cls) x.className = cls; if (html) x.innerHTML = html; m.append(x); return x; };
-  add("div", "head", `${META[n][0]} overlay`);
+  add("div", "head", `${META[n][0]} browser source`);
   add("button", "", `${svg("copy")}Copy the address`).onclick = () => { closeCtx(); copyAddr(n); };
   add("button", "", `${svg(locked.has(n) ? "unlock" : "lock")}${locked.has(n) ? "Unlock" : "Lock"}`).onclick = () => { closeCtx(); setLocked(n, !locked.has(n)); };
+  add("hr");
+  folderMenu(add, "o:" + n);
   add("hr");
   add("div", "head", "Add to an OBS scene");
   if (!obsInfo) add("div", "note", "OBS is not connected.");
@@ -1757,7 +1827,7 @@ $("edSound").onclick = () => {
 // A click on the empty space around the video, or beside the layers, deselects.
 document.addEventListener("pointerdown", (e) => {
   if (!editing || selected === null) return;
-  if (e.target.closest(".player, .inspector, .skins, .top, .ctx, .layer, .modes, .scene, select, input, button, label")) return;
+  if (e.target.closest(".player, .inspector, .skins, .top, .ctx, .layer, .scene, select, input, button, label")) return;
   select(null);
 });
 
@@ -1826,6 +1896,7 @@ $("undo").onclick = undo;
 
 async function load() {
   const r = await (await fetch("/rehearse/frames", { cache: "no-store" })).json();
+  await loadLayers();
   F = {};
   order = r.order;
   themeBg = r.theme_bg;
@@ -1917,14 +1988,16 @@ function enterScene(name) {
 }
 // The virtual scene shows a flat color where the video would be.
 function syncVideo() {
-  const flat = scene === VIRTUAL;
-  $("vColor").hidden = !flat;
-  $("vColor").value = store.get("virtual-color", "#59606e");
-  player.style.background = flat ? $("vColor").value : "";
-  $("video").style.visibility = flat || $("showVideo").getAttribute("aria-pressed") !== "true" ? "hidden" : "";
+  // No video (the virtual scene, or switched off): what is behind the sources shows instead.
+  const flat = scene === VIRTUAL || $("showVideo").getAttribute("aria-pressed") !== "true";
+  player.style.background = flat ? bgCss() : "";
+  $("video").style.visibility = flat ? "hidden" : "";
 }
+const MODE_ICON = { normal: "play", brb: "coffee", privacy: "eyeoff" };
+const MODE_NAME = { normal: "Normal", brb: "Be right back", privacy: "Privacy" };
 function paintMode() {
-  for (const b of $("modes").children) b.setAttribute("aria-pressed", b.dataset.mode === mode);
+  $("modeBtn").innerHTML = svg(MODE_ICON[mode]) + svg("down");
+  $("modeBtn").title = `Mode: ${MODE_NAME[mode]}. What the preview imitates, and the scene it jumps to`;
 }
 let sessionMode = null;
 function setMode(m) {
@@ -2003,29 +2076,27 @@ function makeRow(n) {
   row.tabIndex = 0;
   const lead = document.createElement("span");
   lead.className = "lead";
-  lead.innerHTML = svg(META[n][1]).replace('class="i"', 'class="i kind"') + svg("grip").replace('class="i"', 'class="i grip"');
-  lead.title = "Drag to restack";
+  lead.innerHTML = svg("globe");
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = META[n][0];
+  const dock = document.createElement("span");
+  dock.className = "dockb";
+  dock.title = "Shown in the status bar";
+  dock.innerHTML = svg("bar");
   const eye = document.createElement("button");
-  eye.className = "icon";
+  eye.className = "icon eyeb";
   // Flips what it shows now: the OBS source's state, or the preview's.
   eye.onclick = (e) => { e.stopPropagation(); const h = here(n); if (h) setHidden(n, h.enabled); };
-  const copy = document.createElement("button");
-  copy.className = "icon copy";
-  copy.title = "Copy the address to add it to OBS";
-  copy.innerHTML = svg("link");
-  copy.onclick = (e) => { e.stopPropagation(); copyAddr(n); };
   const lock = document.createElement("button");
   lock.className = "icon lockb";
   lock.onclick = (e) => { e.stopPropagation(); setLocked(n, !locked.has(n)); };
-  row.append(lead, name, copy, lock, eye);
+  row.append(lead, name, dock, lock, eye);
   rows[n] = { row, eye, lock };
   row.oncontextmenu = (e) => openCtx(e, n);
   row.onclick = () => { if (!locked.has(n)) select(n); };
   row.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !locked.has(n)) { e.preventDefault(); select(n); } };
-  lead.onpointerdown = (e) => dragLayer(e, row);
+  row.onpointerdown = (e) => dragLayer(e, row);
   paintLock(n);
 }
 function paintLock(n) {
@@ -2066,12 +2137,24 @@ function showGuides(xs, ys) {
 // Where an edge or center can snap: the canvas and the shown overlays' edges and centers.
 let snapT = { xs: [], ys: [] };
 function snapTargets(except) {
-  const xs = new Set([0, 960, 1920]), ys = new Set([0, 540, 1080]);
-  for (const n of order) {
-    if (n === except || frames[n].hidden || n === "starting") continue;
-    const { ex, ey, g } = extent(F[n]);
-    for (const x of [g.cx - ex, g.cx, g.cx + ex]) xs.add(Math.round(x));
-    for (const y of [g.cy - ey, g.cy, g.cy + ey]) ys.add(Math.round(y));
+  const xs = new Set(), ys = new Set();
+  if (SNAP.edges) { xs.add(0).add(1920); ys.add(0).add(1080); }
+  if (SNAP.center) { xs.add(960); ys.add(540); }
+  if (SNAP.layers) {
+    for (const n of order) {
+      if (n === except || frames[n].hidden || n === "starting") continue;
+      const { ex, ey, g } = extent(F[n]);
+      for (const x of [g.cx - ex, g.cx, g.cx + ex]) xs.add(Math.round(x));
+      for (const y of [g.cy - ey, g.cy, g.cy + ey]) ys.add(Math.round(y));
+    }
+  }
+  if (gridOn && SNAP.grid) {
+    for (let i = 0; i <= 1920; i += GRID) xs.add(i);
+    for (let i = 0; i <= 1080; i += GRID) ys.add(i);
+  }
+  if (SNAP.guides && rulerOn) {
+    for (const x of ugs().v) xs.add(x);
+    for (const y of ugs().h) ys.add(y);
   }
   return { xs: [...xs], ys: [...ys] };
 }
@@ -2277,9 +2360,7 @@ function build() {
   layerRows();
   restack();
   $("sceneSel").onchange = () => enterScene($("sceneSel").value);
-  for (const b of $("modes").children) b.onclick = () => setMode(b.dataset.mode);
   paintMode();
-  $("vColor").oninput = () => { store.set("virtual-color", $("vColor").value); player.style.background = $("vColor").value; };
   for (const n of order) apply(n);
   fillScenes();
 }
@@ -2780,7 +2861,7 @@ $("edit").onclick = async () => {
   editing = !editing;
   document.body.classList.toggle("editing", editing);
   $("edit").classList.toggle("primary", editing);
-  $("edit").lastElementChild.textContent = editing ? "Done" : "Edit overlays";
+  $("edit").lastElementChild.textContent = editing ? "Done" : "Edit scenes";
   $("edit").firstElementChild.hidden = editing;
   $("stage").hidden = !editing;
   fitPlayer();
@@ -2799,7 +2880,7 @@ $("edit").onclick = async () => {
     if (!F) { await load(); build(); }
     fit();
   } catch (e) {
-    status("bad", "Could not load the overlays: " + e);
+    status("bad", "Could not load the browser sources: " + e);
   }
 };
 document.addEventListener("keydown", (e) => {
@@ -3049,8 +3130,10 @@ const k0 = () => 1920 / (items.canvas[0] || 1920);
 const alignOf = (a) => [a & 1 ? 0 : a & 2 ? 1 : 0.5, a & 4 ? 0 : a & 8 ? 1 : 0.5];
 // Where the source's box is on OBS's canvas, before it is rotated about its alignment point.
 const itemBox = (it) => {
-  const w = it.bounds ? it.bounds_w : it.width, h = it.bounds ? it.bounds_h : it.height;
-  const [ax, ay] = alignOf(it.alignment);
+  const w = Math.abs(it.bounds ? it.bounds_w : it.width), h = Math.abs(it.bounds ? it.bounds_h : it.height);
+  let [ax, ay] = alignOf(it.alignment);
+  // Flipped (a negative scale) it extends the other way from its place.
+  if (!it.bounds) { if (it.scale_x < 0) ax = 1 - ax; if (it.scale_y < 0) ay = 1 - ay; }
   return { w, h, ax, ay, left: it.x - ax * w, top: it.y - ay * h };
 };
 
@@ -3068,7 +3151,7 @@ function onItems(d) {
 }
 // Asks OBS to keep listing this scene (it stops after 10 s of silence).
 function watchScene() {
-  if (!editing || !live()) return;
+  if (!editing || !live() || !scene) return;
   fetch("/rehearse/obs/watch", { method: "POST", headers: { "content-type": "application/json" },
                                   body: JSON.stringify({ scene }) }).catch(() => {});
 }
@@ -3116,7 +3199,7 @@ const editNow = (it, edit) => {
 // The layers: overlays and OBS sources together, in the order OBS stacks them (front on top).
 // A filter picks which types show; the plus adds a new source to the scene.
 const TYPE_NAMES = {
-  overlay: "Overlays (aftercast)", camera: "Cameras", screen: "Screen capture", window: "Window capture",
+  camera: "Cameras", screen: "Screen capture", window: "Window capture",
   game: "Game capture", browser: "Browser sources", text: "Text", image: "Images", audio: "Audio",
   media: "Media", color: "Colors", scene: "Scenes", group: "Groups",
 };
@@ -3136,7 +3219,9 @@ function typeOf(it) {
     : /color/.test(k) ? "color" : k;
 }
 let hiddenTypes = new Set(JSON.parse(store.get("layer-hidden-types", "[]")));
-// Everything the scene has, front first: an entry is an overlay (its own row) or a source.
+let hideOff = store.get("layer-hide-off", "off") === "on";
+// Everything the scene has, front first: an entry is an aftercast browser source (its own row,
+// `name`) or any other source (`item`).
 function layerEntries() {
   if (live() && items.scene === scene) {
     const mine = new Map(obsInfo.overlays.filter((o) => o.scene === scene).map((o) => [o.source, o.overlay]));
@@ -3144,23 +3229,192 @@ function layerEntries() {
     for (const it of [...items.items].sort((a, b) => b.index - a.index)) {
       const ov = mine.get(it.source);
       if (!ov) out.push({ type: typeOf(it), item: it });
-      else if (rows[ov] && here(ov)) out.push({ type: "overlay", name: ov });
+      else if (rows[ov] && here(ov)) out.push({ type: "browser", name: ov });
     }
-    // Overlays OBS has not listed yet go in front until it does.
+    // Browser sources OBS has not listed yet go in front until it does.
     const listed = new Set(out.filter((e) => e.name).map((e) => e.name));
-    const early = order.filter((n) => here(n) && !listed.has(n)).map((n) => ({ type: "overlay", name: n }));
+    const early = order.filter((n) => here(n) && !listed.has(n)).map((n) => ({ type: "browser", name: n, early: true }));
     return [...early, ...out];
   }
-  return order.filter((n) => here(n)).map((n) => ({ type: "overlay", name: n }));
+  return order.filter((n) => here(n)).map((n) => ({ type: "browser", name: n }));
+}
+const keyOf = (e) => (e.name ? "o:" + e.name : "s:" + e.item.source);
+const isOff = (e) => (e.name ? !here(e.name)?.enabled : !e.item.enabled);
+
+// Virtual folders: kept in aftercast (layers.json), not in OBS, per scene. A folder shows where
+// its frontmost member is; OBS's stacking order is not touched by it.
+let LAYERS = {};
+function fold(sc = scene) {
+  const all = (LAYERS.folders = LAYERS.folders || {});
+  return (all[sc] = all[sc] || { list: [], of: {} });
+}
+let saveT = 0;
+function saveLayers() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    const folders = Object.fromEntries(Object.entries(LAYERS.folders || {}).filter(([, c]) => c.list.length));
+    post("/rehearse/layers", { ...LAYERS, folders });
+  }, 300);
+}
+async function loadLayers() {
+  try { LAYERS = await (await fetch("/rehearse/layers", { cache: "no-store" })).json(); } catch { LAYERS = {}; }
+}
+const folderOf = (e, cfg = fold()) => {
+  const id = cfg.of[keyOf(e)];
+  return cfg.list.some((f) => f.id === id) ? id : null;
+};
+function newFolder(keys) {
+  const cfg = fold(), id = "f" + Date.now().toString(36);
+  cfg.list.unshift({ id, name: "Folder", open: true });
+  for (const k of keys) cfg.of[k] = id;
+  saveLayers();
+  paintLayers();
+  renameFolder(id);
+}
+function moveToFolder(keys, id) {
+  const cfg = fold();
+  for (const k of keys) id ? (cfg.of[k] = id) : delete cfg.of[k];
+  saveLayers();
+  paintLayers();
+}
+function ungroup(id) {
+  const cfg = fold();
+  cfg.list = cfg.list.filter((f) => f.id !== id);
+  for (const k of Object.keys(cfg.of)) if (cfg.of[k] === id) delete cfg.of[k];
+  saveLayers();
+  paintLayers();
+}
+function renameFolder(id) {
+  const row = $("layerList").querySelector(`[data-folder-row="${id}"]`);
+  const fd = fold().list.find((f) => f.id === id);
+  if (!row || !fd) return;
+  const input = document.createElement("input");
+  input.className = "rename";
+  input.value = fd.name;
+  input.spellcheck = false;
+  row.querySelector(".name").replaceWith(input);
+  input.focus();
+  input.select();
+  const done = (keep) => {
+    if (!input.isConnected) return;
+    if (keep && input.value.trim()) fd.name = input.value.trim();
+    saveLayers();
+    paintLayers();
+  };
+  input.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") done(true); else if (e.key === "Escape") done(false); };
+  input.onblur = () => done(true);
+  input.onclick = (e) => e.stopPropagation();
+}
+// A folder's eye: hides all that is in it, or shows them all when they are all hidden.
+function setFolderShown(members, on) {
+  const its = members.filter((e) => e.item).map((e) => e.item);
+  const before = its.map((i) => [i, snap(i)]);
+  for (const i of its) editItem(i, { enabled: on });
+  clearTimeout(editT);
+  flushEdit();
+  recordItems(before);
+  for (const e of members) if (e.name) setHidden(e.name, !on);
+  paintSources();
+}
+function folderRow(fd, members) {
+  const row = document.createElement("div");
+  row.className = "layer folder" + (fd.open ? "" : " shut");
+  row.dataset.folderRow = fd.id;
+  row.tabIndex = 0;
+  const chev = document.createElement("span");
+  chev.className = "chev";
+  chev.innerHTML = svg("down");
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.innerHTML = svg("folder");
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = fd.name;
+  const count = document.createElement("span");
+  count.className = "count";
+  count.textContent = members.length || "";
+  const off = members.length > 0 && members.every(isOff);
+  const eye = document.createElement("button");
+  eye.className = "icon eyeb";
+  eye.innerHTML = svg(off ? "eyeoff" : "eye");
+  eye.title = off ? "Show everything in the folder" : "Hide everything in the folder";
+  eye.onclick = (e) => { e.stopPropagation(); setFolderShown(members, off); };
+  row.classList.toggle("off", off);
+  row.append(chev, lead, name, count, eye);
+  const toggle = () => { fd.open = !fd.open; saveLayers(); paintLayers(); };
+  row.onclick = toggle;
+  row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } };
+  row.ondblclick = (e) => { e.preventDefault(); renameFolder(fd.id); };
+  row.oncontextmenu = (e) => openFolderCtx(e, fd, members);
+  return row;
+}
+// The rows as they are listed: folders where their frontmost member is, open ones followed by
+// their members; what the type filter or "hide the off ones" leaves out is not listed.
+function layerNodes() {
+  const entries = layerEntries(), cfg = fold();
+  const shown = (e) => !hiddenTypes.has(e.type) && !(hideOff && isOff(e));
+  const entryRow = (e, inFolder) => {
+    const n = e.name ? rows[e.name].row : sourceRow(e.item);
+    n.classList.toggle("in", !!inFolder);
+    n.dataset.folder = inFolder || "";
+    return n;
+  };
+  const nodes = [], seen = new Set();
+  for (const e of entries) {
+    const f = folderOf(e, cfg);
+    if (!f) { if (shown(e)) nodes.push(entryRow(e)); continue; }
+    if (seen.has(f)) continue;
+    seen.add(f);
+    const members = entries.filter((x) => folderOf(x, cfg) === f), list = members.filter(shown);
+    const fd = cfg.list.find((x) => x.id === f);
+    if (!list.length && (hideOff || hiddenTypes.size)) continue;
+    nodes.push(folderRow(fd, members));
+    if (fd.open) for (const m of list) nodes.push(entryRow(m, f));
+  }
+  // A folder with nothing in it yet waits at the top.
+  const empty = cfg.list.filter((f) => !seen.has(f.id)).map((f) => folderRow(f, []));
+  return [...empty, ...nodes];
 }
 function paintLayers() {
   const entries = layerEntries();
-  const nodes = entries.filter((e) => !hiddenTypes.has(e.type)).map((e) => (e.name ? rows[e.name].row : sourceRow(e.item)));
-  $("layerList").replaceChildren(...nodes);
+  $("layerList").replaceChildren(...layerNodes());
   $("layerFilter").setAttribute("aria-pressed", hiddenTypes.size > 0);
   $("layerFilter").title = hiddenTypes.size ? "Some types are hidden: click to change" : "Show only some types of layer";
+  $("hideOff").setAttribute("aria-pressed", hideOff);
+  $("hideOff").title = hideOff ? "Showing only the layers that are on: click to show all" : "Hide the layers that are off";
   $("layerEmpty").hidden = entries.length > 0 || !live();
   $("addSrc").hidden = !live();
+}
+$("hideOff").onclick = () => { hideOff = !hideOff; store.set("layer-hide-off", hideOff ? "on" : "off"); paintLayers(); };
+// The keys of what is selected (a new folder takes them).
+const chosenKeys = () => (selected !== null ? ["o:" + selected] : chosen().map((i) => "s:" + i.source));
+$("newFolder").onclick = () => newFolder(chosenKeys());
+// Folder choices in a layer's right-click menu.
+function folderMenu(add, key) {
+  const cfg = fold(), cur = cfg.of[key];
+  add("div", "head", "Folder");
+  add("button", "", `${svg("folder")}New folder with this`).onclick = () => { closeCtx(); newFolder([key]); };
+  for (const f of cfg.list) {
+    const b = add("button", "", `${svg(cur === f.id ? "check" : "folder")}<span>${f.name}</span>`);
+    b.onclick = () => { closeCtx(); moveToFolder([key], f.id); };
+  }
+  if (cur) add("button", "", `${svg("x")}Take out of the folder`).onclick = () => { closeCtx(); moveToFolder([key], null); };
+}
+function openFolderCtx(e, fd, members) {
+  e.preventDefault();
+  closeCtx();
+  const m = document.createElement("div");
+  m.className = "ctx";
+  const add = (tag, cls, html) => { const x = document.createElement(tag); if (cls) x.className = cls; if (html) x.innerHTML = html; m.append(x); return x; };
+  add("div", "head", fd.name);
+  add("button", "", `${svg("pen")}Rename`).onclick = () => { closeCtx(); renameFolder(fd.id); };
+  add("button", "", `${svg("eye")}Show all`).onclick = () => { closeCtx(); setFolderShown(members, true); };
+  add("button", "", `${svg("eyeoff")}Hide all`).onclick = () => { closeCtx(); setFolderShown(members, false); };
+  add("button", "", `${svg("x")}Ungroup`).onclick = () => { closeCtx(); ungroup(fd.id); };
+  document.body.append(m);
+  m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + "px";
+  ctx = m;
 }
 // One OBS source as a row.
 function sourceRow(it) {
@@ -3170,8 +3424,8 @@ function sourceRow(it) {
   row.dataset.src = it.id;
   const lead = document.createElement("span");
   lead.className = "lead";
-  lead.innerHTML = svg(KIND_ICON(it.kind)).replace('class="i"', 'class="i kind"') + svg("grip").replace('class="i"', 'class="i grip"');
-  lead.title = `${it.kind}. Drag to restack`;
+  lead.innerHTML = svg(KIND_ICON(it.kind));
+  lead.title = it.kind;
   const name = document.createElement("span");
   name.className = "name";
   name.textContent = it.source;
@@ -3181,7 +3435,7 @@ function sourceRow(it) {
   lock.title = it.locked ? "Unlock" : "Lock";
   lock.onclick = (e) => { e.stopPropagation(); editNow(it, { locked: !it.locked }); paintSources(); };
   const eye = document.createElement("button");
-  eye.className = "icon";
+  eye.className = "icon eyeb";
   eye.innerHTML = svg(it.enabled ? "eye" : "eyeoff");
   eye.title = it.enabled ? "Hide in OBS" : "Show in OBS";
   eye.onclick = (e) => { e.stopPropagation(); editNow(it, { enabled: !it.enabled }); paintSources(); };
@@ -3189,21 +3443,20 @@ function sourceRow(it) {
   row.onclick = (e) => selectItem(it.id, e.shiftKey || e.ctrlKey || e.metaKey);
   row.oncontextmenu = (e) => openItemCtx(e, it);
   row.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectItem(it.id); } };
-  lead.onpointerdown = (e) => dragLayer(e, row);
+  row.onpointerdown = (e) => dragLayer(e, row);
   return row;
 }
-// Dragging a row restacks: an overlay among the overlays (the others keep their places, as
-// before), a source to the place in OBS's stack where it is dropped.
+// Dragging a row restacks it (OBS follows) and, as in Figma, drops it into the folder it lands in
+// (dropped under an open folder's name, or between its members; a move to the left past the last
+// member takes it out).
 function dragLayer(e, row) {
-  e.preventDefault();
-  e.stopPropagation();
+  if (e.button !== 0 || e.target.closest("button, input")) return;
   const list = [...$("layerList").children], from = list.indexOf(row), step = row.offsetHeight;
-  const y0 = e.clientY;
+  const x0 = e.clientX, y0 = e.clientY;
   let to = from, moved = false;
-  const pick = () => (row.dataset.overlay ? (locked.has(row.dataset.overlay) || select(row.dataset.overlay)) : selectItem(Number(row.dataset.src)));
   const move = (m) => {
     const dy = m.clientY - y0;
-    if (!moved && Math.abs(dy) < 3) return;
+    if (!moved && Math.abs(dy) < 4) return;
     if (!moved) { moved = true; row.classList.add("lifted"); document.body.classList.add("restacking"); }
     row.style.transform = `translateY(${dy}px)`;
     to = Math.max(0, Math.min(list.length - 1, Math.round(from + dy / step)));
@@ -3213,33 +3466,63 @@ function dragLayer(e, row) {
       r.style.transform = shift ? `translateY(${shift}px)` : "";
     });
   };
-  const up = () => {
+  const up = (u) => {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
     list.forEach((r) => (r.style.transform = ""));
     row.classList.remove("lifted");
     document.body.classList.remove("restacking");
-    if (!moved) return pick();
-    if (to === from) return;
-    if (hiddenTypes.size) return flash("Show every type to restack");
-    const visual = list.slice();
-    visual.splice(to, 0, visual.splice(from, 1)[0]);
-    if (row.dataset.overlay) {
-      history.push({ order: [...order] });
-      $("undo").disabled = false;
-      const names = visual.map((r) => r.dataset.overlay).filter(Boolean);
-      const slots = order.map((n, i) => (here(n) ? i : -1)).filter((i) => i >= 0);
-      slots.forEach((slot, i) => (order[slot] = names[i]));
-      layerRows();
-      restack();
-      saveOrder();
-    } else {
-      const it = itemById(Number(row.dataset.src));
-      if (it) editNow(it, { index: visual.length - 1 - visual.indexOf(row) });
-    }
+    if (moved) dropLayer(row, list, from, to, u.clientX < x0 - 20);
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
+}
+function dropLayer(row, list, from, to, outdent) {
+  const cfg = fold(), entries = layerEntries();
+  const visual = list.slice();
+  visual.splice(to, 0, visual.splice(from, 1)[0]);
+  const at = visual.indexOf(row), prev = visual[at - 1], next = visual[at + 1];
+  const entryOf = (r) => entries.find((x) => (r.dataset.overlay ? x.name === r.dataset.overlay : x.item && x.item.id === Number(r.dataset.src)));
+  const me = entryOf(row);
+  if (!me) return;
+  // The folder it lands in.
+  let into = null;
+  if (prev && prev.dataset.folderRow) {
+    const fd = cfg.list.find((f) => f.id === prev.dataset.folderRow);
+    into = fd && fd.open ? fd.id : null;
+  } else if (prev && prev.dataset.folder) {
+    const f = prev.dataset.folder;
+    into = !outdent && (next?.dataset.folder === f || row.dataset.folder === f) ? f : null;
+  }
+  into ? (cfg.of[keyOf(me)] = into) : delete cfg.of[keyOf(me)];
+  saveLayers();
+  // In front of the next row (a collapsed folder: of its frontmost member); the back when none.
+  let anchor = null;
+  if (next) {
+    const id = next.dataset.folderRow;
+    anchor = id ? entries.find((x) => folderOf(x, cfg) === id && x !== me) : entryOf(next);
+  }
+  const rest = entries.filter((x) => x !== me);
+  const ai = anchor ? rest.indexOf(anchor) : rest.length;
+  rest.splice(ai < 0 ? rest.length : ai, 0, me);
+  if (me.name) {
+    history.push({ order: [...order] });
+    $("undo").disabled = false;
+    const names = rest.filter((x) => x.name).map((x) => x.name);
+    const slots = order.map((n, i) => (here(n) ? i : -1)).filter((i) => i >= 0);
+    slots.forEach((slot, i) => (order[slot] = names[i]));
+    layerRows();
+    restack();
+    saveOrder();
+    return;
+  }
+  // OBS's index: above the row it now sits behind (0 is the back).
+  const it = me.item, a = anchor && (anchor.item || items.items.find((i) => here(anchor.name) && i.source === here(anchor.name).source));
+  if (anchor && !a) return paintLayers();
+  const idx = a ? (it.index < a.index ? a.index : a.index + 1) : 0;
+  if (idx === it.index) return paintLayers();
+  editNow(it, { index: idx });
+  itemsQuiet = 0;
 }
 
 // The filter: which types of layer show.
@@ -3478,14 +3761,12 @@ function itemMove(it, e) {
   const u = unionBox(group), s = k0(), w = u.w * s, h = u.h * s;
   const base = group.map((g) => [g, snap(g)]);
   const T = snapTargets(null);
-  for (const o of shownItems()) {
+  for (const o of SNAP.layers ? shownItems() : []) {
     if (group.some((g) => g.id === o.id)) continue;
     const ob = itemBox(o);
     T.xs.push(ob.left * s, (ob.left + ob.w / 2) * s, (ob.left + ob.w) * s);
     T.ys.push(ob.top * s, (ob.top + ob.h / 2) * s, (ob.top + ob.h) * s);
   }
-  if (gridOn) for (let i = 0; i <= 1920; i += GRID) { T.xs.push(i); }
-  if (gridOn) for (let i = 0; i <= 1080; i += GRID) { T.ys.push(i); }
   const x0 = e.clientX, y0 = e.clientY;
   let moved = false;
   const move = (m) => {
@@ -3526,7 +3807,7 @@ function itemResize(it, hx, hy, e) {
   const move = (m) => {
     const dx = (m.clientX - x0) / conv, dy = (m.clientY - y0) / conv;
     let w = hx ? Math.max(8, b.w + hx * dx) : b.w, h = hy ? Math.max(8, b.h + hy * dy) : b.h;
-    if (hx && hy && !m.shiftKey) {
+    if ((hx && hy || $("iAspect").checked) && !m.shiftKey) {
       const f = Math.abs(w / b.w - 1) > Math.abs(h / b.h - 1) ? w / b.w : h / b.h;
       w = b.w * f;
       h = b.h * f;
@@ -3612,9 +3893,9 @@ function paintItemProps() {
   $("iKind").textContent = `${it.kind}, ${Math.round(it.source_w)} x ${Math.round(it.source_h)}`;
   set("iX", round(it.x));
   set("iY", round(it.y));
-  set("iW", round(it.bounds ? it.bounds_w : it.width));
-  set("iH", round(it.bounds ? it.bounds_h : it.height));
-  set("iScale", round(it.scale_x * 100));
+  set("iW", round(Math.abs(it.bounds ? it.bounds_w : it.width)));
+  set("iH", round(Math.abs(it.bounds ? it.bounds_h : it.height)));
+  set("iScale", round(Math.abs(it.scale_x) * 100));
   set("iRot", round(it.rotation));
   ["iCL", "iCR", "iCT", "iCB"].forEach((id, i) => set(id, it.crop[i]));
   $("iVis").textContent = it.enabled ? "Hide" : "Show";
@@ -3656,6 +3937,9 @@ $("iName").onchange = () => {
   if (!it || !name || name === it.source) return;
   fetch("/rehearse/obs/item", { method: "POST", headers: { "content-type": "application/json" },
                                  body: JSON.stringify({ scene, id: it.id, source: it.source, name }) }).catch(() => {});
+  // Its folder follows the new name.
+  const cfg = fold();
+  if (cfg.of["s:" + it.source]) { cfg.of["s:" + name] = cfg.of["s:" + it.source]; delete cfg.of["s:" + it.source]; saveLayers(); }
   it.source = name;
   itemsQuiet = Date.now() + 1500;
   paintSources();
@@ -3705,6 +3989,9 @@ function openItemCtx(e, it) {
   add("Copy the name", "copy", () => navigator.clipboard?.writeText(it.source).then(() => flash("Name copied")));
   add("Rename", "pen", () => { selectItem(it.id); $("iName").focus(); $("iName").select(); });
   add("Remove from the scene", "x", () => deleteItem(it));
+  const raw = (tag, cls, html) => { const x = document.createElement(tag); if (cls) x.className = cls; if (html) x.innerHTML = html; m.append(x); return x; };
+  raw("hr");
+  folderMenu(raw, "s:" + it.source);
   document.body.append(m);
   m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + "px";
   m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + "px";
@@ -3783,7 +4070,7 @@ function deleteChosen() {
 $("mDel").onclick = deleteChosen;
 
 // The grid: lines every 120 px, sources snap to them while it is on.
-const GRID = 120;
+let GRID = Number(store.get("grid-size", "120")) || 120;
 let gridOn = store.get("grid", "off") === "on";
 const gridEl = document.createElement("div");
 gridEl.style.cssText = `position:absolute;inset:0;z-index:9;pointer-events:none;background-image:linear-gradient(to right, rgb(255 255 255 / 14%) calc(1px * var(--k)), transparent 0), linear-gradient(to bottom, rgb(255 255 255 / 14%) calc(1px * var(--k)), transparent 0);background-size:${GRID}px ${GRID}px`;
@@ -4021,22 +4308,385 @@ setInterval(async () => {
   shotBusy = false;
 }, 350);
 
-// Rulers (with the grid): OBS's canvas in its own pixels, along the top and the left.
+// The bar over the canvas: view, snapping, what to do with the selection, the mode.
+for (const b of document.querySelectorAll("[data-drop]")) b.insertAdjacentHTML("beforeend", svg("down"));
+// A menu under a button: entries are {head}, "-", or {label, icon | on, hint, off, fn}.
+function menuOf(btn, list) {
+  openMenu(btn, (m) => {
+    for (const it of list) {
+      if (it === "-") { m.append(document.createElement("hr")); continue; }
+      if (it.head) { m.append(Object.assign(document.createElement("div"), { className: "head", textContent: it.head })); continue; }
+      const b = document.createElement("button");
+      const lead = it.on === undefined ? svg(it.icon || "plus") : it.on ? svg("check") : '<span style="width:15px;flex:none"></span>';
+      b.innerHTML = `${lead}<span>${it.label}</span>${it.hint ? `<em>${it.hint}</em>` : ""}`;
+      b.disabled = !!it.off;
+      b.onclick = () => { closeCtx(); it.fn(); };
+      m.append(b);
+    }
+  });
+}
+const onBar = (id, fn) => { $(id).onclick = (e) => { e.stopPropagation(); fn(e); }; };
+const toggleKey = (key, on) => store.set(key, on ? "on" : "off");
+
+// Zoom: the player is made that wide and scrolls inside its viewport. Ctrl and the wheel zoom
+// around the pointer, the middle button drags the picture.
+const ZOOMS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+function setZoom(z, ax, ay) {
+  const vp = $("viewport"), r = vp.getBoundingClientRect();
+  const px = ax === undefined ? vp.clientWidth / 2 : ax - r.left, py = ay === undefined ? vp.clientHeight / 2 : ay - r.top;
+  const fx = (vp.scrollLeft + px) / player.offsetWidth, fy = (vp.scrollTop + py) / player.offsetHeight;
+  zoomK = z === null ? null : Math.min(4, Math.max(0.1, z));
+  fitPlayer();
+  fit();
+  if (zoomK !== null) {
+    vp.scrollLeft = fx * player.offsetWidth - px;
+    vp.scrollTop = fy * player.offsetHeight - py;
+  }
+  $("zoomBtn").setAttribute("aria-pressed", zoomK !== null);
+}
+const nowK = () => zoomK ?? k;
+onBar("zoomIn", () => setZoom(ZOOMS.find((z) => z > nowK() * 1.01) ?? 4));
+onBar("zoomOut", () => setZoom([...ZOOMS].reverse().find((z) => z < nowK() * 0.99) ?? 0.1));
+onBar("zoomBtn", () => menuOf($("zoomBtn"), [
+  { label: "Fit", on: zoomK === null, fn: () => setZoom(null) },
+  ...[0.25, 0.5, 1, 2].map((z) => ({ label: `${z * 100}%`, on: zoomK === z, fn: () => setZoom(z) })),
+]));
+$("viewport").addEventListener("wheel", (e) => {
+  if (!e.ctrlKey || !editing) return;
+  e.preventDefault();
+  setZoom(nowK() * (e.deltaY < 0 ? 1.1 : 1 / 1.1), e.clientX, e.clientY);
+}, { passive: false });
+$("viewport").addEventListener("pointerdown", (e) => {
+  if (e.button !== 1) return;
+  e.preventDefault();
+  const vp = $("viewport"), x0 = e.clientX, y0 = e.clientY, sl = vp.scrollLeft, st = vp.scrollTop;
+  const move = (m) => { vp.scrollLeft = sl - (m.clientX - x0); vp.scrollTop = st - (m.clientY - y0); };
+  const up = () => { removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+});
+
+// Rulers (OBS's pixels, along the top and the left) and the guides pulled out of them.
+let rulerOn = store.get("rulers", "off") === "on";
+const GUIDES = JSON.parse(store.get("guides", "{}"));
+const ugs = () => (GUIDES[scene] = GUIDES[scene] || { v: [], h: [] });
+const saveGuides = () => store.set("guides", JSON.stringify(GUIDES));
 const rulerH = document.createElement("div"), rulerV = document.createElement("div");
 rulerH.className = "ruler h";
 rulerV.className = "ruler v";
-for (let x = 0; x < 1920; x += 120) rulerH.append(Object.assign(document.createElement("span"), { style: `left:${x}px;top:0`, textContent: Math.round((x / k0()) / 10) * 10 }));
-for (let y = 0; y < 1080; y += 120) rulerV.append(Object.assign(document.createElement("span"), { style: `top:${y}px;left:0`, textContent: Math.round((y / k0()) / 10) * 10 }));
-rulerH.hidden = rulerV.hidden = !gridOn;
+for (let x = 0; x < 1920; x += 120) rulerH.append(Object.assign(document.createElement("span"), { style: `left:${x}px;top:0` }));
+for (let y = 0; y < 1080; y += 120) rulerV.append(Object.assign(document.createElement("span"), { style: `top:${y}px;left:0` }));
 $("canvas").append(rulerH, rulerV);
-const keepGridClick = $("gridBtn").onclick;
-$("gridBtn").onclick = () => { keepGridClick(); rulerH.hidden = rulerV.hidden = !gridOn; };
 function refreshRulers() {
   const s = k0();
   [...rulerH.children].forEach((e, i) => (e.textContent = Math.round((i * 120) / s / 10) * 10));
   [...rulerV.children].forEach((e, i) => (e.textContent = Math.round((i * 120) / s / 10) * 10));
 }
 setInterval(refreshRulers, 1500);
+function paintGuides() {
+  for (const g of $("canvas").querySelectorAll(".ug")) g.remove();
+  if (!rulerOn) return;
+  for (const kind of ["v", "h"]) {
+    ugs()[kind].forEach((pos, i) => {
+      const g = document.createElement("div");
+      g.className = "ug " + kind;
+      g.style[kind === "v" ? "left" : "top"] = pos + "px";
+      g.onpointerdown = (e) => dragGuide(kind, i, g, e);
+      $("canvas").append(g);
+    });
+  }
+}
+// Dragging a guide: back onto its ruler (or off the canvas) takes it away.
+function dragGuide(kind, i, el, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const list = ugs()[kind], max = kind === "v" ? 1920 : 1080;
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", kind === "v" ? "ew-resize" : "ns-resize");
+  let pos = list[i];
+  const move = (m) => {
+    const p = canvasPoint(m);
+    pos = Math.round(kind === "v" ? p.x : p.y);
+    el.style[kind === "v" ? "left" : "top"] = pos + "px";
+    $("tip").hidden = false;
+    $("tip").textContent = String(Math.round(pos / k0()));
+    Object.assign($("tip").style, kind === "v" ? { left: pos + "px", top: "12px" } : { left: "60px", top: pos + 12 / k + "px" });
+  };
+  const up = () => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    $("tip").hidden = true;
+    if (pos < 0 || pos > max || pos <= 16 / k) list.splice(i, 1);
+    else list[i] = pos;
+    saveGuides();
+    paintGuides();
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+}
+for (const [ruler, kind] of [[rulerH, "h"], [rulerV, "v"]]) {
+  ruler.onpointerdown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const list = ugs()[kind];
+    list.push(-1);
+    paintGuides();
+    // The new line is the last one of its kind.
+    const els = [...$("canvas").querySelectorAll(".ug." + kind)];
+    dragGuide(kind, list.length - 1, els[els.length - 1], e);
+  };
+}
+function paintRulers() {
+  rulerH.hidden = rulerV.hidden = !rulerOn;
+  $("rulerBtn").setAttribute("aria-pressed", rulerOn);
+  paintGuides();
+}
+onBar("rulerBtn", () => { rulerOn = !rulerOn; toggleKey("rulers", rulerOn); paintRulers(); });
+paintRulers();
+
+// The player's controls and the side panels can be put away, to see only the picture.
+function paintView() {
+  document.body.classList.toggle("noseek", store.get("noseek", "off") === "on");
+  document.body.classList.toggle("focus", store.get("focus", "off") === "on");
+  $("seekBtn").setAttribute("aria-pressed", store.get("noseek", "off") === "on");
+  $("panelsBtn").setAttribute("aria-pressed", store.get("focus", "off") === "on");
+}
+onBar("seekBtn", () => { toggleKey("noseek", store.get("noseek", "off") !== "on"); paintView(); });
+onBar("panelsBtn", () => { toggleKey("focus", store.get("focus", "off") !== "on"); paintView(); });
+paintView();
+
+// What is behind the sources where there is no video.
+const BGS = [["Dark", "#101012"], ["Gray", "#59606e"], ["Light", "#e8e8ea"], ["Green screen", "#00b140"], ["Blue screen", "#0047bb"]];
+const CHECKER = "repeating-conic-gradient(#3a3a40 0 25%, #26262b 0 50%) 0 0 / 24px 24px";
+let canvasBg = store.get("canvas-bg", store.get("virtual-color", "#59606e"));
+const bgCss = () => (canvasBg === "checker" ? CHECKER : canvasBg);
+function setBg(v) {
+  canvasBg = v;
+  store.set("canvas-bg", v);
+  syncVideo();
+}
+onBar("bgBtn", () => menuOf($("bgBtn"), [
+  { head: "Behind the sources" },
+  { label: "Checkerboard", on: canvasBg === "checker", fn: () => setBg("checker") },
+  ...BGS.map(([n, c]) => ({ label: n, on: canvasBg === c, fn: () => setBg(c) })),
+  "-",
+  { label: "Another color", icon: "look", fn: () => {
+    const input = Object.assign(document.createElement("input"), { type: "color", value: /^#[0-9a-f]{6}$/i.test(canvasBg) ? canvasBg : "#59606e" });
+    input.oninput = () => setBg(input.value);
+    input.click();
+  } },
+]));
+
+// Snapping: what the edges and centers snap to, and the grid.
+const SNAP = { edges: true, center: true, layers: true, grid: true, guides: true, ...JSON.parse(store.get("snap-targets", "{}")) };
+function paintGrid() { gridEl.style.backgroundSize = `${GRID}px ${GRID}px`; }
+paintGrid();
+onBar("snapMenu", () => {
+  const n = ugs().v.length + ugs().h.length;
+  menuOf($("snapMenu"), [
+    { head: "Snap to" },
+    ...[["edges", "The canvas edges"], ["center", "The canvas center"], ["layers", "Other layers"], ["grid", "The grid"], ["guides", "Guides"]]
+      .map(([key, label]) => ({ label, on: SNAP[key], fn: () => { SNAP[key] = !SNAP[key]; store.set("snap-targets", JSON.stringify(SNAP)); } })),
+    "-",
+    { head: "Grid size" },
+    ...[10, 20, 40, 60, 120].map((g) => ({ label: `${g} px`, on: GRID === g, fn: () => {
+      GRID = g;
+      store.set("grid-size", String(g));
+      paintGrid();
+      if (!gridOn) $("gridBtn").click();
+    } })),
+    "-",
+    { label: n ? `Clear the guides (${n})` : "No guides", icon: "x", off: !n, fn: () => { ugs().v = []; ugs().h = []; saveGuides(); paintGuides(); } },
+  ]);
+});
+
+// The selection: sources (several at once) or one browser source (a frame in aftercast).
+const selKind = () => (chosen().length ? "items" : selected !== null ? "frame" : null);
+const r1 = (v) => Math.round(v * 10) / 10;
+// An edit for each unlocked source, undone as one step.
+function editEach(fn) {
+  const group = chosen().filter((g) => !g.locked);
+  if (!group.length) return;
+  const before = group.map((g) => [g, snap(g)]);
+  for (const g of group) { const e = fn(g); if (e) editItem(g, e); }
+  clearTimeout(editT);
+  flushEdit();
+  recordItems(before);
+  itemsQuiet = Date.now() + 1500;
+  paintSources();
+}
+// The edit that puts a source's box at left, top with this size.
+const boxEdit = (it, left, top, w, h) => {
+  const b = itemBox(it), e = { x: r1(left + b.ax * w), y: r1(top + b.ay * h) };
+  if (it.bounds) Object.assign(e, { bounds_w: Math.round(w), bounds_h: Math.round(h) });
+  else Object.assign(e, { scale_x: it.scale_x * (w / (b.w || 1)), scale_y: it.scale_y * (h / (b.h || 1)) });
+  return e;
+};
+function fitItems(how) {
+  const [cw, ch] = items.canvas;
+  editEach((it) => {
+    const b = itemBox(it), f = (how === "fit" ? Math.min : Math.max)(cw / b.w, ch / b.h);
+    const w = how === "stretch" ? cw : b.w * f, h = how === "stretch" ? ch : b.h * f;
+    return boxEdit(it, (cw - w) / 2, (ch - h) / 2, w, h);
+  });
+}
+function centerItems() {
+  const g = chosen().filter((i) => !i.locked);
+  if (!g.length) return;
+  const u = unionBox(g), [cw, ch] = items.canvas, dx = (cw - u.w) / 2 - u.left, dy = (ch - u.h) / 2 - u.top;
+  editEach((it) => ({ x: r1(it.x + dx), y: r1(it.y + dy) }));
+}
+// The others take the size of the one clicked last (keeping the shape when that is on).
+function matchItems(how) {
+  const p = selectedItem();
+  if (!p || chosen().length < 2) return flash("Select two or more: the others match the one clicked last");
+  const pb = itemBox(p), keep = $("iAspect").checked;
+  editEach((it) => {
+    if (it.id === p.id) return null;
+    const b = itemBox(it);
+    let w = b.w, h = b.h;
+    if (how !== "h") { w = pb.w; if (keep && how === "w") h = b.h * (pb.w / b.w); }
+    if (how !== "w") { h = pb.h; if (keep && how === "h") w = b.w * (pb.h / b.h); }
+    return boxEdit(it, b.left, b.top, w, h);
+  });
+}
+// A negative scale flips; the place moves so the picture stays where it is.
+function flipItems(axis) {
+  editEach((it) => {
+    if (it.bounds) { flash(`${it.source} is fitted to a box: flipping needs it free`); return null; }
+    const b = itemBox(it);
+    return axis === "h" ? { scale_x: -it.scale_x, x: r1(b.left + (1 - b.ax) * b.w) } : { scale_y: -it.scale_y, y: r1(b.top + (1 - b.ay) * b.h) };
+  });
+}
+// A turn about the middle of the picture (OBS turns about the alignment point).
+const turnBy = (deg, [x, y]) => { const a = deg * RAD; return [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)]; };
+function turnItems(delta) {
+  editEach((it) => {
+    const b = itemBox(it), v = [(0.5 - b.ax) * b.w, (0.5 - b.ay) * b.h];
+    const c = turnBy(it.rotation, v), to = (((it.rotation + delta) % 360) + 360) % 360, d = turnBy(to, v);
+    return { rotation: to, x: r1(it.x + c[0] - d[0]), y: r1(it.y + c[1] - d[1]) };
+  });
+}
+const resetItems = () => editEach((it) => ({ rotation: 0, crop: [0, 0, 0, 0], ...(it.bounds ? {} : { scale_x: 1, scale_y: 1 }) }));
+function orderItems(how) {
+  const g = chosen().sort((a, b) => a.index - b.index);
+  if (how === "front") g.forEach((it) => restackItem(it, 1e6));
+  else if (how === "back") [...g].reverse().forEach((it) => restackItem(it, 0));
+  else if (selectedItem()) restackItem(selectedItem(), selectedItem().index + (how === "forward" ? 1 : -1));
+}
+// One browser source: the same moves on its frame.
+const frameAlign = (how) => document.querySelector(`#pnlPos [data-align="${how}"]`).click();
+function fitFrame(how) {
+  const f = F[selected];
+  if (f.dock) return flash("It is in the status bar");
+  if (how === "stretch") Object.assign(f, { size: 100, x: 0, y: 0, width: clamp("width", 1920), height: clamp("height", 1080) });
+  else {
+    f.size = clamp("size", (how === "fit" ? Math.min : Math.max)(1920 / f.width, 1080 / f.height) * 100);
+    const g = geo(f);
+    f.x = clamp("x", (1920 - g.w) / 2);
+    f.y = clamp("y", (1080 - g.h) / 2);
+  }
+  apply(selected);
+  commit(selected);
+}
+function turnFrame(delta) {
+  const f = F[selected];
+  f.rotate = clamp("rotate", ((((f.rotate + delta + 180) % 360) + 360) % 360) - 180);
+  apply(selected);
+  commit(selected);
+}
+function moveFrame(how) {
+  history.push({ order: [...order] });
+  $("undo").disabled = false;
+  const vis = order.filter((n) => here(n)), at = vis.indexOf(selected);
+  if (at < 0) return;
+  const to = how === "front" ? 0 : how === "back" ? vis.length - 1 : Math.max(0, Math.min(vis.length - 1, at + (how === "forward" ? -1 : 1)));
+  vis.splice(to, 0, vis.splice(at, 1)[0]);
+  const slots = order.map((n, i) => (here(n) ? i : -1)).filter((i) => i >= 0);
+  slots.forEach((slot, i) => (order[slot] = vis[i]));
+  layerRows();
+  restack();
+  saveOrder();
+}
+
+onBar("alignBtn", () => {
+  const kind = selKind(), n = chosen().length;
+  const go = (how) => (kind === "items" ? alignChosen(how) : frameAlign(how));
+  menuOf($("alignBtn"), [
+    { head: n > 1 ? "Align to each other" : "Align to the canvas" },
+    ...[["left", "Left", "al-left"], ["hcenter", "Center", "al-hcenter"], ["right", "Right", "al-right"], ["top", "Top", "al-top"], ["vcenter", "Middle", "al-vcenter"], ["bottom", "Bottom", "al-bottom"]]
+      .map(([how, label, icon]) => ({ label, icon, fn: () => go(how) })),
+    "-",
+    { label: "Spread across", icon: "move", off: !(kind === "items" && n >= 3), hint: "3 or more", fn: () => distributeChosen("h") },
+    { label: "Spread down", icon: "move", off: !(kind === "items" && n >= 3), hint: "3 or more", fn: () => distributeChosen("v") },
+  ]);
+});
+onBar("arrangeBtn", () => {
+  const kind = selKind(), many = chosen().length >= 2, it = kind === "items";
+  menuOf($("arrangeBtn"), [
+    { head: "Size and place" },
+    { label: "Fit in the canvas", icon: "fit", fn: () => (it ? fitItems("fit") : fitFrame("fit")) },
+    { label: "Fill the canvas", icon: "fill", fn: () => (it ? fitItems("fill") : fitFrame("fill")) },
+    { label: "Stretch to the canvas", icon: "full", fn: () => (it ? fitItems("stretch") : fitFrame("stretch")) },
+    { label: "Center on the canvas", icon: "center", fn: () => (it ? centerItems() : (frameAlign("hcenter"), frameAlign("vcenter"))) },
+    "-",
+    { head: "Match the one clicked last" },
+    { label: "Same width", icon: "match", off: !many, fn: () => matchItems("w") },
+    { label: "Same height", icon: "match", off: !many, fn: () => matchItems("h") },
+    { label: "Same size", icon: "match", off: !many, fn: () => matchItems("both") },
+    "-",
+    { head: "Turn" },
+    { label: "Flip horizontally", icon: "flipH", off: !it, fn: () => flipItems("h") },
+    { label: "Flip vertically", icon: "flipV", off: !it, fn: () => flipItems("v") },
+    { label: "Rotate 90° right", icon: "rotate", fn: () => (it ? turnItems(90) : turnFrame(90)) },
+    { label: "Rotate 90° left", icon: "rotccw", fn: () => (it ? turnItems(-90) : turnFrame(-90)) },
+    "-",
+    { label: it ? "Reset size, rotation and crop" : "Reset to the default", icon: "reset", fn: () => (it ? resetItems() : $("resetFrame").click()) },
+  ]);
+});
+onBar("orderBtn", () => {
+  const it = selKind() === "items";
+  const go = (how) => (it ? orderItems(how) : moveFrame(how));
+  menuOf($("orderBtn"), [
+    { label: "Bring to front", icon: "up", fn: () => go("front") },
+    { label: "Forward", icon: "up", off: chosen().length > 1, fn: () => go("forward") },
+    { label: "Backward", icon: "down", off: chosen().length > 1, fn: () => go("backward") },
+    { label: "Send to back", icon: "down", fn: () => go("back") },
+  ]);
+});
+const syncAspect = () => { $("aspectBtn").setAttribute("aria-pressed", $("iAspect").checked); store.set("aspect", $("iAspect").checked ? "on" : "off"); };
+$("iAspect").checked = store.get("aspect", "on") !== "off";
+$("iAspect").addEventListener("change", syncAspect);
+$("aspectBtn").setAttribute("aria-pressed", $("iAspect").checked);
+onBar("aspectBtn", () => { $("iAspect").checked = !$("iAspect").checked; syncAspect(); });
+onBar("lockBtn", () => (selKind() === "items" ? $("mLock").click() : selected !== null && setLocked(selected, !locked.has(selected))));
+onBar("dupBtn", () => {
+  const g = chosen();
+  if (!g.length) return flash("A browser source is added again from its right-click menu");
+  for (const it of g) editNow(it, { duplicate: true });
+  itemsQuiet = 0;
+  flash("Duplicated");
+});
+onBar("delBtn", () => (selKind() === "items" ? deleteChosen() : flash("A browser source is taken out of a scene in OBS")));
+function paintBar() {
+  const kind = selKind();
+  $("bar").classList.toggle("empty", !kind);
+  const g = chosen(), lockedAll = kind === "items" ? g.every((i) => i.locked) : selected !== null && locked.has(selected);
+  $("lockBtn").innerHTML = svg(lockedAll ? "lock" : "unlock");
+  $("lockBtn").title = lockedAll ? "Unlock" : "Lock";
+  $("dupBtn").disabled = kind === "frame";
+  $("delBtn").disabled = kind === "frame";
+}
+const keepInspect2 = inspect;
+inspect = function () { keepInspect2(); paintBar(); };
+const keepSources = paintSources;
+paintSources = function () { keepSources(); paintBar(); };
+
+// The mode: what the preview imitates, and the scene it jumps to.
+onBar("modeBtn", () => menuOf($("modeBtn"), MODES.map((m) => ({ label: MODE_NAME[m], icon: MODE_ICON[m], on: mode === m, fn: () => setMode(m) }))));
+paintMode();
+paintBar();
 </script>
 </body>
 </html>
