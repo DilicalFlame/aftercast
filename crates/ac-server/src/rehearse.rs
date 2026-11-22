@@ -182,6 +182,32 @@ pub(crate) async fn watch(State(s): State<Arc<Shared>>, Json(p): Json<Watch>) ->
 }
 
 #[derive(Deserialize)]
+pub(crate) struct NewSource {
+    scene: String,
+    kind: String,
+    name: String,
+    #[serde(default)]
+    settings: serde_json::Value,
+}
+
+/// Adds a source to a scene of OBS (the editor's plus button).
+pub(crate) async fn add_obs_source(
+    State(s): State<Arc<Shared>>,
+    Json(p): Json<NewSource>,
+) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let _ = s.commands.send(Command::AddSource {
+        scene: p.scene,
+        kind: p.kind,
+        name: p.name,
+        settings: p.settings,
+    });
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
 pub(crate) struct WatchPic {
     scene: String,
 }

@@ -275,6 +275,8 @@ pub struct SceneDetail {
     pub scene: String,
     pub canvas: [f32; 2],
     pub items: Vec<ItemDetail>,
+    /// The kinds of source this OBS can add (`dshow_input`, `monitor_capture`, ...).
+    pub input_kinds: Vec<String>,
 }
 
 /// A change to a scene item: only what is set is changed.

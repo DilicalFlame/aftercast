@@ -80,6 +80,14 @@ pub enum Command {
     WatchScene {
         scene: String,
     },
+    /// Adds a new source to a scene of OBS (the editor): an input of `kind` called `name`, or
+    /// (kind `scene`) an existing scene named `name` as a source.
+    AddSource {
+        scene: String,
+        kind: String,
+        name: String,
+        settings: serde_json::Value,
+    },
     /// The editor shows OBS's own picture of a scene (repeated every few seconds): a few
     /// screenshots a second while it does.
     WatchShot {

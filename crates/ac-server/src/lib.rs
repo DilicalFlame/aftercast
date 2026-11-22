@@ -199,6 +199,7 @@ pub async fn bind(
         .route("/rehearse/obs/item", post(rehearse::item))
         .route("/rehearse/obs/watch-source", post(rehearse::watch_source))
         .route("/rehearse/obs/watch-shot", post(rehearse::watch_shot))
+        .route("/rehearse/obs/add", post(rehearse::add_obs_source))
         .route("/rehearse/obs/shot", get(rehearse::shot))
         .route("/rehearse/obs/source", post(rehearse::source_edit))
         .route("/rehearse/add-source", post(rehearse::add_source))
@@ -794,6 +795,28 @@ mod tests {
             (edit.x, edit.y, edit.locked, edit.crop),
             (Some(12.5), None, Some(true), Some([1, 2, 3, 4]))
         );
+        // A new source is added the same way.
+        let a = http
+            .post(format!("{base}/obs/add"))
+            .json(&json!({ "scene": "Code", "kind": "text_gdiplus_v3", "name": "Hello", "settings": { "text": "hi" } }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(a.status(), 204);
+        let Some(Command::AddSource {
+            scene,
+            kind,
+            name,
+            settings,
+        }) = rx.recv().await
+        else {
+            panic!("an AddSource command");
+        };
+        assert_eq!(
+            (scene.as_str(), kind.as_str(), name.as_str()),
+            ("Code", "text_gdiplus_v3", "Hello")
+        );
+        assert_eq!(settings, json!({ "text": "hi" }));
         // A source's settings and filters are watched and edited the same way.
         let w = http
             .post(format!("{base}/obs/watch-source"))
@@ -833,6 +856,7 @@ mod tests {
                     source: "Cam".into(),
                     ..Default::default()
                 }],
+                input_kinds: vec![],
             }),
             ..Feed::default()
         });

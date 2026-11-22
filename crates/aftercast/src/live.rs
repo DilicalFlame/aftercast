@@ -1325,6 +1325,19 @@ impl Controller {
                 self.watch_scene = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
                 self.obs_request(ac_obs::Request::Items { scene });
             }
+            Command::AddSource {
+                scene,
+                kind,
+                name,
+                settings,
+            } => {
+                self.obs_request(ac_obs::Request::AddSource {
+                    scene,
+                    kind,
+                    name,
+                    settings,
+                });
+            }
             Command::WatchShot { scene } => {
                 self.watch_shot = Some((scene.clone(), Instant::now() + Duration::from_secs(10)));
                 self.obs_request(ac_obs::Request::Shot { scene });

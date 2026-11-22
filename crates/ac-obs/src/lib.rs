@@ -131,6 +131,13 @@ pub enum Request {
         scene: String,
         id: i64,
     },
+    /// Adds a source to `scene`: a new input, or (kind `scene`) an existing scene by that name.
+    AddSource {
+        scene: String,
+        kind: String,
+        name: String,
+        settings: serde_json::Value,
+    },
     /// A screenshot of a scene (a small JPEG); answered with [`Update::Shot`].
     Shot {
         scene: String,
@@ -503,6 +510,31 @@ async fn serve(
                     };
                     if let Err(e) = client.scene_items().set_enabled(set).await {
                         send(Update::Failed(format!("showing a source in {scene:?}: {}", error_chain(&e))));
+                    }
+                }
+                Some(Request::AddSource { scene, kind, name, settings }) => {
+                    let done = if kind == "scene" {
+                        let item = obws::requests::scene_items::CreateSceneItem {
+                            scene: scene.as_str().into(),
+                            source: name.as_str().into(),
+                            enabled: Some(true),
+                        };
+                        client.scene_items().create(item).await.map(|_| ())
+                    } else {
+                        let create = obws::requests::inputs::Create {
+                            scene: scene.as_str().into(),
+                            input: name.as_str(),
+                            kind: kind.as_str(),
+                            settings: Some(settings),
+                            enabled: Some(true),
+                        };
+                        client.inputs().create(create).await.map(|_| ())
+                    };
+                    if let Err(e) = done {
+                        send(Update::Failed(format!("adding {name:?} to {scene:?}: {}", error_chain(&e))));
+                    }
+                    if let Ok(d) = scene_detail(client, &scene).await {
+                        send(Update::Items(d));
                     }
                 }
                 Some(Request::Shot { scene }) => {
@@ -963,6 +995,7 @@ async fn scene_detail(
         scene: scene.to_owned(),
         canvas: [video.base_width as f32, video.base_height as f32],
         items: out,
+        input_kinds: client.inputs().list_kinds(false).await.unwrap_or_default(),
     })
 }
 
