@@ -4,7 +4,9 @@
 
 pub mod hook;
 pub mod keys;
+pub mod pointer;
 pub mod shell;
+pub mod toast;
 
 use std::str::FromStr;
 use std::sync::mpsc;

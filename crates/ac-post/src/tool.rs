@@ -11,13 +11,14 @@ use std::process::{Command, Stdio};
 
 use crate::{Ctx, Result};
 
-const HELPERS: [(&str, &str); 3] = [
+const HELPERS: [(&str, &str); 4] = [
     (
         "transcribe.py",
         include_str!("../../../python/transcribe.py"),
     ),
     ("ocr.py", include_str!("../../../python/ocr.py")),
     ("correct.py", include_str!("../../../python/correct.py")),
+    ("captions.py", include_str!("../../../python/captions.py")),
 ];
 
 /// Writes the bundled Python helpers to `<home>/state` and returns that folder.
