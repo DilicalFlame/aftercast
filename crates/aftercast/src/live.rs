@@ -1135,22 +1135,21 @@ impl Controller {
         self.auto_stream();
     }
 
-    /// While the broadcast waits for Go Live and OBS is there, OBS starts streaming: YouTube
-    /// receives the video before Go Live, which then takes the broadcast live at once.
+    /// Until the session begins, OBS streams as soon as it is connected (once per run): YouTube
+    /// receives the video before Go Live, which only has to take the broadcast live. Going
+    /// live is then the one step left.
     fn auto_stream(&mut self) {
         if !self.config.obs.auto_stream
             || self.auto_streamed
-            || self.rehearse
+            || self.begun
             || self.obs_scenes.is_none()
-            || !self.go_live_armed()
         {
             return;
         }
         self.auto_streamed = true;
         if self.state.obs_stream != Some(OutputState::Started) {
             self.stream(true);
-            self.notice =
-                Some("OBS streaming started (the broadcast goes live with Go Live)".into());
+            self.notice = Some("OBS streaming started; Go Live takes the broadcast live".into());
         }
     }
 
@@ -1614,6 +1613,7 @@ impl Controller {
             }
         };
         self.service_state("youtube", ServiceStatus::Ok);
+        self.auto_stream();
         let anchors = &mut self.session.meta.anchors;
         let mut changed = false;
         // actualStartTime never changes for a video; keep the first one seen.
