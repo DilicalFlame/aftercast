@@ -3140,10 +3140,12 @@ const itemBox = (it) => {
 // The feed brought OBS's list (ignored for a moment after our own edit, so nothing jumps back).
 function onItems(d) {
   if (!d || Date.now() < itemsQuiet) return;
-  const key = (x) => JSON.stringify(x);
-  const changed = key(d) !== key(items);
-  items = d;
-  if (changed) paintSources();
+  // Unchanged: keep the objects the rows (and the clicks on them) hold. Swapping in an equal
+  // copy left the rows editing an old one, so an eye only turned when OBS answered 1.5 s later.
+  if (JSON.stringify(d) !== JSON.stringify(items)) {
+    items = d;
+    paintSources();
+  }
   if (newSource && Date.now() < newSource.until) {
     const made = d.items.find((i) => !newSource.ids.has(i.id));
     if (made) { newSource = null; selectItem(made.id); }
