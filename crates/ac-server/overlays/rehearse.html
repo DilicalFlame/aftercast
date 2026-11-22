@@ -3130,7 +3130,10 @@ const k0 = () => 1920 / (items.canvas[0] || 1920);
 const alignOf = (a) => [a & 1 ? 0 : a & 2 ? 1 : 0.5, a & 4 ? 0 : a & 8 ? 1 : 0.5];
 // Where the source's box is on OBS's canvas, before it is rotated about its alignment point.
 const itemBox = (it) => {
-  const w = Math.abs(it.bounds ? it.bounds_w : it.width), h = Math.abs(it.bounds ? it.bounds_h : it.height);
+  // OBS's width and height ignore the crop; the picture that shows is the cropped part, scaled.
+  const cropped = it.source_w > 0 && it.source_h > 0;
+  const w = it.bounds ? Math.abs(it.bounds_w) : cropped ? Math.max(1, it.source_w - it.crop[0] - it.crop[1]) * Math.abs(it.scale_x) : Math.abs(it.width);
+  const h = it.bounds ? Math.abs(it.bounds_h) : cropped ? Math.max(1, it.source_h - it.crop[2] - it.crop[3]) * Math.abs(it.scale_y) : Math.abs(it.height);
   let [ax, ay] = alignOf(it.alignment);
   // Flipped (a negative scale) it extends the other way from its place.
   if (!it.bounds) { if (it.scale_x < 0) ax = 1 - ax; if (it.scale_y < 0) ay = 1 - ay; }
@@ -3895,8 +3898,8 @@ function paintItemProps() {
   $("iKind").textContent = `${it.kind}, ${Math.round(it.source_w)} x ${Math.round(it.source_h)}`;
   set("iX", round(it.x));
   set("iY", round(it.y));
-  set("iW", round(Math.abs(it.bounds ? it.bounds_w : it.width)));
-  set("iH", round(Math.abs(it.bounds ? it.bounds_h : it.height)));
+  set("iW", round(itemBox(it).w));
+  set("iH", round(itemBox(it).h));
   set("iScale", round(Math.abs(it.scale_x) * 100));
   set("iRot", round(it.rotation));
   ["iCL", "iCR", "iCT", "iCB"].forEach((id, i) => set(id, it.crop[i]));
@@ -3921,12 +3924,12 @@ onNum("iY", (it, v) => ({ y: v }));
 const shape = () => $("iAspect").checked;
 onNum("iW", (it, v) => {
   if (it.bounds) return shape() ? { bounds_w: v, bounds_h: Math.round((it.bounds_h * v) / (it.bounds_w || 1)) } : { bounds_w: v };
-  const f = v / (it.width || 1);
+  const f = v / (itemBox(it).w || 1);
   return shape() ? { scale_x: it.scale_x * f, scale_y: it.scale_y * f } : { scale_x: it.scale_x * f };
 });
 onNum("iH", (it, v) => {
   if (it.bounds) return shape() ? { bounds_h: v, bounds_w: Math.round((it.bounds_w * v) / (it.bounds_h || 1)) } : { bounds_h: v };
-  const f = v / (it.height || 1);
+  const f = v / (itemBox(it).h || 1);
   return shape() ? { scale_x: it.scale_x * f, scale_y: it.scale_y * f } : { scale_y: it.scale_y * f };
 });
 onNum("iScale", (it, v) => ({ scale_x: v / 100, scale_y: v / 100 }));
