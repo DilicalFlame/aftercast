@@ -4,109 +4,649 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>aftercast rehearse</title>
+<script src="/overlay/assets/sfx.js"></script>
+<script src="/overlay/assets/dvr.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <style>
 /* theme */
 :root {
-  --page: #0f0f0f; --panel: #181818; --raised: #222; --line: #2c2c2c;
-  --text: #f1f1f1; --dim: #aaa; --owner: #ffd600; --mod: #5e84f1; --member: #2ba640;
+  /* One neutral scale, one UI blue for selection and primary actions, one red for the logo
+     and LIVE only. Overlay colors (--accent) stay inside the overlays. */
+  --page: #0d0e10; --panel: #131417; --raised: #1b1c20; --hover: #23242a; --line: #26272d;
+  --well: #0a0b0c; --text: #ececf0; --dim: #a1a2ac; --faint: #6c6d77;
+  --ui: #5b8def; --ui-ink: #08101f; --live: #e5484d;
+  --owner: #f2c94c; --mod: #6f9bf5; --member: #3fb97b;
+  --ui-font: "Geist", system-ui, "Segoe UI", sans-serif; --mono: "Geist Mono", ui-monospace, Consolas, monospace;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--page); color: var(--text);
-  font: 14px/1.45 var(--font-sans, "Segoe UI"), system-ui, sans-serif; }
-header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
-  border-bottom: 1px solid var(--line); }
-header b { font-size: 16px; letter-spacing: .2px; }
-.pill { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
-  background: var(--accent, #ff5555); color: #fff; letter-spacing: .6px; }
-header .hint { color: var(--dim); font-size: 12px; margin-left: auto; }
+  font: 14px/1.5 var(--ui-font); -webkit-font-smoothing: antialiased; }
 main { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 16px;
   max-width: 1700px; margin: 0 auto; }
 @media (max-width: 1000px) { main { grid-template-columns: 1fr; } .chat { height: 70vh; } }
 .player { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 12px;
   overflow: hidden; }
 video { width: 100%; height: 100%; object-fit: contain; display: block; }
+#dvr { position: absolute; inset: 0; background: #000; }
+#dvr[hidden] { display: none; }
+.ctl { position: absolute; left: 0; right: 0; bottom: 0; z-index: 80; padding: 30px 12px 6px;
+  background: linear-gradient(transparent, rgb(0 0 0 / 72%)); opacity: 0; transition: opacity .2s; }
+.player:hover .ctl, .player.paused .ctl { opacity: 1; }
+.player.idle:not(.paused) .ctl { opacity: 0; }
+/* The pointer at the very left edge hides the controls (as on YouTube). */
+.player.edge .ctl { opacity: 0 !important; pointer-events: none; }
+.player.idle:not(.paused) { cursor: none; }
+.dvrbar { display: flex; align-items: center; padding: 0 2px; }
+.dvrbar[hidden] { display: none; }
+.ctl .row { display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+.ctl .grow { flex: 1; }
+.cb { display: grid; place-items: center; min-width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: none;
+  color: #fff; font: 700 13px var(--ui-font, inherit); cursor: pointer; }
+.cb:hover { background: rgb(255 255 255 / 16%); }
+.cb svg { width: 22px; height: 22px; }
+.vol { display: flex; align-items: center; }
+.vol input { width: 0; opacity: 0; transition: width .15s, opacity .15s; }
+.vol:hover input, .vol:focus-within input { width: 72px; opacity: 1; margin: 0 6px 0 2px; }
+#dvrTime { cursor: pointer; user-select: none; color: #fff; font-size: 13px; font-variant-numeric: tabular-nums; margin-right: 8px; }
+.dvrlive { margin-right: 6px; }
+.spd { position: absolute; right: 12px; bottom: 54px; z-index: 90; padding: 6px; border-radius: 10px; background: rgb(24 24 27 / 96%);
+  box-shadow: 0 8px 30px rgb(0 0 0 / 50%); display: grid; min-width: 150px; }
+.spd[hidden] { display: none; }
+.spd .h { padding: 6px 10px 8px; color: #aaa; font-size: 12px; }
+.spd button { display: flex; justify-content: space-between; gap: 18px; height: 30px; align-items: center; padding: 0 10px; border: 0;
+  border-radius: 6px; background: none; color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+.spd button:hover { background: rgb(255 255 255 / 14%); }
+.skipfx { position: absolute; top: 0; bottom: 0; z-index: 79; width: 34%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 4px; color: #fff; pointer-events: none; opacity: 0; background: rgb(255 255 255 / 12%); }
+.skipfx.left { left: 0; border-radius: 0 100% 100% 0 / 0 50% 50% 0; }
+.skipfx.right { right: 0; border-radius: 100% 0 0 100% / 50% 0 0 50%; }
+.skipfx.on { opacity: 1; }
+.skipfx.fade { transition: opacity .25s; }
+.skipfx .t { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; text-shadow: 0 1px 6px rgb(0 0 0 / 60%); }
+.skipfx .chevs { display: flex; }
+.skipfx .chevs i { width: 14px; height: 24px; margin: 0 -2px; opacity: .25;
+  background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 5 7 7-7 7'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9 5 7 7-7 7'/%3E%3C/svg%3E") center / contain no-repeat; }
+.skipfx.left .chevs { transform: scaleX(-1); }
+.skipfx.go .chevs i { animation: chev .6s ease-out both; }
+.skipfx.go .chevs i:nth-child(2) { animation-delay: .1s; }
+.skipfx.go .chevs i:nth-child(3) { animation-delay: .2s; }
+@keyframes chev { 0% { opacity: .2; } 40% { opacity: 1; } 100% { opacity: .25; } }
+.bigicon { position: absolute; left: 50%; top: 50%; z-index: 79; display: grid; place-items: center; width: 74px; height: 74px;
+  margin: -37px 0 0 -37px; border-radius: 50%; background: rgb(0 0 0 / 55%); color: #fff; opacity: 0; pointer-events: none; }
+.bigicon svg { width: 34px; height: 34px; }
+.player.mini { position: fixed; right: 18px; bottom: 18px; z-index: 300; width: 380px; border-radius: 10px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 60%); }
+.player:fullscreen { border-radius: 0; }
+.seek { position: relative; flex: 1; min-width: 0; height: 22px; cursor: pointer; touch-action: none; }
+.seek .trk { position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 3px;
+  background: rgb(255 255 255 / 14%); transition: height .12s, margin-top .12s; }
+.seek:hover .trk { height: 5px; margin-top: -2.5px; }
+.seek .tail { position: absolute; left: var(--rec, 0%); right: 0; top: 0; bottom: 0; border-radius: 3px; background: rgb(255 78 69 / 34%); }
+.seek.live .rec { background: #ff4e45; }
+.seek.live .played { display: none; }
+.seek.live .thumb { background: #ff4e45; }
+.seek .rec { position: absolute; left: 0; top: 0; bottom: 0; width: var(--rec, 0%); border-radius: 3px; background: rgb(120 170 255 / 38%); }
+.seek .bufs b { position: absolute; top: -2px; bottom: -2px; border-radius: 3px; background: rgb(255 255 255 / 60%); }
+.seek .bufs b[hidden] { display: none; }
+.seek .played { position: absolute; left: 0; top: -2px; bottom: -2px; width: var(--played, 0%); border-radius: 3px; background: #3ea6ff; }
+.seek .thumb { position: absolute; top: 50%; left: var(--thumb, 100%); width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / 50%); }
+.dvrlive { border: 0; border-radius: 6px; padding: 4px 9px; background: #3a3a40; color: #fff; font: 700 11.5px var(--ui-font, inherit);
+  letter-spacing: .06em; cursor: pointer; }
+.dvrlive::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #888; }
+.ctl:not(.on) .dvrlive { background: #c4302b; }
+.ctl:not(.on) .dvrlive::before { background: #fff; }
 .novideo { position: absolute; inset: 0; display: grid; place-content: center; gap: 10px;
   text-align: center; color: var(--dim); padding: 24px; }
 .novideo[hidden] { display: none; }
 .cam { position: absolute; right: 10px; top: 10px; background: rgba(0,0,0,.6);
   color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 4px; }
-h1 { font-size: 20px; margin: 14px 0 6px; }
-.meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--dim); }
-.live { color: #fff; background: #cc0000; font-weight: 700; font-size: 12px;
-  padding: 1px 7px; border-radius: 4px; }
-.desc { background: var(--raised); border-radius: 12px; padding: 12px 14px; margin-top: 12px;
-  white-space: pre-wrap; word-break: break-word; }
-.desc.short { max-height: 9.5em; overflow: hidden; position: relative; }
+h1 { font-size: 20px; font-weight: 650; letter-spacing: -.01em; margin: 16px 0 10px; }
+.chan { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.chan .avatar { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--raised); color: var(--live); }
+.chan .avatar svg { width: 22px; height: 16px; }
+.chan b { display: block; font-weight: 600; line-height: 1.2; }
+.chan small { color: var(--faint); font-size: 12.5px; }
+.chan .sub-btn { margin-left: 6px; height: 36px; padding: 0 16px; border: 0; border-radius: 999px; background: var(--text); color: #111;
+  font: inherit; font-weight: 600; cursor: default; }
+.meta { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; color: var(--dim); font-size: 13px; margin: 14px 0; }
+.live { display: inline-flex; align-items: center; gap: 6px; color: var(--live); font-weight: 650; font-size: 12px;
+  letter-spacing: .06em; }
+.live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+/* The description, as YouTube draws it: a lighter block, a bold stats line, then three lines of
+   the text. Collapsed, the third line breaks off, fades, and "more" follows it on that line
+   (placed by the script); a click anywhere opens it, and Show less closes it. */
+.desc { --bg: #222328; position: relative; margin-top: 14px; padding: 12px; border-radius: 12px; background: var(--bg);
+  font-size: 14px; line-height: 20px; word-break: break-word; }
+.desc .stats { font-weight: 600; }
+.desc .stats span { color: var(--dim); font-weight: 500; }
+.desc .dtext { white-space: pre-wrap; }
 .desc .ts { color: #3ea6ff; }
-.more { background: none; border: 0; color: var(--text); font-weight: 600; cursor: pointer;
-  padding: 6px 0; }
-.draft { margin-top: 10px; color: #ffb74d; font-size: 13px; }
+.desc.short { cursor: pointer; }
+.desc.short:hover { --bg: #292a30; }
+.desc.short .dtext { display: flow-root; max-height: 60px; overflow: hidden; }
+/* Room on the third line for "more". */
+.desc.short .dtext::before { content: ""; float: right; width: 70px; height: 20px; margin-top: 40px; }
+.desc .fade { display: none; position: absolute; width: 44px; height: 20px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--bg)); }
+.desc.short .fade { display: block; }
+.more { display: block; margin: 8px 0 0; padding: 0; border: 0; background: none; color: var(--text); font: inherit;
+  font-weight: 600; cursor: pointer; }
+.desc.short .more { position: absolute; margin: 0; }
+.draft { margin-top: 10px; color: var(--owner); font-size: 13px; }
 .draft[hidden] { display: none; }
-.chat { display: flex; flex-direction: column; height: calc(100vh - 90px); min-height: 420px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
-.chat h2 { font-size: 15px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-.msgs { flex: 1; overflow-y: auto; padding: 8px 6px; }
-.msg { padding: 4px 8px; border-radius: 6px; }
+
+/* Live chat, after the player's own: a quiet head, messages with a small avatar, and a
+   composer that is one field with its actions inside it. */
+.chat { display: flex; flex-direction: column; height: calc(100vh - 90px); min-height: 420px; position: relative;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.chat-head { display: flex; align-items: baseline; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.chat-head h2 { font-size: 14.5px; font-weight: 650; margin: 0; }
+.chat-head span { color: var(--faint); font-size: 12.5px; }
+.msgs { flex: 1; overflow-y: auto; padding: 8px 6px; scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
+.msg { display: flex; gap: 10px; align-items: flex-start; padding: 5px 10px; border-radius: 8px; font-size: 13.5px; }
+.msg:hover { background: var(--hover); }
+.msg .av { flex: none; display: grid; place-items: center; width: 24px; height: 24px; margin-top: 1px; border-radius: 50%;
+  background: var(--raised); color: var(--dim); font-size: 11px; font-weight: 650; text-transform: uppercase; }
 .msg .who { font-weight: 600; color: var(--dim); margin-right: 6px; }
 .msg.member .who { color: var(--member); }
 .msg.moderator .who { color: var(--mod); }
-.msg.owner .who { background: var(--owner); color: #000; padding: 0 5px; border-radius: 3px; }
-.badge { font-size: 11px; margin-right: 3px; }
-.sc { margin: 6px 4px; border-radius: 8px; overflow: hidden; background: #e62117; color: #fff; }
-.sc .top { padding: 8px 12px; background: rgba(0,0,0,.15); font-weight: 600; }
-.sc .top span { display: block; font-size: 15px; }
-.sc .body { padding: 8px 12px; }
-.compose { border-top: 1px solid var(--line); padding: 10px; display: grid; gap: 8px; }
+.msg.owner .who { color: var(--owner); }
+.badge { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 4px; background: var(--raised); color: var(--dim);
+  font-size: 10.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; }
+.sc { --sc: #2f6fd0; margin: 8px 8px; border-radius: 12px; overflow: hidden; background: var(--sc); color: #fff;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 25%); animation: pop .25s cubic-bezier(.2,.8,.2,1); }
+.sc .sc-top { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.sc .sc-top .av { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: rgb(0 0 0 / 22%);
+  font-size: 13px; font-weight: 650; text-transform: uppercase; }
+.sc .sc-top b { display: block; font-weight: 600; line-height: 1.2; }
+.sc .sc-top small { font-size: 13px; opacity: .85; font-variant-numeric: tabular-nums; }
+.sc .body { padding: 9px 12px 11px; background: linear-gradient(rgb(0 0 0 / 20%), rgb(0 0 0 / 20%)); }
+@keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+.compose { position: relative; border-top: 1px solid var(--line); padding: 12px; display: grid; gap: 10px; }
 .row { display: flex; gap: 8px; }
-select, input, button.send { background: var(--raised); color: var(--text);
-  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; min-width: 0; }
+select, input[type=text], input:not([type]) { background: var(--well); color: var(--text); border: 1px solid var(--line);
+  border-radius: 9px; padding: 0 11px; height: 36px; font: inherit; min-width: 0; outline: none; transition: border-color .12s; }
+select { appearance: none; padding-right: 30px; cursor: pointer;
+  background: var(--well) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' stroke='%236c6d77' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m3 4.5 3 3 3-3'/%3E%3C/svg%3E") no-repeat right 10px center; }
+select:hover, input:hover { border-color: #34353c; }
+select:focus, input:focus { border-color: var(--ui); }
 input.name { flex: 1; }
-input.text { flex: 1; }
-input.amount { width: 110px; }
-button.send { background: var(--accent, #ff5555); border-color: transparent; color: #fff;
-  font-weight: 600; cursor: pointer; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.chips button { background: none; border: 1px solid var(--line); color: var(--dim);
-  border-radius: 999px; padding: 2px 10px; font: inherit; font-size: 12px; cursor: pointer; }
-.chips button:hover { color: var(--text); }
-.err { color: #ff8a80; font-size: 12px; min-height: 1em; }
-label.sc-toggle { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; }
+.field { display: flex; align-items: center; gap: 2px; padding: 0 4px 0 0; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--well); transition: border-color .12s; }
+.field:focus-within { border-color: var(--ui); }
+.field input { flex: 1; border: 0; background: none; height: 42px; padding: 0 6px 0 14px; border-radius: 12px; }
+.field .icon { width: 34px; height: 34px; }
+.field .go { color: var(--faint); }
+.field.ready .go { background: var(--ui); color: var(--ui-ink); }
+.chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.chips button { flex: none; background: var(--raised); border: 0; color: var(--dim); border-radius: 6px; padding: 3px 9px;
+  font: 500 12px var(--mono); cursor: pointer; transition: background .12s, color .12s; }
+.chips button:hover { background: var(--hover); color: var(--text); }
+.err { color: #f08a8e; font-size: 12px; min-height: 1em; }
+.err:empty { display: none; }
+/* Super Chat: a tier picker above the composer, the chosen one shown above the field. */
+.tiers { position: absolute; left: 12px; right: 12px; bottom: calc(100% - 4px); z-index: 5; padding: 12px; border-radius: 14px;
+  background: var(--raised); box-shadow: 0 0 0 1px var(--line), 0 18px 40px rgb(0 0 0 / 55%); display: grid; gap: 10px; }
+.tiers .label { color: var(--dim); font-size: 12.5px; }
+.tier-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tier { height: 42px; border: 0; border-radius: 9px; background: var(--c); color: #fff; font: 650 14px var(--ui-font);
+  font-variant-numeric: tabular-nums; cursor: pointer; transition: transform .1s, box-shadow .12s, filter .12s; }
+.tier:hover { filter: brightness(1.12); }
+.tier[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--raised), 0 0 0 4px var(--c); transform: translateY(-1px); }
+.tiers input { width: 100%; }
+.chosen { display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 11px; border-radius: 9px;
+  background: var(--c); color: #fff; font-size: 13px; font-weight: 600; }
+.chosen span { flex: 1; }
+.chosen .icon { width: 24px; height: 24px; color: #fff; opacity: .8; }
+.chosen .icon:hover { background: rgb(0 0 0 / 20%); opacity: 1; color: #fff; }
+/* Top bar, both modes. */
+.top { display: flex; align-items: center; gap: 14px; height: 56px; padding: 0 20px;
+  border-bottom: 1px solid var(--line); background: var(--page); }
+.t-left, .t-mid, .t-right { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.t-mid { flex: 1; justify-content: flex-end; }
+.t-right { gap: 8px; }
+/* Editing: the bar's columns line up with the panels under them. */
+body.editing .top { display: grid; grid-template-columns: 248px minmax(0, 1fr) 288px; gap: 0; padding: 0; }
+body.editing .t-left { padding-left: 20px; }
+body.editing .t-mid { justify-content: center; height: 100%; border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line); }
+body.editing .t-right { justify-content: flex-end; padding-right: 16px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 15px; letter-spacing: -.1px; }
+.brand svg { width: 26px; height: 18px; color: var(--live); }
+.sep { width: 1px; height: 20px; background: var(--line); }
+.mode { font-size: 13px; color: var(--dim); }
+.top .hint { color: var(--dim); font-size: 12.5px; }
+.saved { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 12.5px;
+  transition: color .2s; }
+.saved.bad { color: #f08a8e; }
+.saved svg { width: 15px; height: 15px; }
+.btn { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 0;
+  background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: inherit; font-size: 13px;
+  font-weight: 550; cursor: pointer; transition: background .12s, box-shadow .12s, transform .06s; }
+.btn:hover { background: var(--hover); box-shadow: inset 0 0 0 1px #3a3b43; }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--ui); box-shadow: none; color: var(--ui-ink); padding: 0 16px; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn svg { width: 15px; height: 15px; }
+.icon { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; border: 0;
+  background: none; color: var(--dim); cursor: pointer; padding: 0; transition: background .12s, color .12s; }
+.icon:hover { background: var(--hover); color: var(--text); }
+.icon:active { transform: translateY(1px); }
+.icon[aria-pressed="true"] { color: var(--text); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.icon:disabled { opacity: .35; pointer-events: none; }
+.icon svg { width: 17px; height: 17px; }
+:is(.btn, .icon, .seg button, input, .layer):focus-visible { outline: 2px solid var(--ui);
+  outline-offset: 2px; }
+svg.i { fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+[hidden] { display: none !important; }
+body:not(.editing) .edit-only, body.editing .view-only { display: none; }
+
+/* Editor: layers | canvas | style. The page becomes an app: no scrolling, panels full height. */
+.layers, .inspector, .bar { display: none; }
+body.editing { height: 100vh; overflow: hidden; display: grid; grid-template-rows: 56px minmax(0, 1fr); }
+body.editing main { display: grid; grid-template-columns: 248px minmax(0, 1fr) 288px; gap: 0; padding: 0;
+  max-width: none; margin: 0; min-height: 0; }
+body.editing .chat, body.editing .details, body.editing .novideo, body.editing .cam { display: none; }
+body.editing .layers, body.editing .inspector { display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); }
+body.editing .layers { border-right: 1px solid var(--line); }
+body.editing .inspector { border-left: 1px solid var(--line); }
+body.editing section { display: flex; flex-direction: column; align-items: center;
+  justify-content: flex-start; padding: 0; min-width: 0; min-height: 0; background: var(--well); }
+body.editing .player { border-radius: 0; background: #101012; flex: none; }
+/* Handles of a frame at the video's edge stay whole. */
+body.editing .player, body.editing .stage { overflow: visible; }
+body.editing video { overflow: hidden; }
+body.editing .bar { display: flex; }
+
+.panel-head { display: flex; align-items: center; gap: 10px; height: 56px; padding: 0 16px 0 18px;
+  font-weight: 600; font-size: 14px; }
+.panel-head svg { width: 18px; height: 18px; color: var(--dim); }
+.panel-head .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Layers: the icon turns into a grip on hover; drag it to restack (OBS restacks too). */
+.list { position: relative; padding: 4px 10px; overflow-y: auto; flex: 1; }
+.layer { position: relative; display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 6px 0 8px;
+  border-radius: 9px; color: var(--dim); cursor: pointer; user-select: none; font-size: 13.5px;
+  transition: background .12s, color .12s, transform .18s cubic-bezier(.2,.8,.2,1), box-shadow .18s; }
+.layer:hover { background: var(--hover); color: var(--text); }
+.layer.sel { background: var(--raised); color: var(--text); }
+.layer.off, .layer.off:hover { color: var(--faint); }
+.layer.docked .name::after { content: "in status bar"; margin-left: 8px; color: var(--faint); font-size: 11.5px; }
+.layer .lead { position: relative; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px;
+  flex: none; }
+.layer .lead svg { width: 18px; height: 18px; position: absolute; transition: opacity .12s; }
+.layer .lead .grip { opacity: 0; }
+.layer:hover .lead { cursor: grab; }
+.layer:hover .lead .kind { opacity: 0; }
+.layer:hover .lead .grip { opacity: 1; }
+.layer .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layer .icon { width: 28px; height: 28px; color: var(--dim); }
+.layer .icon:hover { color: var(--text); }
+.layer.off .icon, .layer.off .icon:hover { color: var(--faint); }
+.layer.lifted { z-index: 2; background: var(--raised); color: var(--text); transition: none;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 55%), 0 0 0 1px var(--line); cursor: grabbing; }
+body.restacking, body.restacking * { cursor: grabbing !important; }
+.scene { display: flex; gap: 8px; margin: 0 14px 8px; }
+.scene select { flex: 1; min-width: 0; height: 34px; background-color: var(--raised); font-weight: 550; }
+.scene input[type=color] { appearance: none; flex: none; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 9px;
+  background: none; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.scene input[type=color]::-webkit-color-swatch-wrapper { padding: 5px; }
+.scene input[type=color]::-webkit-color-swatch { border: 0; border-radius: 5px; }
+.scene input[type=color]::-moz-color-swatch { border: 0; border-radius: 5px; }
+.panel-foot { padding: 12px 18px 16px; color: var(--faint); font-size: 12px; line-height: 1.5; }
+
+/* The canvas: 1920x1080 scaled into the player; --k undoes the scale for handle sizes. */
+.stage { position: absolute; inset: 0; overflow: hidden; }
+.canvas { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.canvas iframe { position: absolute; inset: 0; width: 1920px; height: 1080px; border: 0;
+  pointer-events: none; color-scheme: normal; }
+.frame { position: absolute; transform-origin: center; touch-action: none; }
+.frame:hover { outline: calc(1.5px * var(--k)) solid color-mix(in srgb, var(--ui) 70%, transparent); }
+.frame.sel { cursor: move; outline: none; }
+.selection { position: absolute; transform-origin: center; pointer-events: none; z-index: 50;
+  outline: calc(1.5px * var(--k)) solid var(--ui); }
+.selection .h, .selection .rot { position: absolute; pointer-events: auto; touch-action: none; }
+.selection .h { width: calc(12px * var(--k)); height: calc(12px * var(--k));
+  margin: calc(-6px * var(--k)) 0 0 calc(-6px * var(--k)); background: #fff; border-radius: 50%;
+  box-shadow: 0 0 0 calc(1.5px * var(--k)) var(--ui), 0 calc(1px * var(--k)) calc(4px * var(--k)) rgb(0 0 0 / 40%);
+  transition: transform .1s; }
+.selection .h:hover { transform: scale(1.25); }
+.selection .h.side { border-radius: calc(3px * var(--k)); }
+.selection .h[data-h="n"], .selection .h[data-h="s"] { width: calc(22px * var(--k)); height: calc(7px * var(--k));
+  margin: calc(-3.5px * var(--k)) 0 0 calc(-11px * var(--k)); }
+.selection .h[data-h="e"], .selection .h[data-h="w"] { width: calc(7px * var(--k)); height: calc(22px * var(--k));
+  margin: calc(-11px * var(--k)) 0 0 calc(-3.5px * var(--k)); }
+.selection .rot { width: calc(22px * var(--k)); height: calc(22px * var(--k)); }
+.tip { position: absolute; z-index: 60; transform: translate(-50%, 0); pointer-events: none; white-space: nowrap;
+  font: 600 calc(12px * var(--k))/1 var(--ui-font); font-variant-numeric: tabular-nums;
+  color: #fff; background: #111114; box-shadow: 0 0 0 calc(1px * var(--k)) #2a2a30;
+  padding: calc(6px * var(--k)) calc(8px * var(--k)); border-radius: calc(6px * var(--k)); }
+.guide { position: absolute; z-index: 55; background: #ff3ec9; pointer-events: none; }
+.guide.v { top: 0; bottom: 0; width: calc(1px * var(--k)); }
+.guide.h { left: 0; right: 0; height: calc(1px * var(--k)); }
+body.gesture, body.gesture * { cursor: var(--gesture) !important; user-select: none; }
+
+/* The bar under the canvas: where the selection sits; view switches on the right. */
+.bar { align-items: center; gap: 2px; height: 100%; padding: 0 12px; max-width: 100%;
+  overflow-x: auto; scrollbar-width: none; }
+.bar .div { width: 1px; height: 22px; background: var(--line); margin: 0 6px; flex: none; }
+.bar .group { display: flex; align-items: center; gap: 2px; transition: opacity .15s; }
+.bar.empty .group.sel { opacity: .35; pointer-events: none; }
+.num { position: relative; display: flex; align-items: center; height: 30px; border-radius: 7px; padding: 0;
+  transition: background .12s, box-shadow .12s; }
+.bar .num { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); margin: 0 2px; }
+.num:hover, .num:focus-within { background: var(--raised); box-shadow: inset 0 0 0 1px #3a3b43; }
+.num:focus-within { box-shadow: inset 0 0 0 1px var(--ui); }
+.num b { display: grid; place-items: center; min-width: 24px; height: 100%; color: var(--faint); font-weight: 500;
+  font-size: 12px; cursor: ew-resize; user-select: none; }
+.num b svg { width: 14px; height: 14px; }
+.num:hover b { color: var(--dim); }
+.num input { width: 46px; height: 100%; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px;
+  font-variant-numeric: tabular-nums; padding: 0 2px; outline: none; }
+.num input.short { width: 36px; }
+.num i { font-style: normal; color: var(--faint); font-size: 12px; padding-right: 4px; }
+/* Up and down for a number: appear on hover, and the arrow keys do the same. */
+.step { display: grid; grid-template-rows: 1fr 1fr; width: 16px; height: 100%; border-left: 1px solid var(--line);
+  opacity: 0; transition: opacity .12s; }
+.num:hover .step, .num:focus-within .step { opacity: 1; }
+.step button { display: grid; place-items: center; padding: 0; border: 0; background: none; color: var(--faint); cursor: pointer; }
+.step button:hover { color: var(--text); background: var(--hover); }
+.step button:first-child { border-radius: 0 6px 0 0; }
+.step button:last-child { border-radius: 0 0 6px 0; }
+.step svg { width: 10px; height: 10px; stroke-width: 2.4; }
+input[type=number] { -moz-appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+
+/* Properties: a tab strip of groups, collapsible panels, and panels that go dim (with the
+   reason) when what they edit does not apply. */
+.ins-body { display: flex; flex: 1; min-height: 0; }
+.tabs { display: flex; flex-direction: column; gap: 4px; padding: 8px 6px; border-right: 1px solid var(--line); flex: none; }
+.tabs button { display: grid; place-items: center; width: 34px; height: 34px; border: 0; border-radius: 8px; background: none;
+  color: var(--faint); cursor: pointer; transition: background .12s, color .12s; }
+.tabs button:hover { color: var(--text); background: var(--hover); }
+.tabs button[aria-pressed="true"] { color: var(--text); background: var(--raised); box-shadow: 0 0 0 1px #2e2e35; }
+.tabs svg { width: 18px; height: 18px; }
+.ins-body .style { padding: 0 12px 12px; min-width: 0; overflow-x: hidden; }
+.ins-body .pnl, .ins-body .pnl-b, .ins-body .prop, .ins-body .stack { min-width: 0; }
+.ins-body .range { grid-template-columns: minmax(0, 1fr) 64px; }
+.ins-body .checks { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.ins-body .color { min-width: 0; overflow: hidden; }
+.ins-body select, .ins-body .txt { max-width: 100%; }
+.note .btn { flex: none; white-space: nowrap; }
+.pnl { border-bottom: 1px solid var(--line); }
+.pnl.other { display: none; }
+.pnl-h { display: flex; align-items: center; gap: 6px; width: 100%; height: 34px; padding: 0; border: 0; background: none;
+  color: var(--text); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; text-align: left; }
+.pnl-h .chev { display: grid; place-items: center; width: 18px; color: var(--faint); transition: transform .12s; }
+.pnl-h .chev svg { width: 14px; height: 14px; }
+.pnl.shut .pnl-h .chev { transform: rotate(-90deg); }
+.pnl.shut .pnl-b { display: none; }
+.pnl-h .why { margin-left: auto; font-weight: 500; font-size: 11px; color: var(--faint); }
+.pnl-b { padding: 0 0 10px; }
+.pnl-b > .prop { padding: 6px 0; border-top: 0; }
+.pnl.off .pnl-b, .prop.off { opacity: .38; pointer-events: none; filter: grayscale(.5); }
+.stack { display: grid; gap: 10px; }
+.pair { display: grid; grid-auto-flow: column; gap: 8px; margin-top: 10px; }
+.note { display: flex; align-items: center; gap: 10px; margin: 0 12px 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px;
+  line-height: 1.4; color: var(--dim); background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
+.note.warn { margin: 0; color: #f3d9a4; box-shadow: inset 0 0 0 1px #6a5322; background: #2a2314; flex-direction: column; align-items: stretch; }
+.note.warn .btn { height: 28px; justify-content: center; }
+.bar.docked .group.sel { opacity: .35; pointer-events: none; }
+
+/* Style panel. */
+.style { padding: 0 14px 12px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
+.style .empty { color: var(--faint); font-size: 13px; text-align: center; margin-top: 40%; line-height: 1.6; }
+.prop { padding: 11px 0; border-top: 1px solid var(--line); }
+.prop:first-child { border-top: 0; }
+.prop > label, .prop > .label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 7px; }
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; gap: 2px; border-radius: 10px;
+  background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
+.seg button { display: grid; place-items: center; height: 26px; border: 0; border-radius: 7px; background: none;
+  color: var(--dim); cursor: pointer; transition: background .12s, color .12s; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-pressed="true"] { background: var(--raised); color: var(--text);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 0 0 1px #2e2e35; }
+.seg svg { width: 17px; height: 17px; }
+.color { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 4px; border-radius: 8px;
+  background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
+.color:focus-within { box-shadow: inset 0 0 0 1px var(--ui); }
+.swatch { position: relative; width: 24px; height: 24px; border-radius: 6px; overflow: hidden; flex: none; cursor: pointer;
+  background: repeating-conic-gradient(#3a3a40 0 25%, #232328 0 50%) 0 0 / 10px 10px;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 10%); }
+.swatch span { position: absolute; inset: 0; }
+.swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; border: 0; padding: 0; }
+.color input.hex { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px;
+  text-transform: uppercase; font-variant-numeric: tabular-nums; outline: none; }
+.color .tag { font-size: 11.5px; color: var(--faint); padding-right: 4px; }
+.range { display: grid; grid-template-columns: 1fr 64px; align-items: center; gap: 10px; }
+.range .num { background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
+.range .num input { width: 100%; text-align: right; padding-right: 2px; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: none; cursor: pointer; }
+input[type=range]::-webkit-slider-runnable-track { height: 4px; border-radius: 4px;
+  background: linear-gradient(var(--ui), var(--ui)) 0 / var(--fill, 50%) 100% no-repeat, #2c2c33; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgb(0 0 0 / 50%); transition: transform .1s; }
+input[type=range]:hover::-webkit-slider-thumb { transform: scale(1.12); }
+input[type=range]::-moz-range-track { height: 4px; border-radius: 4px; background: #2c2c33; }
+input[type=range]::-moz-range-progress { height: 4px; border-radius: 4px; background: var(--ui); }
+input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; }
+
+/* Behaviour: dock in the status bar, hide while others show. */
+.switch { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: var(--text); }
+.switch input { appearance: none; position: relative; flex: none; width: 34px; height: 20px; margin: 0; padding: 0; border: 0;
+  border-radius: 999px; background: #34353c; cursor: pointer; transition: background .15s; }
+.switch input::after { content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; transition: transform .15s; }
+.switch input:checked { background: var(--ui); }
+.switch input:checked::after { transform: translateX(14px); }
+.orow { display: flex; align-items: center; gap: 8px; height: 32px; font-size: 13px; }
+.orow > svg { flex: none; width: 16px; height: 16px; }
+.orow > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.orow.off { color: var(--faint); }
+.orow .icon { width: 24px; height: 24px; }
+.brbel { position: absolute; z-index: 52; cursor: move; touch-action: none;
+  outline: calc(1.5px * var(--k)) dashed var(--ui); outline-offset: calc(2px * var(--k)); }
+.brbel.sel { outline-style: solid; }
+.brbel .rz { position: absolute; right: calc(-7px * var(--k)); bottom: calc(-7px * var(--k)); width: calc(14px * var(--k));
+  height: calc(14px * var(--k)); border-radius: 50%; background: #fff; cursor: nwse-resize;
+  box-shadow: 0 0 0 calc(1.5px * var(--k)) var(--ui); }
+.brbel .rz.w { bottom: 50%; margin-bottom: calc(-7px * var(--k)); border-radius: calc(4px * var(--k)); cursor: ew-resize;
+  width: calc(10px * var(--k)); height: calc(28px * var(--k)); }
+.brbel:hover { background: color-mix(in srgb, var(--ui) 14%, transparent); }
+.txt { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 0; border-radius: 8px; background: var(--well);
+  box-shadow: inset 0 0 0 1px var(--line); color: var(--text); font: inherit; font-size: 12.5px; outline: none; resize: vertical; }
+.txt:focus { box-shadow: inset 0 0 0 1px var(--ui); }
+.hint { margin-top: 6px; color: var(--faint); font-size: 11.5px; line-height: 1.45; }
+.checks { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; }
+.check { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 6px; border: 0; border-radius: 6px; background: none;
+  color: var(--dim); font: inherit; font-size: 12.5px; cursor: pointer; text-align: left; transition: background .1s, color .1s; }
+.check:hover { background: var(--hover); color: var(--text); }
+.check .box { display: grid; place-items: center; flex: none; width: 15px; height: 15px; border-radius: 4px;
+  box-shadow: inset 0 0 0 1.5px #474852; transition: background .1s, box-shadow .1s; }
+.check .box svg { width: 11px; height: 11px; stroke-width: 3; color: var(--ui-ink); opacity: 0; }
+.check[aria-pressed="true"] { color: var(--text); }
+.check[aria-pressed="true"] .box { background: var(--ui); box-shadow: none; }
+.check[aria-pressed="true"] .box svg { opacity: 1; }
+.check > svg { width: 14px; height: 14px; flex: none; }
+
+/* Modes: what the preview imitates (normal, BRB, privacy). */
+.modes { margin: 0 14px 8px; }
+/* Layer rows: a copy-address button in the virtual scene. */
+.layer .lockb { width: 26px; height: 26px; opacity: 0; }
+.layer:hover .lockb, .layer.locked .lockb { opacity: 1; }
+.layer.locked { color: var(--faint); cursor: default; }
+.layer .copy { display: none; width: 26px; height: 26px; }
+.virtual .layer .copy { display: inline-grid; }
+/* The right-click menu. */
+.ctx { position: fixed; z-index: 100; min-width: 230px; padding: 5px; border-radius: 10px; background: var(--raised);
+  box-shadow: 0 0 0 1px #34353c, 0 16px 40px rgb(0 0 0 / 55%); font-size: 13px; }
+.ctx .head { padding: 6px 9px 4px; color: var(--faint); font-size: 11.5px; letter-spacing: .02em; }
+.ctx hr { margin: 4px 2px; border: 0; border-top: 1px solid var(--line); }
+.ctx button { display: flex; align-items: center; gap: 9px; width: 100%; height: 28px; padding: 0 9px; border: 0; border-radius: 6px;
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.ctx button:hover:not(:disabled) { background: var(--hover); }
+.ctx button:disabled { color: var(--faint); cursor: default; }
+.ctx button svg { width: 15px; height: 15px; color: var(--dim); }
+.ctx button em { margin-left: auto; font-style: normal; color: var(--faint); font-size: 11.5px; }
+.ctx .note { padding: 4px 9px 6px; color: var(--faint); font-size: 12px; }
+
+/* Skins: under the video, live thumbnails of the selected layer's looks (or the packs). */
+.skins { display: none; }
+body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-self: stretch; flex: 1; min-height: 0;
+  padding: 18px 24px 22px; border-top: 1px solid var(--line); }
+.skins-head { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; font-weight: 600; }
+.skins-note { color: var(--faint); font-weight: 400; font-size: 12.5px; }
+.link { margin-left: auto; padding: 0; border: 0; background: none; color: var(--ui); font: inherit;
+  font-size: 12.5px; cursor: pointer; }
+.link:hover { text-decoration: underline; }
+/* Rows of skins, as many as fit; the wheel moves one row at a time (see the script). */
+.skins-row { display: grid; grid-template-columns: repeat(auto-fill, 188px); grid-auto-rows: max-content; gap: 16px;
+  align-content: start; flex: 1; min-height: 0; overflow-y: auto; padding: 4px; scroll-snap-type: y mandatory;
+  scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
+.skins-row > * { scroll-snap-align: start; }
+.skin { display: flex; flex-direction: column; gap: 9px; width: 188px; padding: 0; border: 0;
+  background: none; color: var(--dim); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; }
+.skin .thumb { position: relative; width: 188px; height: 106px; border-radius: 10px; overflow: hidden;
+  background: linear-gradient(135deg, #1c1c21, #111114); box-shadow: 0 0 0 1px var(--line);
+  transition: box-shadow .15s, transform .15s; }
+.skin:hover { color: var(--text); }
+.skin:hover .thumb { box-shadow: 0 0 0 1px #3c3c44; transform: translateY(-2px); }
+.skin.on { color: var(--text); }
+.skin.on .thumb { box-shadow: 0 0 0 2px var(--ui); }
+.skin .thumb iframe { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: 0;
+  transform-origin: 0 0; pointer-events: none; color-scheme: normal; transition: transform .35s cubic-bezier(.2,.8,.2,1); }
+.skin .name { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px; }
+.skin .badge { color: var(--faint); font-size: 11px; }
+.skins .none { color: var(--faint); font-size: 12.5px; line-height: 1.7; }
+.skins .none code { color: var(--dim); }
 </style>
 </head>
 <body>
-<header>
-  <b>aftercast</b><span class="pill">REHEARSE</span>
-  <span class="hint">Nothing here is live: video from OBS Virtual Camera, YouTube and chat simulated</span>
+<header class="top">
+  <div class="t-left">
+    <div class="brand"><svg viewBox="0 0 28 20" aria-hidden="true"><rect width="28" height="20" fill="currentColor"/><path d="M11 5v10l8.5-5z" fill="#fff"/></svg>aftercast</div>
+    <span class="sep"></span>
+    <span class="mode">Rehearse</span>
+  </div>
+  <div class="t-mid">
+    <span class="hint view-only">Simulated YouTube, video from OBS Virtual Camera</span>
+    <div class="bar empty" id="bar">
+      <div class="group sel">
+        <label class="num"><b title="Drag to change">X</b><input type="number" data-f="x"></label>
+        <label class="num"><b title="Drag to change">Y</b><input type="number" data-f="y"></label>
+      </div>
+      <span class="div"></span>
+      <div class="group sel">
+        <label class="num"><b title="Width, drag to change">W</b><input type="number" data-f="width"></label>
+        <label class="num"><b title="Height, drag to change">H</b><input type="number" data-f="height"></label>
+      </div>
+      <span class="div"></span>
+      <div class="group sel">
+        <label class="num"><b title="Scale, drag to change" data-icon="scale"></b><input class="short" type="number" data-f="size"><i>%</i></label>
+        <label class="num"><b title="Rotation, drag to change" data-icon="rotate"></b><input class="short" type="number" data-f="rotate"><i>°</i></label>
+      </div>
+      <span class="div"></span>
+      <div class="group">
+        <button class="icon" id="showVideo" aria-pressed="true" title="OBS video behind the overlays" data-icon="video"></button>
+        <button class="icon edit-only" id="edSound" aria-pressed="true" title="Play the selected overlay's sound while editing" data-icon="speaker"></button>
+        <button class="icon" id="snap" aria-pressed="true" title="Snap to the canvas edges and center (hold Alt to skip)" data-icon="magnet"></button>
+      </div>
+    </div>
+  </div>
+  <div class="t-right">
+    <span class="saved edit-only" id="saved"></span>
+    <button class="icon edit-only" id="undo" title="Undo (Ctrl+Z)" disabled data-icon="undo"></button>
+    <button class="btn" id="edit"><span data-icon="pen"></span><span>Edit overlays</span></button>
+  </div>
 </header>
 <main>
+  <aside class="layers">
+    <div class="panel-head"><span data-icon="layers"></span><span class="grow">Layers</span></div>
+    <div class="modes seg" id="modes">
+      <button type="button" data-mode="normal" title="The normal scenes">Normal</button>
+      <button type="button" data-mode="brb" title="Be right back: the BRB scene and its overlay">BRB</button>
+      <button type="button" data-mode="privacy" title="Privacy: keys and captions are not shown">Privacy</button>
+    </div>
+    <div class="scene"><select id="sceneSel" title="Scene to edit"></select><input type="color" id="vColor" title="Color behind the overlays" hidden></div>
+    <div class="list" id="layerList"></div>
+    <div class="panel-foot" id="layerEmpty" hidden>No overlays in this scene</div>
+  </aside>
   <section>
     <div class="player">
       <video id="video" autoplay muted playsinline></video>
+      <video id="dvr" playsinline hidden></video>
       <div class="novideo" id="novideo">
         <div>Waiting for <b>OBS Virtual Camera</b>.</div>
         <div>aftercast starts it when OBS connects; you can also press <i>Start Virtual Camera</i> in OBS.
           Allow camera access when the browser asks.</div>
-        <div><button class="send" id="retry">Try again</button></div>
+        <div><button class="btn" id="retry">Try again</button></div>
       </div>
       <select class="cam" id="cams" hidden title="Video source"></select>
+      <div class="bigicon" id="bigIcon"></div>
+      <div class="skipfx left" id="skipL"><div class="chevs"><i></i><i></i><i></i></div><b class="t"></b></div>
+      <div class="skipfx right" id="skipR"><div class="chevs"><i></i><i></i><i></i></div><b class="t"></b></div>
+      <div class="spd" id="spdMenu" hidden></div>
+      <div class="ctl" id="ctl">
+        <div class="dvrbar" id="dvrbar" hidden>
+          <div class="seek" id="dvrSeek" role="slider" aria-label="Seek in the recording"><div class="trk"><i class="tail"></i><i class="rec"></i><span class="bufs"></span><i class="played"></i></div><i class="thumb"></i></div>
+        </div>
+        <div class="row">
+          <button class="cb" id="cPlay" type="button" title="Pause (k)"></button>
+          <div class="vol">
+            <button class="cb" id="cMute" type="button" title="Mute (m)"></button>
+            <input type="range" id="cVol" min="0" max="100" step="1" aria-label="Volume">
+          </div>
+          <span class="grow"></span>
+          <span id="dvrTime"></span>
+          <button class="dvrlive" id="dvrLive" type="button" title="Back to the live stream">LIVE</button>
+          <button class="cb" id="cSpeed" type="button" title="Playback speed"></button>
+          <button class="cb view-only" id="cMini" type="button" title="Miniplayer (i)"></button>
+          <button class="cb" id="cFull" type="button" title="Full screen (f)"></button>
+        </div>
+      </div>
+      <div class="stage" id="stage" hidden>
+        <div class="canvas" id="canvas">
+          <div class="guide v" id="guideV" hidden></div>
+          <div class="guide h" id="guideH" hidden></div>
+        </div>
+      </div>
     </div>
+    <div class="skins" id="skins" hidden>
+      <div class="skins-head"><span id="skinsTitle">Skins</span><span class="skins-note" id="skinsNote"></span>
+        <button class="link" id="wearPack" hidden>Use default skin</button></div>
+      <div class="skins-row" id="skinRow"></div>
+    </div>
+    <div class="details">
     <h1 id="title">Rehearse</h1>
+    <div class="chan"><span class="avatar"><svg viewBox="0 0 28 20"><rect width="28" height="20" fill="currentColor"/><path d="M11 5v10l8.5-5z" fill="#fff"/></svg></span>
+      <div><b>aftercast</b><small>Simulated channel</small></div><button class="sub-btn" tabindex="-1">Subscribe</button></div>
     <div class="meta">
       <span class="live">LIVE</span>
       <span id="elapsed"></span>
       <span id="scene"></span>
       <span>no audio here: listen in OBS</span>
     </div>
-    <div class="desc short" id="desc"></div>
-    <button class="more" id="more">Show more</button>
+    <div class="desc short" id="descBox"><div class="stats" id="descStats"></div><div class="dtext" id="desc"></div><span class="fade" id="descFade"></span><button class="more" id="more" type="button">more</button></div>
     <div class="draft" id="draft" hidden>The README changed since the last push. Viewers see the
       description above until you push (<code>:push</code> in the TUI).</div>
+    </div>
   </section>
   <aside class="chat">
-    <h2>Live chat</h2>
+    <div class="chat-head"><h2>Live chat</h2><span>Top chat</span><button class="icon" id="soundTog" title="Super Chat sound in this player" aria-pressed="true" style="margin-left:auto" data-icon="speaker"></button></div>
     <div class="msgs" id="msgs"></div>
     <form class="compose" id="form" autocomplete="off">
+      <div class="tiers" id="tiers" hidden>
+        <div class="label">Send a Super Chat</div>
+        <div class="tier-grid" id="tierGrid"></div>
+        <input id="amount" placeholder="Other amount, then Enter" aria-label="Other amount">
+      </div>
+      <div class="chosen" id="chosen" hidden><span id="chosenText"></span><button type="button" class="icon" id="scClear" title="Remove the Super Chat" data-icon="x"></button></div>
       <div class="row">
         <select id="role" title="Send as">
           <option value="viewer">Viewer</option>
@@ -116,13 +656,10 @@ label.sc-toggle { display: flex; align-items: center; gap: 6px; color: var(--dim
         </select>
         <input class="name" id="name" placeholder="Name" maxlength="40">
       </div>
-      <div class="row">
-        <input class="text" id="text" placeholder="Say something, or !q, !chapter, !lat ..." maxlength="200">
-        <button class="send" type="submit">Send</button>
-      </div>
-      <div class="row">
-        <label class="sc-toggle"><input type="checkbox" id="sc"> Super Chat</label>
-        <input class="amount" id="amount" placeholder="₹100.00" hidden>
+      <div class="field" id="field">
+        <input id="text" placeholder="Say something, or !q, !chapter, !lat ..." maxlength="200">
+        <button type="button" class="icon" id="scBtn" title="Super Chat" aria-pressed="false" data-icon="coin"></button>
+        <button type="submit" class="icon go" title="Send" data-icon="send"></button>
       </div>
       <div class="chips" id="chips">
         <button type="button" data-t="!q ">!q</button>
@@ -136,6 +673,180 @@ label.sc-toggle { display: flex; align-items: center; gap: 6px; color: var(--dim
       </div>
       <div class="err" id="err"></div>
     </form>
+  </aside>
+  <aside class="inspector">
+    <div class="panel-head"><span id="insIcon"></span><span class="grow" id="insName">Style</span>
+      <button class="icon" id="resetFrame" title="Reset to default" data-icon="reset" hidden></button></div>
+    <div class="note" id="dockedNote" hidden>
+      <span>In the status bar. What needs its own space on the canvas is off.</span>
+      <button class="btn" id="undock" type="button">Take out</button>
+    </div>
+    <div class="ins-body">
+      <nav class="tabs" id="tabs" aria-label="Property groups">
+        <button type="button" data-tab="layout" title="Layout" data-icon="move"></button>
+        <button type="button" data-tab="look" title="Look" data-icon="look"></button>
+        <button type="button" data-tab="content" title="Content" data-icon="pen"></button>
+        <button type="button" data-tab="behave" title="Behaviour" data-icon="sparkle"></button>
+      </nav>
+      <div class="style">
+        <div class="empty" id="noSel">Nothing selected</div>
+        <div id="props" hidden>
+
+          <section class="pnl" data-tab="layout" data-title="Position" id="pnlPos">
+            <div class="prop">
+              <div class="seg">
+                <button type="button" data-align="left" title="Align left" data-icon="al-left"></button>
+                <button type="button" data-align="hcenter" title="Center horizontally" data-icon="al-hcenter"></button>
+                <button type="button" data-align="right" title="Align right" data-icon="al-right"></button>
+                <button type="button" data-align="top" title="Align top" data-icon="al-top"></button>
+                <button type="button" data-align="vcenter" title="Center vertically" data-icon="al-vcenter"></button>
+                <button type="button" data-align="bottom" title="Align bottom" data-icon="al-bottom"></button>
+              </div>
+              <div class="hint" id="posHint"></div>
+            </div>
+          </section>
+          <section class="pnl" data-tab="layout" data-title="Align content" id="pnlAlign" data-frame>
+            <div class="prop" id="alignProp">
+              <div class="seg" id="align">
+                <button type="button" data-a="left" title="Left" data-icon="tx-left"></button>
+                <button type="button" data-a="center" title="Center" data-icon="tx-center"></button>
+                <button type="button" data-a="right" title="Right" data-icon="tx-right"></button>
+              </div>
+            </div>
+          </section>
+          <section class="pnl" data-tab="layout" data-title="Arrange parts" id="pnlArrange" data-frame>
+            <div class="prop" id="brbArrange" hidden>
+              <div class="stack">
+                <label class="switch"><input type="checkbox" id="bMove"><span>Drag parts on the canvas</span></label>
+                <div class="hint">Drag to place, corner or edge grips to resize, arrow keys to nudge (Shift: 10). Alt turns snapping off.</div>
+                <button class="btn" id="bReset" type="button" title="Back to the skin's own arrangement">Reset this skin's layout</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="pnl" data-tab="look" data-title="Appearance" id="pnlLook">
+            <div class="prop" id="bgProp">
+              <div class="label">Background</div>
+              <div class="color">
+                <label class="swatch" title="Pick a color"><span id="swatchFill"></span><input type="color" id="bgColor"></label>
+                <input class="hex" id="bgHex" maxlength="7" spellcheck="false" aria-label="Background color">
+                <span class="tag" id="bgTag">Theme</span>
+                <button class="icon" id="bgTheme" title="Back to the theme color" data-icon="reset"></button>
+              </div>
+            </div>
+            <div class="prop" id="opProp">
+              <div class="label">Opacity</div>
+              <div class="range">
+                <input type="range" id="opRange" min="0" max="100" step="1" aria-label="Opacity">
+                <label class="num"><input type="number" id="opNum" min="0" max="100"><i>%</i></label>
+              </div>
+            </div>
+          </section>
+
+          <section class="pnl" data-tab="content" data-title="Picture" id="pnlPic" data-frame>
+            <div class="prop" id="brbPic" hidden>
+              <div class="stack">
+                <label class="switch"><input type="checkbox" id="bPfp"><span>Show my picture</span></label>
+                <select id="bShape" aria-label="Picture shape">
+                  <option value="circle">Circle</option><option value="rounded">Rounded square</option><option value="square">Square</option>
+                </select>
+                <div class="range">
+                  <input type="range" id="bPfpSize" min="80" max="700" step="10" aria-label="Picture size">
+                  <label class="num"><input type="number" id="bPfpSizeNum" min="80" max="700"><i>px</i></label>
+                </div>
+              </div>
+            </div>
+          </section>
+          <section class="pnl" data-tab="content" data-title="QR code" id="pnlQr" data-frame>
+            <div class="prop" id="brbQr" hidden>
+              <div class="stack">
+                <label class="switch"><input type="checkbox" id="bQr"><span>Show the QR code</span></label>
+                <div class="range">
+                  <input type="range" id="bQrSize" min="120" max="800" step="10" aria-label="QR size">
+                  <label class="num"><input type="number" id="bQrSizeNum" min="120" max="800"><i>px</i></label>
+                </div>
+                <input type="text" class="txt" id="bLink" spellcheck="false" placeholder="Any link (empty: your UPI id)" aria-label="QR link">
+                <input type="text" class="txt" id="bCaption" spellcheck="false" placeholder="Words under the QR code" aria-label="QR caption">
+              </div>
+            </div>
+          </section>
+          <section class="pnl" data-tab="content" data-title="My texts" id="pnlTxt" data-frame>
+            <div class="prop" id="brbTxt" hidden>
+              <textarea class="txt" id="bLines" rows="3" spellcheck="false" placeholder="One line per row, e.g. buymeacoffee.com/you" aria-label="Custom texts"></textarea>
+            </div>
+          </section>
+          <section class="pnl" data-tab="content" data-title="Music" id="pnlMusic" data-frame>
+            <div class="prop" id="brbProp" hidden>
+              <div class="stack">
+                <label class="switch"><input type="checkbox" id="shuffle"><span>Shuffle</span></label>
+                <div class="hint" id="brbHint"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="pnl" data-tab="content" data-title="Segments" id="pnlSegs">
+            <div class="prop" id="barProp" hidden>
+              <div class="order" id="barOrder"></div>
+            </div>
+          </section>
+          <section class="pnl" data-tab="content" data-title="Ticker and extras" id="pnlTicker">
+            <div class="prop" id="barProp2" hidden>
+              <div class="stack">
+                <div class="note warn" id="fitNote" hidden>
+                  <span id="fitText"></span>
+                  <button class="btn" id="fitFix" type="button">Scroll like a ticker</button>
+                </div>
+                <label class="switch"><input type="checkbox" id="barAnimate"><span>Animate segments</span></label>
+                <label class="switch"><input type="checkbox" id="barMarquee"><span>Scroll like a ticker</span></label>
+                <div class="range" id="speedRow">
+                  <input type="range" id="barSpeed" min="10" max="300" step="10" aria-label="Ticker speed">
+                  <label class="num"><input type="number" id="barSpeedNum" min="10" max="600"><i>px/s</i></label>
+                </div>
+                <label class="switch"><input type="checkbox" id="barClock"><span>Show the time</span></label>
+                <label class="switch"><input type="checkbox" id="barViewers"><span>Show viewers (sample count)</span></label>
+              </div>
+            </div>
+          </section>
+
+          <section class="pnl" data-tab="content" data-title="Alert sound" id="pnlAlert">
+            <div class="prop" id="alertProp" hidden>
+              <div class="stack">
+                <div class="range">
+                  <input type="range" id="soundVol" min="0" max="100" step="5" aria-label="Volume">
+                  <label class="num"><input type="number" id="soundVolNum" min="0" max="100"><i>%</i></label>
+                </div>
+                <select id="soundFile" aria-label="Alert sound"></select>
+                <div class="hint" id="soundHint"></div>
+              </div>
+              <div class="pair">
+                <button class="btn" id="playAlert" type="button"><span data-icon="play"></span>Play alert</button>
+                <button class="btn" id="playSound" type="button"><span data-icon="speaker"></span>Play sound</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="pnl" data-tab="behave" data-title="Sound" id="pnlSound">
+            <div class="prop" id="muteProp" hidden>
+              <label class="switch"><input type="checkbox" id="soundOn"><span>Play sound</span></label>
+            </div>
+          </section>
+          <section class="pnl" data-tab="behave" data-title="Status bar" id="pnlDock">
+            <div class="prop" id="dockProp">
+              <div class="stack">
+                <label class="switch"><input type="checkbox" id="dock"><span>Show in the status bar</span></label>
+                <label class="switch" id="pinRow"><input type="checkbox" id="pin"><span>Pin: stays put while the rest scroll</span></label>
+              </div>
+            </div>
+          </section>
+          <section class="pnl" data-tab="behave" data-title="Hide while these show" id="pnlHide">
+            <div class="prop">
+              <div class="checks" id="hideList"></div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
   </aside>
 </main>
 <script>
@@ -179,10 +890,125 @@ async function startVideo() {
 }
 $("cams").onchange = () => { store.set("cam", $("cams").value); openCam($("cams").value).catch(() => {}); };
 $("retry").onclick = startVideo;
+$("soundTog").setAttribute("aria-pressed", store.get("sound", "on") !== "off");
+$("soundTog").onclick = () => {
+  const on = $("soundTog").getAttribute("aria-pressed") !== "true";
+  $("soundTog").setAttribute("aria-pressed", on);
+  store.set("sound", on ? "on" : "off");
+  if (on) aftercastSfx.unlock();
+};
 startVideo();
+
+// Going back in the recording (OBS records fragmented mp4: see dvr.js). The bar's whole width is
+// the time since the recording began, up to now. Pale: what the file holds so far (the gap to
+// the right end is how far the recording is behind live). Bright and taller: what the player
+// has loaded. Blue: played up to the thumb. Past the recorded part is live.
+let dvrFromStart = store.get("dvr-from-start", "false") === "true";
+let dvrR = 0, dvrStart = 0, dvrSkew = 0, dvrOn = false, dvrDrag = null;
+const dvrLiveAt = () => (Date.now() + dvrSkew - dvrStart) / 1000;
+const dvrDomain = () => Math.max(dvrR, dvrLiveAt(), 1);
+const dvrShow = (on) => {
+  dvrOn = on;
+  $("dvr").hidden = !on;
+  $("video").style.visibility = on ? "hidden" : "";
+  $("ctl").classList.toggle("on", on);
+  dvrPaint();
+};
+function dvrPaint() {
+  if ($("dvrbar").hidden) return;
+  const D = dvrDomain(), v = $("dvr"), el = $("dvrSeek");
+  const pos = dvrDrag ?? (dvrOn ? v.currentTime : D);
+  const pct = (t) => Math.min(100, Math.max(0, (t / D) * 100)) + "%";
+  el.classList.toggle("live", !dvrOn && dvrDrag === null);
+  el.style.setProperty("--rec", pct(dvrR));
+  el.style.setProperty("--played", pct(Math.min(pos, dvrR)));
+  el.style.setProperty("--thumb", pct(pos));
+  const bufs = el.querySelector(".bufs"), n = dvrOn ? v.buffered.length : 0;
+  while (bufs.children.length < n) bufs.append(document.createElement("b"));
+  [...bufs.children].forEach((b, i) => {
+    b.hidden = i >= n;
+    if (i < n) { b.style.left = pct(v.buffered.start(i)); b.style.width = pct(v.buffered.end(i) - v.buffered.start(i)); }
+  });
+  // Click the time to switch: from the start (played / length), or behind live (negative).
+  $("dvrTime").textContent = dvrFromStart ? `${fmt(pos)} / ${fmt(D)}`
+    : dvrOn || dvrDrag !== null ? "-" + fmt(Math.max(0, D - pos)) : "";
+}
+async function dvrPoll() {
+  let i = null;
+  try { i = await aftercastDvr.index(); } catch { /* no recording yet */ }
+  $("dvrbar").hidden = !i;
+  if (!i) return;
+  dvrR = i.duration;
+  dvrStart = i.started_ms;
+  dvrSkew = i.now_ms - Date.now();
+  dvrPaint();
+}
+setInterval(dvrPoll, 3000);
+setInterval(dvrPaint, 250);
+const dvrTimeAt = (e) => {
+  const r = $("dvrSeek").getBoundingClientRect();
+  // Nothing can be played past what is recorded: that is live.
+  return Math.min(dvrR, Math.max(0, ((e.clientX - r.left) / r.width) * dvrDomain()));
+};
+$("dvrSeek").onpointerdown = (e) => {
+  $("dvrSeek").setPointerCapture(e.pointerId);
+  dvrDrag = dvrTimeAt(e);
+  dvrPaint();
+};
+$("dvrSeek").onpointermove = (e) => {
+  if (dvrDrag !== null) { dvrDrag = dvrTimeAt(e); dvrPaint(); }
+  // Hovering says what the bar is showing under the pointer.
+  const r = $("dvrSeek").getBoundingClientRect(), t = ((e.clientX - r.left) / r.width) * dvrDomain();
+  const v = $("dvr"), at = dvrOn ? v.currentTime : Infinity;
+  let loaded = false;
+  if (dvrOn) for (let i = 0; i < v.buffered.length; i++) loaded ||= t >= v.buffered.start(i) && t <= v.buffered.end(i);
+  $("dvrSeek").title = `${fmt(t)}: ` + (t > dvrR ? `live, ${fmt(Math.max(0, dvrDomain() - dvrR))} not in the recording yet`
+    : t <= at && dvrOn ? "played" : loaded ? "loaded in the player" : "in the recording, not loaded yet");
+};
+$("dvrSeek").onpointerup = async (e) => {
+  if (dvrDrag === null) return;
+  const t = dvrTimeAt(e);
+  dvrDrag = null;
+  // The very end of the recording is live.
+  if (t > dvrR - 1) return $("dvrLive").click();
+  if (dvrOn) $("dvr").currentTime = t;
+  else goDvr(t, false);
+};
+// Plays the recording from `t` (paused, when asked).
+async function goDvr(t, paused) {
+  dvrShow(true);
+  try {
+    await aftercastDvr.open($("dvr"), t, paused);
+    applyVol();
+    $("dvr").playbackRate = speed;
+  } catch { dvrShow(false); }
+}
+$("dvrLive").onclick = () => {
+  aftercastDvr.close();
+  dvrShow(false);
+};
+dvrPoll();
+
 
 // Description, title, chat: polled from the session.
 const seen = new Set();
+let firstPoll = true;
+const ALERT_SKINS = ["dino", "pacman", "moonwalk", "coins", "neon"];
+// The same effects the alert plays in OBS, in this player (it has no audio of the stream).
+async function supportSound() {
+  if (store.get("sound", "on") === "off") return;
+  try {
+    const r = await (await fetch("/rehearse/frames", { cache: "no-store" })).json();
+    if (!r.sound.enabled) return;
+    const skin = r.frames.alert.skin || r.pack;
+    aftercastSfx.volume(r.sound.volume / 100);
+    await aftercastSfx.useSkin(r.sound.skin);
+    await aftercastSfx.useFile(r.frames.alert.sound || "none");
+    aftercastSfx.enabled(true);
+    aftercastSfx.unlock();
+    aftercastSfx.alert(ALERT_SKINS.includes(skin) ? skin : "dino");
+  } catch { /* the sound is a nicety */ }
+}
 let liveSince = null, skew = 0;
 function fmt(sec) {
   sec = Math.max(0, Math.floor(sec));
@@ -193,46 +1019,54 @@ function descHtml(text) {
   const esc = text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   return esc.replace(/^((?:\d+:)?\d{1,2}:\d{2})/gm, '<span class="ts">$1</span>');
 }
+const TIERS = [[50, "#2f6fd0"], [100, "#1f9bb5"], [200, "#1f9b7f"], [500, "#b98a22"], [1000, "#c8692a"], [2000, "#c04264"], [5000, "#b83a3a"]];
+const tierColor = (amount) => {
+  const n = parseFloat(String(amount).replace(/[^0-9.]/g, "")) || 0;
+  return (TIERS.filter((t) => n >= t[0]).pop() || TIERS[0])[1];
+};
+const mk = (tag, cls, text) => { const e = document.createElement(tag); e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 function addMsg(m) {
   const box = $("msgs");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   const el = document.createElement("div");
   const role = m.owner ? "owner" : m.moderator ? "moderator" : m.member ? "member" : "viewer";
+  const initial = [...(m.author || "?")][0];
   if (m.superchat) {
     el.className = "sc";
-    const top = document.createElement("div");
-    top.className = "top";
-    top.textContent = m.author;
-    const amt = document.createElement("span");
-    amt.textContent = m.amount || "";
-    top.append(amt);
-    const body = document.createElement("div");
-    body.className = "body";
-    body.textContent = m.text;
-    el.append(top, body);
+    el.style.setProperty("--sc", tierColor(m.amount));
+    const who = document.createElement("div");
+    who.append(mk("b", "", m.author), mk("small", "", m.amount || ""));
+    const head = mk("div", "sc-top");
+    head.append(mk("span", "av", initial), who);
+    el.append(head, mk("div", "body", m.text));
   } else {
     el.className = "msg " + role;
-    const who = document.createElement("span");
-    who.className = "who";
-    who.textContent = m.author;
-    if (m.moderator) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "🔧"; el.append(b); }
-    if (m.member) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "★"; el.append(b); }
-    el.append(who, document.createTextNode(m.text));
+    const line = document.createElement("div");
+    if (m.owner) line.append(mk("span", "badge", "Owner"));
+    if (m.moderator) line.append(mk("span", "badge", "Mod"));
+    if (m.member) line.append(mk("span", "badge", "Member"));
+    line.append(mk("span", "who", m.author), document.createTextNode(m.text));
+    el.append(mk("span", "av", initial), line);
   }
   box.append(el);
   if (atBottom) box.scrollTop = box.scrollHeight;
+  if (m.superchat && !firstPoll) supportSound();
 }
 async function poll() {
   try {
     const f = await (await fetch("/rehearse/feed", { cache: "no-store" })).json();
     $("title").textContent = f.title;
     document.title = f.title + " · aftercast rehearse";
-    $("desc").innerHTML = descHtml(f.description || "(no description pushed yet)");
+    const text = f.description || "(no description pushed yet)";
+    if (text !== shownDesc) { shownDesc = text; $("desc").innerHTML = descHtml(text); fitDesc(); }
     $("draft").hidden = !f.draft;
     $("scene").textContent = f.scene ? "scene: " + f.scene : "";
+    programScene = f.scene;
+    onObs(f.obs);
     liveSince = f.live_since ? Date.parse(f.live_since) : null;
     skew = Date.parse(f.now) - Date.now();
     for (const m of f.chat) if (!seen.has(m.id)) { seen.add(m.id); addMsg(m); }
+    firstPoll = false;
     $("err").textContent = "";
   } catch (e) {
     $("err").textContent = "aftercast is not answering (rehearse ended?)";
@@ -242,11 +1076,60 @@ setInterval(poll, 700);
 poll();
 setInterval(() => {
   $("elapsed").textContent = liveSince ? fmt((Date.now() + skew - liveSince) / 1000) : "";
+  $("descStats").innerHTML = liveSince
+    ? `Started streaming ${agoText((Date.now() + skew - liveSince) / 1000)} <span>${$("scene").textContent}</span>`
+    : "<span>Not live yet</span>";
 }, 500);
-$("more").onclick = () => {
-  const short = $("desc").classList.toggle("short");
-  $("more").textContent = short ? "Show more" : "Show less";
+// A description of three lines or fewer needs no button; a longer one starts collapsed.
+let shownDesc = null, descOpen = false;
+function fitDesc() {
+  const box = $("descBox");
+  box.classList.remove("short");
+  const long = $("desc").getBoundingClientRect().height > 61;
+  $("more").hidden = !long;
+  box.classList.toggle("short", long && !descOpen);
+  $("more").textContent = descOpen ? "Show less" : "more";
+  placeMore();
+}
+// "more" goes right after where the third line ends, with the end of that line fading into it.
+function placeMore() {
+  const box = $("descBox");
+  if (!box.classList.contains("short")) return;
+  const t = $("desc").getBoundingClientRect(), b = box.getBoundingClientRect();
+  const x = t.right - 72;
+  // The right edge of the text on the third line, read from the text's own line boxes (not
+  // from a point on the screen, which finds nothing while the page is scrolled or hidden).
+  const rg = document.createRange();
+  rg.selectNodeContents($("desc"));
+  const third = [...rg.getClientRects()].filter((r) => r.width && r.top > t.top + 36 && r.top < t.top + 60);
+  const end = third.length ? Math.min(Math.max(...third.map((r) => r.right)), x) : t.left;
+  const top = t.top - b.top + 40;
+  $("more").style.left = end - b.left + 6 + "px";
+  $("more").style.top = top + "px";
+  $("descFade").style.left = Math.max(t.left, end) - b.left - 40 + "px";
+  $("descFade").style.top = top + "px";
+}
+addEventListener("resize", placeMore);
+// The text moves when the web font arrives or the block changes size: place it again then.
+let descW = 0;
+new ResizeObserver(() => {
+  const w = $("descBox").clientWidth;
+  if (w && w !== descW) { descW = w; fitDesc(); } else placeMore();
+}).observe($("descBox"));
+document.addEventListener("visibilitychange", () => { if (!document.hidden) fitDesc(); });
+document.fonts?.ready.then(fitDesc);
+$("descBox").onclick = (e) => {
+  // Collapsed: anywhere opens it. Open: only Show less closes it (the text stays selectable).
+  if (!$("descBox").classList.contains("short") && e.target !== $("more")) return;
+  descOpen = !descOpen;
+  fitDesc();
 };
+// The stats line, in YouTube's words for a live stream.
+function agoText(sec) {
+  const m = Math.floor(sec / 60), h = Math.floor(m / 60);
+  if (m < 1) return "just now";
+  return h >= 1 ? `${h} hour${h > 1 ? "s" : ""} ago` : `${m} minute${m > 1 ? "s" : ""} ago`;
+}
 
 // Composer: the name is remembered per role.
 const defaults = { viewer: "viewer", member: "member", moderator: "mod", owner: "you" };
@@ -255,7 +1138,31 @@ $("role").value = store.get("role", "viewer");
 loadName();
 $("role").onchange = () => { store.set("role", $("role").value); loadName(); };
 $("name").oninput = () => store.set("name-" + $("role").value, $("name").value);
-$("sc").onchange = () => { $("amount").hidden = !$("sc").checked; };
+// Super Chat: pick a tier, it shows above the field until sent or removed.
+let sc = null;
+function setSc(amount) {
+  sc = amount;
+  $("scBtn").setAttribute("aria-pressed", !!sc);
+  $("chosen").hidden = !sc;
+  if (sc) { $("chosenText").textContent = "Super Chat " + sc; $("chosen").style.setProperty("--c", tierColor(sc)); }
+  for (const t of $("tierGrid").children) t.setAttribute("aria-pressed", t.dataset.a === sc);
+}
+for (const [n, c] of TIERS) {
+  const a = "₹" + n + ".00", b = mk("button", "tier", "₹" + n);
+  b.type = "button"; b.dataset.a = a; b.style.setProperty("--c", c);
+  b.onclick = () => { $("amount").value = ""; setSc(sc === a ? null : a); $("tiers").hidden = true; $("text").focus(); };
+  $("tierGrid").append(b);
+}
+$("scBtn").onclick = () => { $("tiers").hidden = !$("tiers").hidden; };
+$("scClear").onclick = () => setSc(null);
+$("amount").onkeydown = (e) => {
+  if (e.key !== "Enter") return;
+  e.preventDefault();
+  const v = $("amount").value.trim();
+  if (v) { setSc(v.startsWith("₹") ? v : "₹" + v); $("tiers").hidden = true; $("text").focus(); }
+};
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#tiers, #scBtn")) $("tiers").hidden = true; });
+$("text").oninput = () => $("field").classList.toggle("ready", !!$("text").value.trim());
 for (const b of $("chips").querySelectorAll("button")) {
   b.onclick = () => { $("text").value = b.dataset.t; $("text").focus(); };
 }
@@ -264,12 +1171,1759 @@ $("form").onsubmit = async (e) => {
   const text = $("text").value.trim();
   if (!text) return;
   const body = { author: $("name").value.trim() || defaults[$("role").value], role: $("role").value, text,
-                 amount: $("sc").checked ? ($("amount").value.trim() || "₹100.00") : null };
+                 amount: sc };
   const r = await fetch("/rehearse/chat", { method: "POST", headers: { "content-type": "application/json" },
                                               body: JSON.stringify(body) }).catch(() => null);
-  if (r && r.ok) { $("text").value = ""; poll(); }
+  if (r && r.ok) { $("text").value = ""; $("field").classList.remove("ready"); setSc(null); poll(); }
   else $("err").textContent = r ? await r.text() : "aftercast is not answering";
 };
+
+// Overlay editor. Every overlay page plays sample content over the video, each in its
+// frame. Changes show at once; each finished change is saved to aftercast.toml, which
+// reloads the config: OBS restyles (and restacks), the TUI shows the new values.
+const ICONS = {
+  move: '<path d="M12 2v20M2 12h20"/><path d="m9 5 3-3 3 3M9 19l3 3 3-3M5 9l-3 3 3 3M19 9l3 3-3 3"/>',
+  look: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+  tri: '<path d="M7 4.5v15l12-7.5z"/>',
+  pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
+  mute: '<path d="M11 5 6 9H2v6h4l5 4Z"/><path d="m22 9-6 6M16 9l6 6"/>',
+  full: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  exitfull: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+  mini: '<rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+  pen: '<path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4Z"/>',
+  layers: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/>',
+  grip: '<circle cx="9" cy="6" r=".6"/><circle cx="15" cy="6" r=".6"/><circle cx="9" cy="12" r=".6"/><circle cx="15" cy="12" r=".6"/><circle cx="9" cy="18" r=".6"/><circle cx="15" cy="18" r=".6"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff: '<path d="M9.9 4.2A9 9 0 0 1 12 4c6.5 0 10 7 10 7a13 13 0 0 1-1.7 2.7"/><path d="M6.6 6.6A13.5 13.5 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="m2 2 20 20"/><path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+  message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  bookmark: '<path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+  captions: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/>',
+  coffee: '<path d="M17 8h1a4 4 0 1 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/><path d="M6 2v2M10 2v2M14 2v2"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  play: '<circle cx="12" cy="12" r="9"/><path d="m10 8.5 5.5 3.5-5.5 3.5z"/>',
+  reset: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
+  rotate: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+  scale: '<path d="M21 3 9 15"/><path d="M12 3H3v18h18v-9"/><path d="M16 3h5v5"/><path d="M14 15H9v-5"/>',
+  video: '<path d="m22 8-6 4 6 4V8Z"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+  magnet: '<path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3L6 15"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  unlock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+  link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L11.5 6.8"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1.5-1.5"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  speaker: '<path d="M11 5 6 9H2v6h4l5 4Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>',
+  bar: '<rect x="2" y="15" width="20" height="6" rx="1.5"/><path d="M6 18h3M13 18h5"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  coin: '<circle cx="12" cy="12" r="9"/><path d="M15 9.5C14.5 8.5 13.4 8 12 8c-1.7 0-3 .8-3 2.2 0 3 6 1.5 6 4.3 0 1.3-1.3 2.2-3 2.2-1.5 0-2.6-.6-3.1-1.7M12 6v2M12 16v2"/>',
+  "al-left": '<path d="M4 3v18"/><rect x="8" y="6" width="12" height="4" rx="1"/><rect x="8" y="14" width="7" height="4" rx="1"/>',
+  "al-hcenter": '<path d="M12 3v18"/><rect x="5" y="6" width="14" height="4" rx="1"/><rect x="8" y="14" width="8" height="4" rx="1"/>',
+  "al-right": '<path d="M20 3v18"/><rect x="4" y="6" width="12" height="4" rx="1"/><rect x="9" y="14" width="7" height="4" rx="1"/>',
+  "al-top": '<path d="M3 4h18"/><rect x="6" y="8" width="4" height="12" rx="1"/><rect x="14" y="8" width="4" height="7" rx="1"/>',
+  "al-vcenter": '<path d="M3 12h18"/><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="8" width="4" height="8" rx="1"/>',
+  "al-bottom": '<path d="M3 20h18"/><rect x="6" y="4" width="4" height="12" rx="1"/><rect x="14" y="9" width="4" height="7" rx="1"/>',
+  "tx-left": '<path d="M4 6h16M4 12h10M4 18h13"/>',
+  "tx-center": '<path d="M4 6h16M7 12h10M5.5 18h13"/>',
+  "tx-right": '<path d="M4 6h16M10 12h10M7 18h13"/>',
+};
+const svg = (name) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+for (const e of document.querySelectorAll("[data-icon]")) e.insertAdjacentHTML("afterbegin", svg(e.dataset.icon));
+
+const META = {
+  keys: ["Keys", "keyboard"], question: ["Question", "message"], now: ["Now", "clock"], toast: ["Toast", "bell"],
+  chapters: ["Chapters", "bookmark"], captions: ["Captions", "captions"], brb: ["BRB", "coffee"],
+  latency: ["Latency", "activity"], starting: ["Starting", "play"], status: ["Status bar", "bar"], alert: ["Alert", "sparkle"],
+};
+const LIMITS = { x: [-1920, 3840], y: [-1080, 2160], width: [20, 3840], height: [20, 2160],
+                 size: [10, 400], rotate: [-180, 180], opacity: [0, 100] };
+const clamp = (f, v) => Math.min(LIMITS[f][1], Math.max(LIMITS[f][0], Math.round(v) || 0));
+const FLEX = { left: "flex-start", center: "center", right: "flex-end" };
+const RAD = Math.PI / 180;
+const player = document.querySelector(".player");
+// With OBS connected the layers are OBS's: each scene lists the overlay sources it has, and
+// the eye shows or hides that source in OBS (`obsInfo`, from the feed). Without OBS (a mock
+// run) every overlay is a layer and the eye only hides it in this preview, per scene: the
+// main scene shows all but BRB, latency and the starting screen; the others their own.
+// The virtual scene is not in OBS: every overlay, on a flat color, to edit them all at once.
+// Its eye only hides an overlay in this preview.
+const VIRTUAL = "Virtual scene";
+let obsInfo = null, programScene = null;
+const live = () => obsInfo && scene !== VIRTUAL;
+// Modes imitate what the stream does: BRB shows the BRB overlay, privacy hides keys and captions.
+// In the virtual scene (and without OBS) they decide what the preview shows; in OBS's own scenes
+// a mode just jumps to the matching scene.
+const MODES = ["normal", "brb", "privacy"];
+let mode = store.get("mode", "normal");
+// The BRB and starting screens are always shown here (their clocks start with their mode).
+const modeHides = (n) => ({ normal: [], brb: [], privacy: ["keys", "captions"] }[mode].includes(n));
+const addrOf = (n) => `${location.origin}/overlay/${n}`;
+const hidden = new Set();
+let scenes = [], scene = null;
+const hiddenBy = JSON.parse(store.get("hidden-by-scene", "{}"));
+const SHOWN = [null, ["brb"], [], ["starting"], ["starting"]];
+const DOCKABLE = ["now", "brb", "latency", "chapters", "toast"];
+// Editing that means nothing for an overlay is left out: the starting screen and the alert draw
+// their own picture (no card color, no alignment), the bar fills its width.
+// Overlays that play sound (the alert's file, the BRB's music): each can be muted.
+const SOUNDING = ["alert", "brb"];
+const NO = { starting: ["align", "bg"], alert: ["bg"], status: ["align"], brb: ["align", "bg"] };
+// Layers that cannot be picked on the canvas (as in Canva), so what is beneath is easy to reach.
+const locked = new Set(JSON.parse(store.get("locked-layers", "[]")));
+const defaultHidden = (i) => SHOWN[i] ? order.filter((n) => !SHOWN[i].includes(n)) : ["latency"];
+// The overlay's place in the scene being edited: its OBS source, or in a preview just whether
+// its eye is open; null when the scene does not have it.
+const here = (n) => live()
+  ? obsInfo.overlays.find((o) => o.scene === scene && o.overlay === n) || null
+  : { enabled: !hidden.has(n) };
+const frames = {}, hits = {}, rows = {};
+let F = null, order = [], themeBg = "#303030", selected = null, editing = false;
+let pack = "nvim", skins = {}, packs = [];
+let soundFiles = [], brbTracks = 0;
+let BRB = { pfp: true, pfp_shape: "circle", pfp_size: 260, qr: true, qr_size: 420, qr_link: "", qr_caption: "", text: [] };
+let OPT = { bar: { order: [], animate: true, marquee: false, speed: 60, extras: [] }, sound: { enabled: true, volume: 70 } };
+let k = 1; // screen pixels per canvas pixel
+const committed = {}, history = [];
+
+const rgbOf = (hex) => {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex || "");
+  if (!m) return null;
+  const h = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+};
+const toHex = (c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("").toUpperCase();
+// The visible box on the canvas: top left, scaled size, center.
+const geo = (f) => {
+  const w = f.width * f.size / 100, h = f.height * f.size / 100;
+  return { x: f.x, y: f.y, w, h, cx: f.x + w / 2, cy: f.y + h / 2 };
+};
+const place = (node, f) => {
+  const g = geo(f);
+  Object.assign(node.style, { left: g.x + "px", top: g.y + "px", width: g.w + "px", height: g.h + "px",
+                              transform: `rotate(${f.rotate}deg)` });
+};
+
+// Sizes: the player as large as the space allows, the canvas scaled into it.
+// Editing: the video hangs from the top bar, as wide as the column while the space under
+// it (for skins) keeps at least a third of the height.
+function fitPlayer() {
+  if (!editing) { player.style.width = ""; return; }
+  const sec = player.parentElement;
+  player.style.width = Math.max(240, Math.min(sec.clientWidth, sec.clientHeight * 2 / 3 * 16 / 9)) + "px";
+}
+function fit() {
+  k = $("stage").clientWidth / 1920 || 1;
+  $("canvas").style.transform = `scale(${k})`;
+  $("canvas").style.setProperty("--k", 1 / k);
+}
+new ResizeObserver(fit).observe($("stage"));
+new ResizeObserver(fitPlayer).observe(player.parentElement);
+
+// Drawing one overlay: its page's vars, its hit box, the selection and the panels.
+function apply(n) {
+  const f = F[n], body = frames[n].contentDocument && frames[n].contentDocument.body;
+  if (body) {
+    const c = rgbOf(f.bg || themeBg);
+    const vars = { "--x": f.x + "px", "--y": f.y + "px", "--w": f.width + "px", "--h": f.height + "px",
+                   "--s": f.size / 100, "--r": f.rotate + "deg", "--align": FLEX[f.align], "--text-align": f.align,
+                   "--bg": c ? `rgb(${c.join(" ")} / ${f.opacity}%)` : f.bg || themeBg,
+                   "--bg-solid": c ? `rgb(${c.join(" ")})` : f.bg || themeBg, "--skin": wearing(n),
+                   "--hide": F[n].hide_when.join(" ") || "none", "--mute": +F[n].mute,
+                   "--sound-file": F[n].sound || "none", "--shuffle": +F[n].shuffle };
+    for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
+    frames[n].contentWindow.aftercastSkin?.();
+  }
+  syncDock();
+  place(hits[n], f);
+  if (rows[n]) paintHidden(n);
+  if (n === selected) inspect();
+}
+// Every page reads which overlays are docked from its own body.
+// The bar's order as saved, with the dockable overlays it does not name added at the end.
+const fullOrder = () => [...OPT.bar.order, ...DOCKABLE.filter((n) => !OPT.bar.order.includes(n))];
+const SEG_SKINS = ["nvim", "clean", "broadcast", "glass", "minimal"];
+// The look of an overlay's segment in the bar: its skin (the default one when it has none).
+// `segHover` shows a skin under the pointer without wearing it.
+let segHover = null;
+const segSkin = (n) => {
+  const s = segHover && segHover.n === n ? segHover.s : F[n].skin || pack;
+  return SEG_SKINS.includes(s) ? s : "nvim";
+};
+// Whether an overlay shows right now in the scene being edited (its eye, and the mode).
+const shownHere = (n) => {
+  const h = here(n);
+  const imitating = scene === VIRTUAL || !obsInfo;
+  return (h ? h.enabled : true) && !(imitating && modeHides(n)) || (imitating && mode === "brb" && n === "brb");
+};
+function syncDock() {
+  const docked = order.filter((n) => F[n].dock).join(" ") || "none";
+  const hiddenDocked = order.filter((n) => F[n].dock && !shownHere(n)).join(" ") || "none";
+  const segSkins = DOCKABLE.map((n) => `${n}=${segSkin(n)}`).join(" ");
+  for (const n of order) {
+    const win = frames[n].contentWindow, body = frames[n].contentDocument && frames[n].contentDocument.body;
+    if (!body) continue;
+    body.style.setProperty("--docked", docked);
+    body.style.setProperty("--bar-hidden", hiddenDocked);
+    body.style.setProperty("--seg-skins", segSkins);
+    for (const [v, val] of Object.entries({ "--bar-order": fullOrder().join(" "), "--bar-animate": +OPT.bar.animate,
+        "--bar-marquee": +OPT.bar.marquee, "--bar-speed": OPT.bar.speed, "--sound": +OPT.sound.enabled,
+        "--volume": OPT.sound.volume, "--sound-skin": OPT.sound.skin,
+        "--bar-extras": OPT.bar.extras.join(" ") || "none",
+        "--seg-pins": DOCKABLE.map((n) => `${n}=${+F[n].pin}`).join(" "),
+        "--seg-aligns": DOCKABLE.map((n) => `${n}=${F[n].align}`).join(" "),
+        "--seg-opacities": DOCKABLE.map((n) => `${n}=${F[n].opacity}`).join(" ") })) body.style.setProperty(v, val);
+    win.aftercastRefresh?.();
+  }
+  liveSound();
+}
+const CURSORS = ["ns-resize", "nesw-resize", "ew-resize", "nwse-resize"];
+const ANGLE = { n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315 };
+function inspect() {
+  const has = selected !== null;
+  $("bar").classList.toggle("empty", !has);
+  $("selection").hidden = !has || F[selected].dock;
+  $("noSel").hidden = has;
+  $("props").hidden = !has;
+  $("resetFrame").hidden = !has;
+  $("insName").textContent = has ? META[selected][0] : "Style";
+  $("insIcon").innerHTML = has ? svg(META[selected][1]) : "";
+  for (const n of order) hits[n].classList.toggle("sel", n === selected);
+  for (const n of order) rows[n].row.classList.toggle("sel", n === selected);
+  if (!has) { $("dockedNote").hidden = true; return; }
+  const f = F[selected];
+  place($("selection"), f);
+  // Resize cursors follow the rotation.
+  for (const h of $("selection").querySelectorAll(".h")) {
+    h.style.cursor = CURSORS[Math.round((((ANGLE[h.dataset.h] + f.rotate) % 180) + 180) % 180 / 45) % 4];
+  }
+  for (const input of document.querySelectorAll("#bar [data-f]")) {
+    if (document.activeElement !== input) input.value = f[input.dataset.f];
+  }
+  for (const b of $("align").children) b.setAttribute("aria-pressed", b.dataset.a === f.align);
+  const c = rgbOf(f.bg || themeBg);
+  $("swatchFill").style.background = c ? `rgb(${c.join(" ")} / ${f.opacity}%)` : f.bg || themeBg;
+  if (c) $("bgColor").value = toHex(c).toLowerCase();
+  if (document.activeElement !== $("bgHex")) $("bgHex").value = c ? toHex(c) : f.bg || themeBg;
+  $("bgTag").hidden = !!f.bg;
+  $("bgTheme").hidden = !f.bg;
+  $("barProp").hidden = $("barProp2").hidden = selected !== "status";
+  $("alertProp").hidden = selected !== "alert";
+  $("muteProp").hidden = !SOUNDING.includes(selected);
+  $("brbProp").hidden = selected !== "brb";
+  for (const id of ["brbArrange", "brbPic", "brbQr", "brbTxt"]) $(id).hidden = selected !== "brb";
+  if (selected === "brb") {
+    drawBrbScreen();
+    $("shuffle").checked = f.shuffle;
+    // Play sound off: no playlist, and so no cover art or bars.
+    $("brbProp").classList.toggle("off", !!f.mute);
+    $("brbHint").textContent = f.mute
+      ? "Play sound is off, so there is no playlist, cover art or bars."
+      : brbTracks
+        ? `Plays all ${brbTracks} files in overlays/sounds/brb. Cover art: the file's own, or cover.jpg in that folder.`
+        : "Put audio files in overlays/sounds/brb and they play here.";
+  }
+  $("soundOn").checked = !f.mute;
+  if (selected === "status") drawBarProps();
+  if (selected === "alert") {
+    $("soundVol").value = $("soundVolNum").value = OPT.sound.volume;
+    // Every audio file found, to pick one; none picked: by the animation's name.
+    const files = [...new Set([f.sound, ...soundFiles])].filter(Boolean);
+    $("soundFile").replaceChildren(new Option(files.length ? "By animation name" : "No audio files found", ""),
+      ...files.map((n) => new Option(soundFiles.includes(n) ? n.replace("/", " / ") : `${n} (missing)`, n)));
+    $("soundFile").value = f.sound || "";
+    $("soundHint").textContent = soundFiles.length ? "" : "Put audio files in a folder inside overlays/sounds.";
+    $("soundVol").style.setProperty("--fill", OPT.sound.volume + "%");
+  }
+  const no = NO[selected] || [];
+  const docked = f.dock;
+  $("alignProp").hidden = no.includes("align");
+  $("bgProp").hidden = no.includes("bg");
+  $("bgProp").classList.toggle("off", docked);
+  $("bar").classList.toggle("docked", docked);
+  $("posHint").textContent = docked ? "In the bar: left, center or right of it." : "";
+  $("opProp").hidden = no.includes("bg");
+  // In the status bar Position places the segment inside the bar: left, center or right.
+  for (const b of document.querySelectorAll("[data-align=top],[data-align=vcenter],[data-align=bottom]")) b.hidden = docked;
+  $("dockProp").hidden = !DOCKABLE.includes(selected);
+  $("dock").checked = f.dock;
+  $("pinRow").hidden = !f.dock;
+  $("pin").checked = f.pin;
+  layoutPanels();
+  $("hideList").replaceChildren(...order.filter((n) => n !== selected).map((n) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "check";
+    b.innerHTML = `<span class="box">${svg("check")}</span>${svg(META[n][1])}<span>${META[n][0]}</span>`;
+    b.setAttribute("aria-pressed", f.hide_when.includes(n));
+    b.onclick = () => {
+      const w = F[selected].hide_when;
+      w.includes(n) ? w.splice(w.indexOf(n), 1) : w.push(n);
+      apply(selected);
+      commit(selected);
+    };
+    return b;
+  }));
+  if (document.activeElement !== $("opNum")) $("opNum").value = f.opacity;
+  $("opRange").value = f.opacity;
+  $("opRange").style.setProperty("--fill", f.opacity + "%");
+}
+
+// Panels and tabs. Panels are built from the markup (a header over a body); a panel shows when
+// one of its rows does, a tab when one of its panels does.
+const TABS = ["layout", "look", "content", "behave"];
+let curTab = store.get("ins-tab", "layout");
+for (const p of document.querySelectorAll(".pnl")) {
+  const body = document.createElement("div");
+  body.className = "pnl-b";
+  body.append(...p.childNodes);
+  const h = document.createElement("button");
+  h.type = "button";
+  h.className = "pnl-h";
+  h.innerHTML = `<span class="chev">${svg("down")}</span><span>${p.dataset.title}</span><span class="why"></span>`;
+  h.onclick = () => { p.classList.toggle("shut"); store.set("pnl-" + p.id, p.classList.contains("shut") ? "1" : "0"); };
+  if (store.get("pnl-" + p.id, "0") === "1") p.classList.add("shut");
+  p.append(h, body);
+}
+for (const t of $("tabs").children) t.onclick = () => { curTab = t.dataset.tab; store.set("ins-tab", curTab); layoutPanels(); };
+function layoutPanels() {
+  const docked = selected !== null && F[selected].dock;
+  const seen = {};
+  for (const p of document.querySelectorAll(".pnl")) {
+    const on = [...p.querySelectorAll(":scope > .pnl-b > .prop")].some((x) => !x.hidden);
+    p.hidden = !on;
+    // What needs the overlay's own space on the canvas is off while it sits in the status bar.
+    const off = docked && p.hasAttribute("data-frame");
+    p.classList.toggle("off", off);
+    p.querySelector(".why").textContent = off ? "in status bar" : "";
+    if (on) seen[p.dataset.tab] = true;
+  }
+  if (!seen[curTab]) curTab = TABS.find((t) => seen[t]) || "layout";
+  for (const t of $("tabs").children) {
+    t.hidden = !seen[t.dataset.tab];
+    t.setAttribute("aria-pressed", t.dataset.tab === curTab);
+  }
+  for (const p of document.querySelectorAll(".pnl")) p.classList.toggle("other", p.dataset.tab !== curTab);
+  $("dockedNote").hidden = !docked;
+}
+$("undock").onclick = () => { $("dock").checked = false; $("dock").dispatchEvent(new Event("change")); };
+// The status bar says when its segments do not fit: the ticker shows them all.
+let barFit = { overflow: false };
+window.aftercastBarFit = (i) => {
+  const was = barFit.overflow;
+  barFit = i;
+  drawFitNote();
+  if (i.overflow && !was && !OPT.bar.marquee) flash("The status bar is full: the ticker can show everything");
+};
+function drawFitNote() {
+  const show = barFit.overflow && !OPT.bar.marquee;
+  $("fitNote").hidden = !show;
+  if (show) $("fitText").textContent = `The segments need ${Math.round((barFit.need / barFit.have) * 100)}% of the bar's width, so some are cut off. The ticker scrolls them all past.`;
+}
+$("fitFix").onclick = () => { $("barMarquee").checked = true; $("barMarquee").onchange(); };
+
+// A short message where "Saved" shows.
+let flashing = null;
+function flash(text) {
+  const el = $("saved");
+  el.classList.remove("bad");
+  el.textContent = text;
+  clearTimeout(flashing);
+  flashing = setTimeout(() => status("ok"), 1600);
+}
+async function copyAddr(n) {
+  try {
+    await navigator.clipboard.writeText(addrOf(n));
+  } catch {
+    const t = document.createElement("textarea");
+    t.value = addrOf(n);
+    document.body.append(t);
+    t.select();
+    document.execCommand("copy");
+    t.remove();
+  }
+  flash("Address copied");
+}
+// Right-click on a layer: copy its address, or add it to any OBS scene as a Browser source
+// the size of the canvas.
+let ctx = null;
+const closeCtx = () => { ctx?.remove(); ctx = null; };
+function openCtx(e, n) {
+  e.preventDefault();
+  closeCtx();
+  const m = document.createElement("div");
+  m.className = "ctx";
+  const add = (tag, cls, html) => { const x = document.createElement(tag); if (cls) x.className = cls; if (html) x.innerHTML = html; m.append(x); return x; };
+  add("div", "head", `${META[n][0]} overlay`);
+  add("button", "", `${svg("copy")}Copy the address`).onclick = () => { closeCtx(); copyAddr(n); };
+  add("button", "", `${svg(locked.has(n) ? "unlock" : "lock")}${locked.has(n) ? "Unlock" : "Lock"}`).onclick = () => { closeCtx(); setLocked(n, !locked.has(n)); };
+  add("hr");
+  add("div", "head", "Add to an OBS scene");
+  if (!obsInfo) add("div", "note", "OBS is not connected.");
+  else {
+    for (const sc of obsInfo.scenes) {
+      const has = obsInfo.overlays.some((o) => o.scene === sc && o.overlay === n);
+      const b = add("button", "", `${svg(has ? "check" : "plus")}<span>${sc}</span>${has ? "<em>already there</em>" : ""}`);
+      b.disabled = has;
+      b.onclick = () => {
+        closeCtx();
+        post("/rehearse/add-source", { scene: sc, overlay: n });
+        flash(`Added to ${sc}`);
+      };
+    }
+  }
+  document.body.append(m);
+  m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + "px";
+  m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + "px";
+  ctx = m;
+}
+document.addEventListener("pointerdown", (e) => { if (ctx && !ctx.contains(e.target)) closeCtx(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeCtx(); });
+addEventListener("blur", closeCtx);
+// Only the selected overlay plays its sound (on repeat, as its sample does), so the editor is
+// not a pile of noise.
+let edSound = store.get("ed-sound", "on") !== "off";
+function liveSound() {
+  for (const n of order) frames[n]?.contentWindow?.aftercastLive?.(edSound && n === selected && editing);
+}
+// Number fields: the arrow keys (Shift for 10) and a stepper on the right.
+function stepper(label) {
+  const input = label.querySelector("input[type=number]");
+  if (!input || label.querySelector(".step")) return;
+  const limits = () => {
+    const f = input.dataset.f;
+    const [lo, hi] = f && LIMITS[f] ? LIMITS[f] : [Number(input.min), Number(input.max)];
+    return [Number.isFinite(lo) ? lo : -1e9, Number.isFinite(hi) ? hi : 1e9];
+  };
+  const bump = (dir, big, done = true) => {
+    const [lo, hi] = limits();
+    input.value = Math.min(hi, Math.max(lo, (input.valueAsNumber || 0) + dir * (big ? 10 : 1)));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    if (done) input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    bump(e.key === "ArrowUp" ? 1 : -1, e.shiftKey);
+  });
+  const box = document.createElement("span");
+  box.className = "step";
+  for (const [dir, icon] of [[1, "up"], [-1, "down"]]) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.tabIndex = -1;
+    b.title = dir > 0 ? "Up (Shift: 10)" : "Down (Shift: 10)";
+    b.innerHTML = svg(icon);
+    // Held: repeats; the change is saved once on release.
+    b.onpointerdown = (e) => {
+      e.preventDefault();
+      bump(dir, e.shiftKey, false);
+      let t = setTimeout(() => { t = setInterval(() => bump(dir, e.shiftKey, false), 55); }, 380);
+      const up = () => {
+        clearTimeout(t);
+        clearInterval(t);
+        removeEventListener("pointerup", up);
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      };
+      addEventListener("pointerup", up);
+    };
+    box.append(b);
+  }
+  label.append(box);
+}
+document.querySelectorAll(".num").forEach(stepper);
+$("edSound").setAttribute("aria-pressed", edSound);
+$("edSound").onclick = () => {
+  edSound = !edSound;
+  $("edSound").setAttribute("aria-pressed", edSound);
+  store.set("ed-sound", edSound ? "on" : "off");
+  liveSound();
+};
+
+// A click on the empty space around the video, or beside the layers, deselects.
+document.addEventListener("pointerdown", (e) => {
+  if (!editing || selected === null) return;
+  if (e.target.closest(".player, .inspector, .skins, .top, .ctx, .layer, .modes, .scene, select, input, button, label")) return;
+  select(null);
+});
+
+// Saving, with one undo step per finished change.
+function status(state, text) {
+  const el = $("saved");
+  el.classList.toggle("bad", state === "bad");
+  el.innerHTML = state === "ok" ? svg("check") + "Saved" : "";
+  if (state !== "ok") el.textContent = text;
+}
+async function post(url, body) {
+  status("busy", "Saving…");
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" },
+                               body: JSON.stringify(body) }).catch(() => null);
+  if (r && r.ok) status("ok");
+  else status("bad", "Not saved: " + (r ? await r.text() : "aftercast is not answering"));
+}
+// A frame's position and look are kept per skin: F[n] is the overlay's own frame with what
+// the worn skin changes laid over it (BASE and SKINMAP are what the config has).
+const GEOM = ["x", "y", "width", "height", "size", "rotate", "align", "bg", "opacity"];
+const BASE = {}, SKINMAP = {};
+const pickGeom = (f) => Object.fromEntries(GEOM.map((k) => [k, f[k]]));
+const geomFor = (n, skin) => ({ ...BASE[n], ...(SKINMAP[n][skin] || {}) });
+function ingest(n, frame) {
+  F[n] = frame;
+  BASE[n] = pickGeom(frame);
+  SKINMAP[n] = frame.skins || {};
+  Object.assign(F[n], geomFor(n, wearing(n)));
+}
+// Saved as the worn skin's changes, so the other skins keep their own.
+const saveFrame = (n) => {
+  const skin = wearing(n);
+  SKINMAP[n][skin] = pickGeom(F[n]);
+  return post("/rehearse/frames", { name: n, ...F[n], for_skin: skin });
+};
+const saveOrder = () => post("/rehearse/order", { order });
+function commit(n) {
+  const now = JSON.stringify(F[n]);
+  if (committed[n] === now) return;
+  history.push({ n, before: committed[n] });
+  committed[n] = now;
+  $("undo").disabled = false;
+  saveFrame(n);
+}
+let soon = null;
+const commitSoon = (n) => { clearTimeout(soon); soon = setTimeout(() => commit(n), 400); };
+function undo() {
+  const step = history.pop();
+  $("undo").disabled = !history.length;
+  if (!step) return;
+  if (step.pack) return setPack(step.pack);
+  if (step.order) {
+    order = step.order;
+    layerRows();
+    restack();
+    saveOrder();
+    return;
+  }
+  F[step.n] = JSON.parse(step.before);
+  committed[step.n] = step.before;
+  apply(step.n);
+  if (step.n === selected) renderSkins();
+  saveFrame(step.n);
+}
+$("undo").onclick = undo;
+
+async function load() {
+  const r = await (await fetch("/rehearse/frames", { cache: "no-store" })).json();
+  F = {};
+  order = r.order;
+  themeBg = r.theme_bg;
+  pack = r.pack;
+  scenes = r.scenes;
+  OPT = { bar: r.bar, sound: r.sound };
+  soundFiles = r.sounds || [];
+  brbTracks = r.tracks || 0;
+  BRB = r.brb_screen || BRB;
+  BRB.text = BRB.text || [];
+  BRB.skins = BRB.skins || {};
+  OPT.sound.skin = OPT.sound.skin || "default";
+  skins = r.skins;
+  packs = r.packs;
+  for (const n of order) r.frames[n].skins = r.frames[n].skins || {};
+  // `wearing` needs the overlay's frame already: give it the raw one first.
+  for (const n of order) F[n] = r.frames[n];
+  for (const n of order) ingest(n, r.frames[n]);
+  for (const n of order) committed[n] = JSON.stringify(F[n]);
+}
+
+// New files appear without reloading the page.
+async function refreshSounds() {
+  try {
+    const r = await (await fetch("/rehearse/frames", { cache: "no-store" })).json();
+    soundFiles = r.sounds || [];
+    brbTracks = r.tracks || 0;
+    if (selected === "alert" || selected === "brb") inspect();
+  } catch {}
+}
+function select(n) {
+  selected = n;
+  if (n === "alert" || n === "brb") refreshSounds();
+  liveSound();
+  if (n !== null && !live() && hidden.has(n)) setHidden(n, false);
+  inspect();
+  renderSkins();
+}
+function setHidden(n, off) {
+  if (live()) {
+    const h = here(n);
+    if (!h) return;
+    // Shown at once; the feed confirms what OBS did (it is not trusted for a moment).
+    h.enabled = !off;
+    h.pending = Date.now() + 1500;
+    post("/rehearse/source", { scene, source: h.source, enabled: !off });
+    paintHidden(n);
+    if (F[n].dock) syncDock();
+    return;
+  }
+  off ? hidden.add(n) : hidden.delete(n);
+  hiddenBy[scene] = [...hidden];
+  store.set("hidden-by-scene", JSON.stringify(hiddenBy));
+  paintHidden(n);
+  if (F[n].dock) syncDock();
+}
+function paintHidden(n) {
+  const h = here(n);
+  const open = !!h && h.enabled;
+  const imitating = scene === VIRTUAL || !obsInfo;
+  const gated = imitating && modeHides(n);
+  const forced = imitating && mode === "brb" && n === "brb";
+  const off = !h || (!open && !forced) || gated;
+  // Docked in the status bar: it has no frame of its own to show or grab.
+  const docked = !!h && F[n].dock;
+  frames[n].hidden = hits[n].hidden = off || docked;
+  rows[n].row.classList.toggle("docked", docked);
+  rows[n].row.hidden = !h;
+  rows[n].row.classList.toggle("off", !!h && off);
+  rows[n].eye.innerHTML = svg(open ? "eye" : "eyeoff");
+  rows[n].eye.title = live() ? (open ? "Hide in OBS" : "Show in OBS") : open ? "Hide in preview" : "Show in preview";
+  if (off && n === selected) select(null);
+}
+function enterScene(name) {
+  scene = name;
+  store.set("scene", name);
+  if (name === scenes[1]) mode = "brb";
+  else if (name === scenes[2]) mode = "privacy";
+  else if (name !== VIRTUAL) mode = "normal";
+  store.set("mode", mode);
+  paintMode();
+  if (!live()) {
+    hidden.clear();
+    for (const n of hiddenBy[name] || (name === VIRTUAL ? ["latency"] : defaultHidden(scenes.indexOf(name)))) hidden.add(n);
+  }
+  select(null);
+  paintScene();
+  syncVideo();
+}
+// The virtual scene shows a flat color where the video would be.
+function syncVideo() {
+  const flat = scene === VIRTUAL;
+  $("vColor").hidden = !flat;
+  $("vColor").value = store.get("virtual-color", "#59606e");
+  player.style.background = flat ? $("vColor").value : "";
+  $("video").style.visibility = flat || $("showVideo").getAttribute("aria-pressed") !== "true" ? "hidden" : "";
+}
+function paintMode() {
+  for (const b of $("modes").children) b.setAttribute("aria-pressed", b.dataset.mode === mode);
+}
+let sessionMode = null;
+function setMode(m) {
+  mode = m;
+  store.set("mode", m);
+  sessionMode = m;
+  post("/rehearse/mode", { mode: m });
+  if (scene === VIRTUAL) { paintMode(); return paintScene(); }
+  // The scene for that mode, else (OBS has none by that name) the virtual scene.
+  const want = scenes[MODES.indexOf(m)];
+  const have = [...$("sceneSel").options].some((o) => o.value === want);
+  $("sceneSel").value = have ? want : VIRTUAL;
+  enterScene($("sceneSel").value);
+  mode = m;
+  paintMode();
+  paintScene();
+}
+// Only the overlays this scene has are listed.
+// Their clocks run while the editor is in their mode (the BRB button or scene, the starting scene).
+function syncTimers() {
+  const at = scenes.indexOf(scene);
+  const on = (n) => (n === "brb" && mode === "brb") || (n === "starting" && (at === 3 || at === 4));
+  for (const n of ["brb", "starting"]) frames[n]?.contentWindow?.aftercastTimer?.(on(n));
+}
+setInterval(() => { if (F) syncTimers(); }, 1000);
+function paintScene() {
+  syncTimers();
+  $("layerList").classList.toggle("virtual", scene === VIRTUAL);
+  layerRows();
+  for (const n of order) paintHidden(n);
+  syncDock();
+  const none = live() && !order.some((n) => here(n));
+  $("layerEmpty").hidden = !none;
+}
+// The scene list: OBS's scenes when it is connected, else the configured ones.
+function fillScenes() {
+  const list = [VIRTUAL, ...(obsInfo ? obsInfo.scenes : scenes)];
+  $("sceneSel").replaceChildren(...list.map((n) => new Option(n, n)));
+  const saved = store.get("scene");
+  // Nothing of ours in any OBS scene yet: the virtual scene is the place to start.
+  const want = [scene, saved, programScene].find((n) => n && list.includes(n)) || (obsInfo && !obsInfo.overlays.length ? VIRTUAL : list[1] || list[0]);
+  $("sceneSel").value = want;
+  if (want !== scene) enterScene(want);
+  else paintScene();
+}
+// The feed's view of OBS changed (or arrived): keep what was just clicked until OBS agrees.
+function onObs(o) {
+  const old = obsInfo;
+  if (o && old) {
+    for (const e of o.overlays) {
+      const same = old.overlays.find((x) => x.scene === e.scene && x.source === e.source);
+      if (same && same.pending > Date.now()) { e.enabled = same.enabled; e.pending = same.pending; }
+    }
+  }
+  const key = (x) => JSON.stringify(x && [x.scenes, x.overlays.map((e) => [e.scene, e.source, e.overlay, e.enabled])]);
+  const changed = key(o) !== key(old);
+  obsInfo = o;
+  if (F && changed) fillScenes();
+}
+// Frontmost layer on top, on the canvas as in OBS.
+function restack() {
+  order.forEach((n, i) => {
+    frames[n].style.zIndex = order.length - i;
+    hits[n].style.zIndex = 20 + order.length - i;
+  });
+}
+
+// Layers: the icon is the grip. Drag a row to restack; others make room as it passes.
+function layerRows() {
+  $("layerList").replaceChildren(...order.filter((n) => here(n)).map((n) => rows[n].row));
+}
+function makeRow(n) {
+  const row = document.createElement("div");
+  row.className = "layer";
+  row.tabIndex = 0;
+  const lead = document.createElement("span");
+  lead.className = "lead";
+  lead.innerHTML = svg(META[n][1]).replace('class="i"', 'class="i kind"') + svg("grip").replace('class="i"', 'class="i grip"');
+  lead.title = "Drag to restack";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = META[n][0];
+  const eye = document.createElement("button");
+  eye.className = "icon";
+  // Flips what it shows now: the OBS source's state, or the preview's.
+  eye.onclick = (e) => { e.stopPropagation(); const h = here(n); if (h) setHidden(n, h.enabled); };
+  const copy = document.createElement("button");
+  copy.className = "icon copy";
+  copy.title = "Copy the address to add it to OBS";
+  copy.innerHTML = svg("link");
+  copy.onclick = (e) => { e.stopPropagation(); copyAddr(n); };
+  const lock = document.createElement("button");
+  lock.className = "icon lockb";
+  lock.onclick = (e) => { e.stopPropagation(); setLocked(n, !locked.has(n)); };
+  row.append(lead, name, copy, lock, eye);
+  rows[n] = { row, eye, lock };
+  row.oncontextmenu = (e) => openCtx(e, n);
+  row.onclick = () => { if (!locked.has(n)) select(n); };
+  row.onkeydown = (e) => { if ((e.key === "Enter" || e.key === " ") && !locked.has(n)) { e.preventDefault(); select(n); } };
+  lead.onpointerdown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const list = [...$("layerList").children], from = list.indexOf(row), step = row.offsetHeight;
+    const y0 = e.clientY;
+    let to = from, moved = false;
+    const move = (m) => {
+      const dy = m.clientY - y0;
+      if (!moved && Math.abs(dy) < 3) return;
+      if (!moved) { moved = true; row.classList.add("lifted"); document.body.classList.add("restacking"); }
+      row.style.transform = `translateY(${dy}px)`;
+      to = Math.max(0, Math.min(list.length - 1, Math.round(from + dy / step)));
+      list.forEach((r, i) => {
+        if (r === row) return;
+        const shift = from < to && i > from && i <= to ? -step : from > to && i >= to && i < from ? step : 0;
+        r.style.transform = shift ? `translateY(${shift}px)` : "";
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      list.forEach((r) => (r.style.transform = ""));
+      row.classList.remove("lifted");
+      document.body.classList.remove("restacking");
+      if (!moved) return select(n);
+      if (to === from) return;
+      history.push({ order: [...order] });
+      $("undo").disabled = false;
+      // `from` and `to` count the listed rows; the others keep their places.
+      const listed = order.filter((n) => here(n));
+      listed.splice(to, 0, listed.splice(from, 1)[0]);
+      const slots = order.map((n, i) => (here(n) ? i : -1)).filter((i) => i >= 0);
+      slots.forEach((slot, i) => (order[slot] = listed[i]));
+      layerRows();
+      restack();
+      saveOrder();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  paintLock(n);
+}
+function paintLock(n) {
+  const on = locked.has(n);
+  rows[n].row.classList.toggle("locked", on);
+  rows[n].lock.innerHTML = svg(on ? "lock" : "unlock");
+  rows[n].lock.title = on ? "Unlock" : "Lock: it cannot be picked on the canvas";
+  hits[n].style.pointerEvents = on ? "none" : "";
+}
+function setLocked(n, on) {
+  on ? locked.add(n) : locked.delete(n);
+  store.set("locked-layers", JSON.stringify([...locked]));
+  paintLock(n);
+  if (on && selected === n) select(null);
+}
+
+// Canvas gestures, each computed from the state at pointer down (no drift).
+const canvasPoint = (e) => {
+  const r = $("canvas").getBoundingClientRect();
+  return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k };
+};
+// Guide lines: one per matching edge or center, vertical and horizontal.
+const guides = { v: [], h: [] };
+function showGuides(xs, ys) {
+  for (const [kind, list, prop] of [["v", xs, "left"], ["h", ys, "top"]]) {
+    while (guides[kind].length < list.length) {
+      const d = document.createElement("div");
+      d.className = "guide " + kind;
+      $("canvas").append(d);
+      guides[kind].push(d);
+    }
+    guides[kind].forEach((d, i) => {
+      d.hidden = i >= list.length;
+      if (i < list.length) d.style[prop] = list[i] + "px";
+    });
+  }
+}
+// Where an edge or center can snap: the canvas and the shown overlays' edges and centers.
+let snapT = { xs: [], ys: [] };
+function snapTargets(except) {
+  const xs = new Set([0, 960, 1920]), ys = new Set([0, 540, 1080]);
+  for (const n of order) {
+    if (n === except || frames[n].hidden || n === "starting") continue;
+    const { ex, ey, g } = extent(F[n]);
+    for (const x of [g.cx - ex, g.cx, g.cx + ex]) xs.add(Math.round(x));
+    for (const y of [g.cy - ey, g.cy, g.cy + ey]) ys.add(Math.round(y));
+  }
+  return { xs: [...xs], ys: [...ys] };
+}
+const snapOn = (m) => $("snap").getAttribute("aria-pressed") === "true" && !m.altKey;
+// The nearest target to any of `points`, within reach: the shift that lands on it, or null.
+function pull(points, targets) {
+  const near = 7 / k;
+  let best = null;
+  for (const p of points) for (const t of targets) {
+    const d = t - p;
+    if (Math.abs(d) < near && (best === null || Math.abs(d) < Math.abs(best))) best = d;
+  }
+  return best;
+}
+const hits_ = (points, targets) => points.filter((p) => targets.some((t) => Math.abs(t - p) < 0.6));
+function gesture(e, cursor, onMove, onTap) {
+  e.preventDefault();
+  e.stopPropagation();
+  const n = selected, start = { ...F[n] }, p0 = canvasPoint(e);
+  let moved = false;
+  snapT = snapTargets(n);
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", cursor);
+  const move = (m) => {
+    const p = canvasPoint(m);
+    if (Math.hypot(p.x - p0.x, p.y - p0.y) * k > 3) moved = true;
+    onMove(F[n], start, p.x - p0.x, p.y - p0.y, p, m);
+    apply(n);
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    $("tip").hidden = true;
+    showGuides([], []);
+    commit(n);
+    if (!moved && onTap) onTap();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+function tip(text, f) {
+  const g = geo(f), t = $("tip");
+  t.hidden = false;
+  t.textContent = text;
+  // Under the frame's lowest point, whatever the rotation.
+  const reach = (Math.abs(Math.sin(f.rotate * RAD)) * g.w + Math.abs(Math.cos(f.rotate * RAD)) * g.h) / 2;
+  Object.assign(t.style, { left: g.cx + "px", top: g.cy + reach + 14 / k + "px" });
+}
+// Half the width and height of the rotated frame's bounding box.
+const extent = (f) => {
+  const g = geo(f), c = Math.abs(Math.cos(f.rotate * RAD)), s = Math.abs(Math.sin(f.rotate * RAD));
+  return { ex: (c * g.w + s * g.h) / 2, ey: (s * g.w + c * g.h) / 2, g };
+};
+// Move, snapping the visible box's edges and center to the canvas edges and center.
+function moveBy(f, s, dx, dy, p, m) {
+  const { ex, ey, g } = extent(s);
+  let cx = g.cx + dx, cy = g.cy + dy;
+  if (snapOn(m)) {
+    // The left, center and right of the box (top, middle, bottom) each look for a target.
+    const sx = pull([cx - ex, cx, cx + ex], snapT.xs), sy = pull([cy - ey, cy, cy + ey], snapT.ys);
+    if (sx !== null) cx += sx;
+    if (sy !== null) cy += sy;
+    showGuides(hits_([cx - ex, cx, cx + ex], snapT.xs), hits_([cy - ey, cy, cy + ey], snapT.ys));
+  } else showGuides([], []);
+  f.x = clamp("x", cx - g.w / 2);
+  f.y = clamp("y", cy - g.h / 2);
+  tip(`${f.x}, ${f.y}`, f);
+}
+// Corners scale (the opposite corner stays), sides resize (the opposite side stays); the
+// pointer is read in the frame's own rotated axes.
+function resizeBy(hx, hy) {
+  return (f, s, dx, dy, p, m) => {
+    const cos = Math.cos(s.rotate * RAD), sin = Math.sin(s.rotate * RAD);
+    const lx = dx * cos + dy * sin, ly = -dx * sin + dy * cos;
+    const g = geo(s);
+    let w = g.w, h = g.h;
+    if (hx && hy) {
+      f.size = clamp("size", s.size * ((g.w + hx * lx) / g.w + (g.h + hy * ly) / g.h) / 2);
+      w = g.w * f.size / s.size;
+      h = g.h * f.size / s.size;
+    } else if (hx) {
+      f.width = clamp("width", (g.w + hx * lx) / (s.size / 100));
+      w = f.width * s.size / 100;
+    } else {
+      f.height = clamp("height", (g.h + hy * ly) / (s.size / 100));
+      h = f.height * s.size / 100;
+    }
+    const ox = hx * (w - g.w) / 2, oy = hy * (h - g.h) / 2;
+    f.x = clamp("x", g.cx + ox * cos - oy * sin - w / 2);
+    f.y = clamp("y", g.cy + ox * sin + oy * cos - h / 2);
+    // A side of an upright frame snaps to the canvas and the other overlays too.
+    if (!(hx && hy) && s.rotate === 0 && snapOn(m)) {
+      const sc = s.size / 100;
+      if (hx) {
+        const edge = hx > 0 ? f.x + w : f.x, d = pull([edge], snapT.xs);
+        if (d !== null) {
+          const t = edge + d;
+          if (hx > 0) w = t - f.x;
+          else { w = g.x + g.w - t; f.x = clamp("x", t); }
+          f.width = clamp("width", w / sc);
+          showGuides([t], []);
+        } else showGuides([], []);
+      } else {
+        const edge = hy > 0 ? f.y + h : f.y, d = pull([edge], snapT.ys);
+        if (d !== null) {
+          const t = edge + d;
+          if (hy > 0) h = t - f.y;
+          else { h = g.y + g.h - t; f.y = clamp("y", t); }
+          f.height = clamp("height", h / sc);
+          showGuides([], [t]);
+        } else showGuides([], []);
+      }
+    }
+    tip(hx && hy ? `${f.size}%` : `${f.width} × ${f.height}`, f);
+  };
+}
+function rotateBy(f, s, dx, dy, p, m) {
+  const g = geo(s);
+  const turn = Math.atan2(p.y - g.cy, p.x - g.cx) - Math.atan2(p.y - dy - g.cy, p.x - dx - g.cx);
+  let r = ((((s.rotate + turn / RAD + 180) % 360) + 360) % 360) - 180;
+  if (m.shiftKey) r = Math.round(r / 15) * 15;
+  else if (!m.altKey) for (const t of [-180, -90, 0, 90, 180]) if (Math.abs(r - t) < 3) r = t;
+  f.rotate = clamp("rotate", r);
+  tip(`${f.rotate}°`, f);
+}
+const ROTATE_CURSOR = 'url("data:image/svg+xml,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">' +
+  '<path d="M19 12a7 7 0 1 1-2-4.9M19 3v5h-5" fill="none" stroke="white" stroke-width="4" stroke-linecap="round"/>' +
+  '<path d="M19 12a7 7 0 1 1-2-4.9M19 3v5h-5" fill="none" stroke="black" stroke-width="2" stroke-linecap="round"/></svg>') +
+  '") 12 12, alias';
+
+function build() {
+  const canvas = $("canvas");
+  const sel = document.createElement("div");
+  sel.className = "selection";
+  sel.id = "selection";
+  const HANDLES = { nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0] };
+  for (const [h, [hx, hy]] of Object.entries(HANDLES)) {
+    if (hx && hy) {
+      // Just outside each corner: rotate.
+      const rot = document.createElement("div");
+      rot.className = "rot";
+      Object.assign(rot.style, { left: hx < 0 ? "calc(-22px * var(--k))" : "100%",
+                                 top: hy < 0 ? "calc(-22px * var(--k))" : "100%", cursor: ROTATE_CURSOR });
+      rot.onpointerdown = (e) => gesture(e, ROTATE_CURSOR, rotateBy);
+      rot.ondblclick = () => { F[selected].rotate = 0; apply(selected); commit(selected); };
+      sel.append(rot);
+    }
+    const handle = document.createElement("div");
+    handle.className = "h" + (hx && hy ? "" : " side");
+    handle.dataset.h = h;
+    Object.assign(handle.style, { left: (hx + 1) * 50 + "%", top: (hy + 1) * 50 + "%" });
+    handle.onpointerdown = (e) => gesture(e, handle.style.cursor, resizeBy(hx, hy));
+    sel.append(handle);
+  }
+  for (const n of order) {
+    const f = document.createElement("iframe");
+    f.src = `/overlay/${n}?demo`;
+    f.tabIndex = -1;
+    f.allow = "autoplay";
+    f.onload = () => apply(n);
+    const hit = document.createElement("div");
+    hit.className = "frame";
+    hit.oncontextmenu = (e) => { if (selected !== n) select(n); openCtx(e, n); };
+    hit.dataset.n = n;
+    hit.onpointerdown = (e) => {
+      // Everything unlocked under the pointer, top first. Keeping the selected one when it is
+      // among them lets a still click walk down the pile and back up.
+      const pile = document.elementsFromPoint(e.clientX, e.clientY)
+        .filter((x) => x.classList.contains("frame") && x.dataset.n).map((x) => x.dataset.n);
+      const cur = pile.includes(selected) ? selected : pile[0];
+      const again = selected === cur;
+      if (!again) select(cur);
+      // A still click on what is already selected goes one down; the first click only selects.
+      gesture(e, "move", moveBy, () => {
+        if (again && pile.length > 1) select(pile[(pile.indexOf(cur) + 1) % pile.length]);
+      });
+    };
+    // Scroll scales around the center.
+    hit.onwheel = (e) => {
+      e.preventDefault();
+      if (selected !== n) select(n);
+      const fr = F[n], g = geo(fr);
+      fr.size = clamp("size", fr.size + (e.deltaY < 0 ? 5 : -5));
+      fr.x = clamp("x", g.cx - fr.width * fr.size / 200);
+      fr.y = clamp("y", g.cy - fr.height * fr.size / 200);
+      apply(n);
+      commitSoon(n);
+    };
+    canvas.append(f, hit);
+    frames[n] = f;
+    hits[n] = hit;
+    makeRow(n);
+  }
+  const t = document.createElement("div");
+  t.className = "tip";
+  t.id = "tip";
+  t.hidden = true;
+  canvas.append(sel, t);
+  // A click on the empty canvas clears the selection.
+  $("stage").onpointerdown = (e) => { if (e.target === $("stage") || e.target === canvas) select(null); };
+  layerRows();
+  restack();
+  $("sceneSel").onchange = () => enterScene($("sceneSel").value);
+  for (const b of $("modes").children) b.onclick = () => setMode(b.dataset.mode);
+  paintMode();
+  $("vColor").oninput = () => { store.set("virtual-color", $("vColor").value); player.style.background = $("vColor").value; };
+  for (const n of order) apply(n);
+  fillScenes();
+}
+
+// The bar: canvas alignment, then numbers; drag a number's label to scrub it.
+for (const b of document.querySelectorAll("[data-align]")) {
+  b.onclick = () => {
+    const f = F[selected];
+    if (f.dock) {
+      f.align = { left: "left", hcenter: "center", right: "right" }[b.dataset.align] || f.align;
+      apply(selected);
+      return commit(selected);
+    }
+    const { ex, ey, g } = extent(f);
+    const c = { left: [ex, g.cy], hcenter: [960, g.cy], right: [1920 - ex, g.cy],
+                top: [g.cx, ey], vcenter: [g.cx, 540], bottom: [g.cx, 1080 - ey] }[b.dataset.align];
+    f.x = clamp("x", c[0] - g.w / 2);
+    f.y = clamp("y", c[1] - g.h / 2);
+    apply(selected);
+    commit(selected);
+  };
+}
+for (const input of document.querySelectorAll("#bar [data-f]")) {
+  const f = input.dataset.f;
+  input.oninput = () => { if (input.value !== "") { F[selected][f] = clamp(f, input.valueAsNumber); apply(selected); } };
+  input.onchange = () => { apply(selected); commit(selected); };
+  input.onkeydown = (e) => { if (e.key === "Enter" || e.key === "Escape") input.blur(); };
+  input.previousElementSibling.onpointerdown = (e) => {
+    e.preventDefault();
+    const x0 = e.clientX, v0 = F[selected][f];
+    document.body.classList.add("gesture");
+    document.body.style.setProperty("--gesture", "ew-resize");
+    const move = (m) => {
+      F[selected][f] = clamp(f, v0 + (m.clientX - x0) * (m.shiftKey ? 10 : 1));
+      apply(selected);
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.body.classList.remove("gesture");
+      commit(selected);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+}
+for (const b of [$("showVideo"), $("snap")]) {
+  b.onclick = () => {
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", on);
+    store.set(b.id, on);
+    if (b.id === "showVideo" && F) syncVideo();
+    else if (b.id === "showVideo") $("video").style.visibility = on ? "" : "hidden";
+  };
+  if (store.get(b.id, "true") === "false") b.click();
+}
+
+// The style panel.
+for (const b of $("align").children) {
+  b.onclick = () => { F[selected].align = b.dataset.a; apply(selected); commit(selected); };
+}
+// Status bar: order, animation and ticker; alert: sound and the Play buttons.
+function drawBarProps() {
+  drawFitNote();
+  const docked = order.filter((n) => F[n].dock);
+  $("barOrder").replaceChildren(...fullOrder().map((n, i, all) => {
+    const row = document.createElement("div");
+    row.className = "orow" + (docked.includes(n) ? "" : " off");
+    row.innerHTML = svg(META[n][1]) + `<span>${META[n][0]}${docked.includes(n) ? (F[n].pin && OPT.bar.marquee ? " (pinned)" : "") : " (not docked)"}</span>`;
+    for (const [dir, icon] of [[-1, "up"], [1, "down"]]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "icon";
+      b.title = dir < 0 ? "Move left" : "Move right";
+      b.disabled = i + dir < 0 || i + dir >= all.length;
+      b.innerHTML = svg(icon);
+      b.onclick = () => {
+        const next = fullOrder();
+        next.splice(i + dir, 0, next.splice(i, 1)[0]);
+        OPT.bar.order = next;
+        syncDock();
+        drawBarProps();
+        post("/rehearse/options", { order: next });
+      };
+      row.append(b);
+    }
+    return row;
+  }));
+  $("barAnimate").checked = OPT.bar.animate;
+  $("barMarquee").checked = OPT.bar.marquee;
+  $("barClock").checked = OPT.bar.extras.includes("clock");
+  $("barViewers").checked = OPT.bar.extras.includes("viewers");
+  $("speedRow").hidden = !OPT.bar.marquee;
+  $("barSpeed").value = $("barSpeedNum").value = OPT.bar.speed;
+  $("barSpeed").style.setProperty("--fill", (OPT.bar.speed - 10) / 2.9 + "%");
+}
+const setOpt = (group, key, value) => {
+  OPT[group][key] = value;
+  syncDock();
+  if (selected === "status") drawBarProps();
+};
+$("barAnimate").onchange = () => { setOpt("bar", "animate", $("barAnimate").checked); post("/rehearse/options", { animate: OPT.bar.animate }); };
+const setExtra = (name, on) => {
+  const l = OPT.bar.extras.filter((x) => x !== name);
+  setOpt("bar", "extras", on ? [...l, name] : l);
+  post("/rehearse/options", { extras: OPT.bar.extras });
+};
+$("barClock").onchange = () => setExtra("clock", $("barClock").checked);
+$("barViewers").onchange = () => setExtra("viewers", $("barViewers").checked);
+$("pin").onchange = () => { F[selected].pin = $("pin").checked; apply(selected); commit(selected); drawBarProps(); };
+$("barMarquee").onchange = () => { setOpt("bar", "marquee", $("barMarquee").checked); post("/rehearse/options", { marquee: OPT.bar.marquee }); };
+$("barSpeed").oninput = () => { setOpt("bar", "speed", $("barSpeed").valueAsNumber); };
+$("barSpeed").onchange = () => post("/rehearse/options", { speed: OPT.bar.speed });
+$("barSpeedNum").onchange = () => { setOpt("bar", "speed", Math.min(600, Math.max(10, $("barSpeedNum").valueAsNumber || 60))); post("/rehearse/options", { speed: OPT.bar.speed }); };
+// The BRB screen's picture, QR and texts: saved in the config, the page redraws. Places and
+// sizes belong to the skin worn (each skin is arranged on its own); the rest is common.
+const BRB_PARTS = ["title", "text", "music", "pfp", "qr"];
+const brbOwn = (k) => /_(x|y|size|w)$/.test(k);
+const brbSkin = () => wearing("brb");
+// The options as the worn skin sees them: its own fields over the common ones.
+function eb() {
+  const e = { ...BRB };
+  for (const [k, v] of Object.entries((BRB.skins || {})[brbSkin()] || {})) if (v !== null && v !== undefined) e[k] = v;
+  return e;
+}
+function drawBrbScreen() {
+  const act = document.activeElement, e = eb();
+  $("bPfp").checked = e.pfp;
+  $("bShape").value = e.pfp_shape;
+  $("bQr").checked = e.qr;
+  for (const [id, v] of [["bPfpSize", e.pfp_size], ["bPfpSizeNum", e.pfp_size], ["bQrSize", e.qr_size], ["bQrSizeNum", e.qr_size]]) {
+    if (act !== $(id)) $(id).value = v;
+  }
+  $("bPfpSize").style.setProperty("--fill", (e.pfp_size - 80) / 6.2 + "%");
+  $("bQrSize").style.setProperty("--fill", (e.qr_size - 120) / 6.8 + "%");
+  if (act !== $("bLink")) $("bLink").value = e.qr_link;
+  if (act !== $("bCaption")) $("bCaption").value = e.qr_caption;
+  if (act !== $("bLines")) $("bLines").value = e.text.join("\n");
+}
+const redrawBrb = () => frames.brb.contentWindow.aftercastBrbReload?.();
+async function saveBrb(part) {
+  const skin = brbSkin();
+  BRB.skins = BRB.skins || {};
+  const own = (BRB.skins[skin] = BRB.skins[skin] || {});
+  for (const [k, v] of Object.entries(part)) (brbOwn(k) ? own : BRB)[k] = v;
+  drawBrbScreen();
+  await post("/rehearse/options", { brb_screen: part, brb_skin: skin });
+  redrawBrb();
+}
+// Back to the skin's own arrangement: every place and both sizes.
+const resetBrbLook = () => saveBrb(Object.fromEntries([
+  ...BRB_PARTS.flatMap((p) => [[p + "_x", null], [p + "_y", null]]), ["pfp_size", null], ["qr_size", null], ["music_w", null]]));
+
+// Parts of the BRB screen: a dashed box over each. Drag to place (it snaps to the canvas and
+// to the other parts; Alt skips that), the corner of the picture and QR resizes, arrows nudge.
+const brbEls = document.createElement("div");
+$("canvas").append(brbEls);
+let brbDragging = false, brbSel = null, nudgeT = 0;
+$("bMove").checked = store.get("brb-move", "on") !== "off";
+const brbPartEls = () => {
+  const doc = frames.brb && frames.brb.contentDocument;
+  return doc ? [...doc.querySelectorAll(".card.brb [data-el]")].filter((e) => e.getBoundingClientRect().width) : [];
+};
+// Every part's place as it stands, in the frame's pixels (so the first move leaves the others).
+function brbFreeze() {
+  const f = F.brb, s = f.size / 100, pos = {};
+  for (const el of brbPartEls()) {
+    const r = el.getBoundingClientRect();
+    pos[el.dataset.el + "_x"] = Math.round((r.left - f.x) / s);
+    pos[el.dataset.el + "_y"] = Math.round((r.top - f.y) / s);
+  }
+  return pos;
+}
+function brbBoxes() {
+  if (brbDragging) return;
+  const show = editing && selected === "brb" && $("bMove").checked && !frames.brb.hidden;
+  if (!show) brbSel = null;
+  const els = show ? brbPartEls() : [];
+  const have = new Map([...brbEls.children].map((b) => [b.dataset.part, b]));
+  for (const [name, b] of have) if (!els.some((e) => e.dataset.el === name)) { b.remove(); have.delete(name); }
+  for (const e of els) {
+    const name = e.dataset.el;
+    let b = have.get(name);
+    if (!b) {
+      b = document.createElement("div");
+      b.className = "brbel";
+      b.dataset.part = name;
+      b.onpointerdown = (ev) => brbDrag(name, ev);
+      brbEls.append(b);
+    }
+    b.classList.toggle("sel", name === brbSel);
+    // The picture and the QR code are resized from their corner, the music card by its right edge
+    // (once it has been moved by hand: before that it fills the row).
+    const grip = b.querySelector(".rz");
+    const sizable = name === "pfp" || name === "qr" || (name === "music" && e.classList.contains("free"));
+    if (name === brbSel && sizable) {
+      if (!grip) {
+        const g = document.createElement("div");
+        g.className = "rz" + (name === "music" ? " w" : "");
+        g.onpointerdown = (ev) => brbResize(name, ev);
+        b.append(g);
+      }
+    } else if (grip) grip.remove();
+    const r = e.getBoundingClientRect();
+    Object.assign(b.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" });
+  }
+}
+function brbDrag(name, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  brbSel = name;
+  const f = F.brb, s = f.size / 100, win = frames.brb.contentWindow;
+  const pos = brbFreeze();
+  const mine = brbPartEls().find((el) => el.dataset.el === name).getBoundingClientRect();
+  const w = mine.width, h = mine.height;
+  // Targets: the canvas, the other overlays and the other parts (edges and centers).
+  const T = snapTargets("brb");
+  for (const el of brbPartEls()) {
+    if (el.dataset.el === name) continue;
+    const r = el.getBoundingClientRect();
+    T.xs.push(r.left, r.left + r.width / 2, r.right);
+    T.ys.push(r.top, r.top + r.height / 2, r.bottom);
+  }
+  const x0 = e.clientX, y0 = e.clientY;
+  let moved = false;
+  brbDragging = true;
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", "move");
+  const move = (m) => {
+    if (!moved && Math.hypot(m.clientX - x0, m.clientY - y0) < 3) return;
+    if (!moved) win.aftercastBrbPos?.(pos);
+    moved = true;
+    let L = mine.left + (m.clientX - x0) / k, Tp = mine.top + (m.clientY - y0) / k;
+    if (snapOn(m)) {
+      const sx = pull([L, L + w / 2, L + w], T.xs), sy = pull([Tp, Tp + h / 2, Tp + h], T.ys);
+      if (sx !== null) L += sx;
+      if (sy !== null) Tp += sy;
+      showGuides(hits_([L, L + w / 2, L + w], T.xs), hits_([Tp, Tp + h / 2, Tp + h], T.ys));
+    } else showGuides([], []);
+    pos[name + "_x"] = Math.round((L - f.x) / s);
+    pos[name + "_y"] = Math.round((Tp - f.y) / s);
+    win.aftercastBrbPos?.({ [name + "_x"]: pos[name + "_x"], [name + "_y"]: pos[name + "_y"] });
+    brbDragging = false; brbBoxes(); brbDragging = true;
+  };
+  const up = () => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    showGuides([], []);
+    brbDragging = false;
+    brbBoxes();
+    if (moved) saveBrb(pos);
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+}
+function brbResize(name, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const key = name === "music" ? "music_w" : name + "_size";
+  const [lo, hi] = { pfp: [80, 700], qr: [120, 800], music: [300, 1800] }[name];
+  const s = F.brb.size / 100, x0 = e.clientX, win = frames.brb.contentWindow;
+  const v0 = Number(eb()[key]) || Math.round(brbPartEls().find((el) => el.dataset.el === name).getBoundingClientRect().width / s);
+  let v = v0;
+  brbDragging = true;
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", name === "music" ? "ew-resize" : "nwse-resize");
+  const move = (m) => {
+    v = Math.round(Math.min(hi, Math.max(lo, v0 + (m.clientX - x0) / k / s)));
+    win.aftercastBrbPos?.({ [key]: v });
+    brbDragging = false; brbBoxes(); brbDragging = true;
+  };
+  const up = () => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    brbDragging = false;
+    brbBoxes();
+    if (v !== v0) saveBrb({ [key]: v });
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+}
+// Arrow keys move the chosen part (Shift: 10); saved when the keys rest.
+function brbNudge(e) {
+  const d = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  const pos = brbFreeze();
+  if (!d || pos[brbSel + "_x"] === undefined) return false;
+  e.preventDefault();
+  const step = e.shiftKey ? 10 : 1;
+  pos[brbSel + "_x"] += d[0] * step;
+  pos[brbSel + "_y"] += d[1] * step;
+  frames.brb.contentWindow.aftercastBrbPos?.(pos);
+  brbBoxes();
+  clearTimeout(nudgeT);
+  nudgeT = setTimeout(() => saveBrb(pos), 350);
+  return true;
+}
+setInterval(brbBoxes, 400);
+$("bMove").onchange = () => { store.set("brb-move", $("bMove").checked ? "on" : "off"); brbBoxes(); };
+$("bReset").onclick = resetBrbLook;
+const clampTo = (el, lo, hi) => Math.min(hi, Math.max(lo, el.valueAsNumber || lo));
+$("bPfp").onchange = () => saveBrb({ pfp: $("bPfp").checked });
+$("bShape").onchange = () => saveBrb({ pfp_shape: $("bShape").value });
+$("bQr").onchange = () => saveBrb({ qr: $("bQr").checked });
+$("bPfpSize").onchange = () => saveBrb({ pfp_size: clampTo($("bPfpSize"), 80, 700) });
+$("bPfpSizeNum").onchange = () => saveBrb({ pfp_size: clampTo($("bPfpSizeNum"), 80, 700) });
+$("bQrSize").onchange = () => saveBrb({ qr_size: clampTo($("bQrSize"), 120, 800) });
+$("bQrSizeNum").onchange = () => saveBrb({ qr_size: clampTo($("bQrSizeNum"), 120, 800) });
+$("bLink").onchange = () => saveBrb({ qr_link: $("bLink").value.trim() });
+$("bCaption").onchange = () => saveBrb({ qr_caption: $("bCaption").value.trim() });
+$("bLines").onchange = () => saveBrb({ text: $("bLines").value.split("\n").map((t) => t.trim()).filter(Boolean) });
+$("shuffle").onchange = () => { F[selected].shuffle = $("shuffle").checked; apply(selected); commit(selected); };
+$("soundOn").onchange = () => { F[selected].mute = !$("soundOn").checked; apply(selected); commit(selected); };
+$("soundVol").oninput = () => { OPT.sound.volume = $("soundVol").valueAsNumber; $("soundVolNum").value = OPT.sound.volume; $("soundVol").style.setProperty("--fill", OPT.sound.volume + "%"); };
+$("soundVol").onchange = () => { syncDock(); post("/rehearse/options", { volume: OPT.sound.volume }); };
+$("soundFile").onchange = () => { F.alert.sound = $("soundFile").value; apply("alert"); commit("alert"); };
+$("soundVolNum").onchange = () => { OPT.sound.volume = Math.min(100, Math.max(0, $("soundVolNum").valueAsNumber || 0)); syncDock(); inspect(); post("/rehearse/options", { volume: OPT.sound.volume }); };
+const playAlert = (sound) => frames.alert.contentWindow.aftercastPlay?.({ sound, volume: OPT.sound.volume });
+$("playAlert").onclick = () => playAlert(false);
+$("playSound").onclick = () => playAlert(true);
+$("dock").onchange = () => { F[selected].dock = $("dock").checked; apply(selected); commit(selected); renderSkins(); };
+$("bgColor").oninput = () => { F[selected].bg = $("bgColor").value.toUpperCase(); apply(selected); };
+$("bgColor").onchange = () => commit(selected);
+$("bgHex").onkeydown = (e) => { if (e.key === "Enter" || e.key === "Escape") $("bgHex").blur(); };
+$("bgHex").onchange = () => {
+  let v = $("bgHex").value.trim();
+  if (v && !v.startsWith("#")) v = "#" + v;
+  const c = rgbOf(v);
+  if (c) { F[selected].bg = toHex(c); commit(selected); }
+  apply(selected);
+};
+$("bgTheme").onclick = () => { F[selected].bg = ""; apply(selected); commit(selected); };
+$("opRange").oninput = () => { F[selected].opacity = clamp("opacity", $("opRange").valueAsNumber); apply(selected); };
+$("opRange").onchange = () => commit(selected);
+$("opNum").oninput = () => {
+  if ($("opNum").value !== "") { F[selected].opacity = clamp("opacity", $("opNum").valueAsNumber); apply(selected); }
+};
+$("opNum").onchange = () => { apply(selected); commit(selected); };
+$("resetFrame").onclick = async () => {
+  const n = selected;
+  history.push({ n, before: committed[n] });
+  $("undo").disabled = false;
+  const skin = wearing(n);
+  await post("/rehearse/frames", { name: n, reset: true, for_skin: skin });
+  if (n === "brb") await resetBrbLook();
+  const r = await (await fetch("/rehearse/frames", { cache: "no-store" })).json();
+  ingest(n, r.frames[n]);
+  committed[n] = JSON.stringify(F[n]);
+  apply(n);
+};
+
+// Skins. Each overlay wears its own skin, else the pack. The strip shows the selected
+// layer's skins as live thumbnails (or, with nothing selected, the packs): hover previews
+// one on the canvas, a click wears it.
+const SKIN_NAMES = { nvim: "Neovim", clean: "Clean", broadcast: "Broadcast", glass: "Glass", minimal: "Minimal",
+  dino: "Dino run", pacman: "Pac-Man", moonwalk: "Moonwalk", coins: "Coin shower", neon: "Neon sign" };
+const skinLabel = (s) => SKIN_NAMES[s] || s;
+// What an overlay wears: its own skin, else the pack when it has that skin (the alert has
+// its own animations), else its first.
+const wearing = (n) => {
+  const s = F[n].skin || pack, list = skins[n] || [];
+  return !list.length || list.includes(s) ? s : list[0];
+};
+const TW = 188, TH = 106;
+function thumb(n, s) {
+  const box = document.createElement("div");
+  box.className = "thumb";
+  const f = document.createElement("iframe");
+  // A docked overlay's looks are those of its segment in the status bar.
+  const bar = F[n].dock;
+  f.src = bar
+    ? `/overlay/status?demo&nodock&only=${n}&skin=${encodeURIComponent(s)}`
+    : `/overlay/${n}?demo&nodock&skin=${encodeURIComponent(s)}`;
+  f.tabIndex = -1;
+  f.onload = () => {
+    // A look, not a place: upright, and no wider than 640 so wide cards wrap into a shape
+    // that reads at thumbnail size.
+    const fr = bar
+      ? { ...F.status, x: 0, y: 0, rotate: 0, width: 520, height: Math.max(F.status.height, 40) }
+      : { ...F[n], rotate: 0, width: Math.min(F[n].width, 640) };
+    const g = geo(fr), body = f.contentDocument && f.contentDocument.body;
+    if (body) {
+      const c = rgbOf(fr.bg || themeBg);
+      const vars = { "--x": fr.x + "px", "--y": fr.y + "px", "--w": fr.width + "px", "--h": fr.height + "px",
+                     "--s": fr.size / 100, "--r": "0deg", "--align": FLEX[fr.align], "--text-align": fr.align,
+                     "--bg": c ? `rgb(${c.join(" ")} / ${fr.opacity}%)` : fr.bg || themeBg,
+                     "--bg-solid": c ? `rgb(${c.join(" ")})` : fr.bg || themeBg,
+                     "--docked": "none", "--hide": "none" };
+      for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
+    }
+    // Centered and as large as the thumbnail allows: the frame at first, then what the
+    // overlay draws once its sample has settled (a question card is far smaller than its frame).
+    const fit = (x, y, w, h) => {
+      const zoom = Math.min(TW / (w * 1.15), TH / (h * 1.25));
+      f.style.transform = `translate(${TW / 2 - (x + w / 2) * zoom}px, ${TH / 2 - (y + h / 2) * zoom}px) scale(${zoom})`;
+    };
+    fit(g.x, g.y, g.w, g.h);
+    setTimeout(() => {
+      const doc = f.contentDocument;
+      if (!doc) return;
+      const parts = [...doc.querySelectorAll("#root > *")].flatMap((e) => e.classList.contains("keys") ? [...e.children] : [e]);
+      const r = parts.map((e) => e.getBoundingClientRect()).filter((r) => r.width && r.height);
+      if (!r.length) return;
+      const x = Math.min(...r.map((b) => b.left)), y = Math.min(...r.map((b) => b.top));
+      fit(x, y, Math.max(...r.map((b) => b.right)) - x, Math.max(...r.map((b) => b.bottom)) - y);
+    }, 1400);
+  };
+  box.append(f);
+  return box;
+}
+// Shows a skin on the canvas without wearing it (null: back to what the layer wears).
+function preview(n, s) {
+  if (F[n].dock) {
+    segHover = s ? { n, s } : null;
+    return syncDock();
+  }
+  const body = frames[n].contentDocument && frames[n].contentDocument.body;
+  if (!body) return;
+  body.style.setProperty("--skin", s || wearing(n));
+  frames[n].contentWindow.aftercastSkin?.();
+}
+function card(label, s, on, custom, n) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "skin" + (on ? " on" : "");
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = label;
+  if (custom) name.insertAdjacentHTML("beforeend", '<span class="badge">Custom</span>');
+  b.append(thumb(n, s), name);
+  return b;
+}
+function renderSkins() {
+  const row = $("skinRow");
+  row.replaceChildren();
+  // Skins belong to the selected overlay: nothing selected, nothing to show; the status bar
+  // has none (each segment wears its overlay's).
+  const n = selected;
+  const docked = n !== null && F[n].dock;
+  const list = n === null ? [] : docked ? SEG_SKINS : skins[n] || [];
+  $("skins").hidden = !list.length;
+  if (!list.length) return;
+  $("skinsTitle").textContent = docked ? `${META[n][0]} in the status bar` : `${META[n][0]} skins`;
+  $("skinsNote").textContent = "";
+  $("wearPack").hidden = !F[n].skin;
+  for (const s of list) {
+    const b = card(skinLabel(s), s, s === wearing(n), !SKIN_NAMES[s], n);
+    b.onmouseenter = () => preview(n, s);
+    b.onmouseleave = () => preview(n, null);
+    b.onclick = () => {
+      segHover = null;
+      if (F[n].skin === s) return;
+      history.push({ n, before: committed[n] });
+      $("undo").disabled = false;
+      // Another skin has its own frame; nothing of the old one is written to the new.
+      F[n].skin = s;
+      Object.assign(F[n], geomFor(n, wearing(n)));
+      apply(n);
+      committed[n] = JSON.stringify(F[n]);
+      post("/rehearse/frames", { name: n, skin: s });
+      renderSkins();
+    };
+    row.append(b);
+  }
+}
+async function setPack(s) {
+  pack = s;
+  for (const n of order) {
+    if (!F[n].skin) Object.assign(F[n], geomFor(n, wearing(n)));
+    committed[n] = JSON.stringify(F[n]);
+    apply(n);
+  }
+  renderSkins();
+  await post("/rehearse/pack", { skin: s });
+}
+// One wheel step shows the next row of skins (a trackpad's burst counts as one step).
+{
+  let wait = 0;
+  $("skinRow").addEventListener("wheel", (e) => {
+    const row = $("skinRow"), first = row.firstElementChild;
+    if (!first || row.scrollHeight <= row.clientHeight) return;
+    e.preventDefault();
+    if (Date.now() < wait || Math.abs(e.deltaY) < 4) return;
+    wait = Date.now() + 260;
+    const step = first.offsetHeight + 16;
+    row.scrollTo({ top: (Math.round(row.scrollTop / step) + Math.sign(e.deltaY)) * step, behavior: "smooth" });
+  }, { passive: false });
+}
+$("wearPack").onclick = () => {
+  F[selected].skin = "";
+  apply(selected);
+  commit(selected);
+  renderSkins();
+};
+
+$("edit").onclick = async () => {
+  editing = !editing;
+  document.body.classList.toggle("editing", editing);
+  $("edit").classList.toggle("primary", editing);
+  $("edit").lastElementChild.textContent = editing ? "Done" : "Edit overlays";
+  $("edit").firstElementChild.hidden = editing;
+  $("stage").hidden = !editing;
+  fitPlayer();
+  // Leaving the editor: the real video again (the virtual scene's flat color is editor only).
+  if (!editing) {
+    player.style.background = "";
+    $("video").style.visibility = "";
+    fitDesc();
+    // Leaving the editor ends a BRB or privacy it started.
+    if (sessionMode && sessionMode !== "normal") post("/rehearse/mode", { mode: "normal" });
+    sessionMode = null;
+    return;
+  }
+  if (F) syncVideo();
+  try {
+    if (!F) { await load(); build(); }
+    fit();
+  } catch (e) {
+    status("bad", "Could not load the overlays: " + e);
+  }
+};
+document.addEventListener("keydown", (e) => {
+  if (!editing || e.target.closest?.("input, select, textarea")) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); return undo(); }
+  if (e.key === "Escape") { if (brbSel) { brbSel = null; return brbBoxes(); } return select(null); }
+  if (selected === "brb" && brbSel && $("bMove").checked && brbNudge(e)) return;
+  const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  if (!arrows[e.key] || selected === null || e.target.closest?.(".layer")) return;
+  e.preventDefault();
+  const [dx, dy] = arrows[e.key], step = e.shiftKey ? 10 : 1, f = F[selected];
+  f.x = clamp("x", f.x + dx * step);
+  f.y = clamp("y", f.y + dy * step);
+  apply(selected);
+  commitSoon(selected);
+});
+
+// Controls, as YouTube has them: play and pause, volume, the live button, speed, miniplayer, full
+// screen; they hide when the pointer rests; keys k j l m f i and the arrows work as there.
+const plr = document.querySelector(".player");
+const vol = { v: Number(store.get("vol", "100")), m: store.get("muted", "false") === "true" };
+let speed = Number(store.get("speed", "1"));
+function applyVol() {
+  const d = $("dvr"), v = vol.m ? 0 : vol.v;
+  d.volume = vol.v / 100;
+  d.muted = vol.m;
+  $("cVol").value = v;
+  $("cVol").style.setProperty("--fill", v + "%");
+  $("cMute").innerHTML = svg(v === 0 ? "mute" : "speaker");
+  $("cMute").title = (v === 0 ? "Unmute" : "Mute") + " (m)" + (dvrOn ? "" : ": the live view has no sound, listen in OBS");
+}
+const playing = () => (dvrOn ? !$("dvr").paused : !$("video").paused);
+function flashBig(icon) {
+  const b = $("bigIcon");
+  b.innerHTML = svg(icon);
+  b.animate([{ opacity: 0.9, transform: "scale(0.8)" }, { opacity: 0, transform: "scale(1.5)" }], { duration: 500, easing: "ease-out" });
+}
+function ctlPaint() {
+  const on = playing();
+  plr.classList.toggle("paused", !on);
+  $("cPlay").innerHTML = svg(on ? "pause" : "tri");
+  $("cPlay").title = (on ? "Pause" : "Play") + " (k)";
+  $("cFull").innerHTML = svg(document.fullscreenElement ? "exitfull" : "full");
+  $("cSpeed").textContent = speed === 1 ? "1×" : speed + "×";
+  $("dvrLive").hidden = $("dvrbar").hidden;
+}
+setInterval(ctlPaint, 250);
+async function playToggle() {
+  if (dvrOn) {
+    const d = $("dvr");
+    if (d.paused) { d.play().catch(() => {}); flashBig("tri"); } else { d.pause(); flashBig("pause"); }
+  } else if (!$("dvrbar").hidden) {
+    // Pausing the live stream: it carries on in the recording, from here.
+    flashBig("pause");
+    goDvr(Math.max(0, Math.min(dvrR, dvrLiveAt()) - 1), true);
+  } else {
+    const v = $("video");
+    if (v.paused) { v.play().catch(() => {}); flashBig("tri"); } else { v.pause(); flashBig("pause"); }
+  }
+  ctlPaint();
+}
+// The skip shown over the video: seconds add up while skipping goes on, with chevrons that run.
+let skipAcc = 0, skipDir = 0, skipT = 0, lastSkipAt = 0;
+function skipFx(dir, sec) {
+  if (dir !== skipDir) skipAcc = 0;
+  skipDir = dir;
+  skipAcc += sec;
+  lastSkipAt = Date.now();
+  const el = dir < 0 ? $("skipL") : $("skipR");
+  for (const o of [$("skipL"), $("skipR")]) if (o !== el) o.classList.remove("on", "go");
+  el.querySelector(".t").textContent = (dir < 0 ? "-" : "+") + skipAcc;
+  el.classList.remove("go");
+  void el.offsetWidth;
+  el.classList.add("on", "go");
+  clearTimeout(skipT);
+  skipT = setTimeout(() => { el.classList.remove("on", "go"); skipAcc = 0; skipDir = 0; }, 900);
+}
+// Moves by `sec` in the recording; past its end is live.
+function skip(sec) {
+  if ($("dvrbar").hidden) return;
+  skipFx(sec < 0 ? -1 : 1, Math.abs(sec));
+  const at = dvrOn ? $("dvr").currentTime : Math.min(dvrR, dvrLiveAt());
+  const t = Math.max(0, at + sec);
+  if (t > dvrR - 1) return $("dvrLive").click();
+  if (dvrOn) $("dvr").currentTime = t;
+  else goDvr(t, false);
+}
+function fullscreen() { document.fullscreenElement ? document.exitFullscreen() : plr.requestFullscreen().catch(() => {}); }
+function mini() {
+  const on = !plr.classList.contains("mini");
+  if (on) {
+    const sp = document.createElement("div");
+    sp.id = "miniSpacer";
+    sp.style.aspectRatio = "16 / 9";
+    plr.before(sp);
+  } else $("miniSpacer")?.remove();
+  plr.classList.toggle("mini", on);
+}
+function setVol(v, muted) {
+  vol.v = Math.min(100, Math.max(0, v));
+  vol.m = muted ?? vol.m;
+  store.set("vol", vol.v);
+  store.set("muted", vol.m);
+  applyVol();
+}
+function setSpeed(x) {
+  speed = x;
+  store.set("speed", x);
+  $("dvr").playbackRate = x;
+  $("spdMenu").hidden = true;
+  ctlPaint();
+}
+$("dvrTime").title = "Click: time from the start, or time behind live";
+$("dvrTime").onclick = () => {
+  dvrFromStart = !dvrFromStart;
+  store.set("dvr-from-start", dvrFromStart);
+  dvrPaint();
+};
+$("cPlay").onclick = playToggle;
+$("cMute").onclick = () => setVol(vol.v || 50, !vol.m && vol.v > 0);
+$("cVol").oninput = () => setVol($("cVol").valueAsNumber, false);
+$("cFull").onclick = fullscreen;
+$("cMini").onclick = mini;
+$("cSpeed").onclick = (e) => {
+  e.stopPropagation();
+  const m = $("spdMenu");
+  m.hidden = !m.hidden;
+  m.replaceChildren(Object.assign(document.createElement("div"), { className: "h", textContent: "Playback speed" }),
+    ...[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((x) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.innerHTML = `<span>${x === 1 ? "Normal" : x + "×"}</span><span>${x === speed ? svg("check") : ""}</span>`;
+      b.onclick = () => setSpeed(x);
+      return b;
+    }));
+};
+document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#spdMenu, #cSpeed")) $("spdMenu").hidden = true; });
+// A click plays or pauses; a second one quickly after skips 10 s on the sides (left, right) or
+// goes full screen (middle); more clicks on a side keep skipping.
+let clickT = 0;
+function videoClick(e) {
+  if (editing) return;
+  const r = plr.getBoundingClientRect(), x = (e.clientX - r.left) / r.width;
+  const side = x < 0.35 ? -1 : x > 0.65 ? 1 : 0;
+  if (side && Date.now() - lastSkipAt < 700) { clearTimeout(clickT); clickT = 0; return skip(side * 10); }
+  if (clickT) {
+    clearTimeout(clickT);
+    clickT = 0;
+    return side ? skip(side * 10) : fullscreen();
+  }
+  clickT = setTimeout(() => { clickT = 0; playToggle(); }, 260);
+}
+for (const v of [$("video"), $("dvr")]) v.onclick = videoClick;
+// The controls rest after a moment of stillness while it plays.
+let idleT = 0;
+const wake = () => {
+  plr.classList.remove("idle");
+  clearTimeout(idleT);
+  idleT = setTimeout(() => { if (playing()) plr.classList.add("idle"); }, 2800);
+};
+plr.addEventListener("pointermove", (e) => {
+  plr.classList.toggle("edge", e.clientX - plr.getBoundingClientRect().left < 16);
+  wake();
+});
+plr.addEventListener("pointerleave", () => plr.classList.remove("edge"));
+plr.addEventListener("pointerdown", wake);
+wake();
+let overPlayer = false;
+plr.addEventListener("pointerenter", () => (overPlayer = true));
+plr.addEventListener("pointerleave", () => (overPlayer = false));
+document.addEventListener("keydown", (e) => {
+  if (e.target.closest("input, select, textarea") || e.ctrlKey || e.metaKey || e.altKey) return;
+  // In the editor the arrows move layers: only the plr's other keys work there, and only over it.
+  const arrows = e.key.startsWith("Arrow");
+  if (editing && (arrows || !overPlayer)) return;
+  const k = e.key.toLowerCase();
+  const act = {
+    " ": playToggle, k: playToggle, j: () => skip(-10), l: () => skip(10),
+    arrowleft: () => skip(-5), arrowright: () => skip(5),
+    arrowup: () => setVol(vol.v + 5, false), arrowdown: () => setVol(vol.v - 5, false),
+    m: () => setVol(vol.v || 50, !vol.m && vol.v > 0), f: fullscreen, i: () => !editing && mini(),
+    home: () => skip(-1e6), end: () => $("dvrLive").click(),
+    "<": () => setSpeed(Math.max(0.25, speed - 0.25)), ">": () => setSpeed(Math.min(2, speed + 0.25)),
+  }[k] || (/^[0-9]$/.test(k) && (() => { if (!$("dvrbar").hidden) { const t = (Number(k) / 10) * dvrDomain(); t >= dvrR - 1 ? $("dvrLive").click() : dvrOn ? ($("dvr").currentTime = t) : goDvr(t, false); } }));
+  if (!act) return;
+  e.preventDefault();
+  act();
+  wake();
+});
+$("cMini").innerHTML = svg("mini");
+$("cSpeed").title = "Playback speed (< and >)";
+applyVol();
+ctlPaint();
 </script>
 </body>
 </html>
