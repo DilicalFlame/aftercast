@@ -525,7 +525,7 @@ impl Controller {
     }
 
     /// A chapter starting now, set by the streamer.
-    fn latency_chapter(&mut self, title: String) {
+    pub(super) fn latency_chapter(&mut self, title: String) {
         let pressed_at = self.clock.now_ts();
         self.emit_render(
             "tui",

@@ -85,6 +85,8 @@ pub struct View {
     /// A `!title` from chat waiting for `y`/`n`.
     pub pending_title: Option<String>,
     pub latency_running: bool,
+    /// When OBS put the starting scene on air: the clock the overlay counts from too.
+    pub starting_since: Option<Timestamp>,
     /// Measured latency, else the configured default.
     pub latency_s: f64,
     pub keys: KeysStatus,
@@ -353,8 +355,6 @@ struct App {
     users: UserColors,
     /// `tui.animations` as of the last frame.
     motion: bool,
-    /// When the TUI first saw OBS on the starting scene (the banner's clock).
-    starting_seen: Option<Instant>,
     /// Go Live was just pressed: the Starting Soon banner is up at once, without waiting for
     /// the session to begin and OBS to switch scenes (until OBS shows it, or a few seconds).
     banner_hold: Option<Instant>,
@@ -407,7 +407,6 @@ impl App {
             notice: (String::new(), Instant::now()),
             users: UserColors::default(),
             motion: true,
-            starting_seen: None,
             banner_hold: None,
             ended_at: None,
             pick: 0,
@@ -1491,11 +1490,11 @@ impl App {
         self.draw_log(frame, log, view);
         let banner = self.banner_up(view);
         if banner && self.mode == Mode::Normal {
-            let since = *self.starting_seen.get_or_insert_with(Instant::now);
             let main = &view.config.obs.scenes.main;
-            starting::draw(frame, body, since.elapsed(), self.tick(), self.motion, main);
-        } else if !banner {
-            self.starting_seen = None;
+            // The clock is the overlay's: 0 until OBS shows the scene, then the same count.
+            let up = view.starting_since.map_or(0.0, |t| self.clock.now_ts().secs_since(t));
+            let up = Duration::from_secs_f64(up.max(0.0));
+            starting::draw(frame, body, up, self.tick(), self.motion, main);
         }
 
         // The notice wins on the info line; the README summary gives way.
@@ -3435,6 +3434,7 @@ mod tests {
             }])),
             pending_title: None,
             latency_running: false,
+            starting_since: None,
             latency_s: 4.2,
             keys: KeysStatus::On,
             keys_per_min: vec![0, 10, 40],

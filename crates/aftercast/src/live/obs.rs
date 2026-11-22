@@ -352,6 +352,23 @@ impl Controller {
         // The starting overlay counts up from when the starting scene came on.
         self.starting_since = (to == self.config.obs.scenes.starting)
             .then(|| self.starting_since.unwrap_or_else(|| self.clock.now_ts()));
+        // Starting Soon and Ending are chapters of their own, so viewers can skip them; the
+        // chapter after Starting Soon is the stream proper. (BRB: `chapter_on_brb`.)
+        if self.begun {
+            let scenes = &self.config.obs.scenes;
+            let title = if to == scenes.starting {
+                Some(self.config.stream.starting_chapter_title.clone())
+            } else if to == scenes.ending {
+                Some(self.config.stream.ending_chapter_title.clone())
+            } else if from.as_deref() == Some(scenes.starting.as_str()) {
+                Some(self.config.stream.first_chapter_title.clone())
+            } else {
+                None
+            };
+            if let Some(title) = title {
+                self.latency_chapter(title);
+            }
+        }
         if !infer {
             return;
         }

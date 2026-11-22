@@ -1798,6 +1798,7 @@ impl Controller {
             chat: self.chat_pane(),
             pending_title: self.pending_title.clone(),
             latency_running: self.latency_run.is_some(),
+            starting_since: self.starting_since,
             latency_s: self.latency(),
             keys: match (&self.capture.hook, self.config.capture.keys) {
                 (_, false) => KeysStatus::Off,

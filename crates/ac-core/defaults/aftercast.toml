@@ -71,7 +71,9 @@ ending = "Ending"
 
 [stream]
 default_latency_s = 5.0         # used until measured (:latency)
-first_chapter_title = "Start"
+first_chapter_title = "Start"     # the chapter once the starting screen is left (Enter)
+starting_chapter_title = "Starting Soon"  # chapter while the starting scene is on air
+ending_chapter_title = "Ending"           # chapter while the ending scene is on air
 chapter_on_quest_change = true
 chapter_on_brb = true           # BRB gets a "Break" chapter, then returns to the chapter before
 chapter_on_question = false     # add "Q: ..." chapter when a question is shown

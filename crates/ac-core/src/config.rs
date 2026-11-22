@@ -485,6 +485,10 @@ impl Default for ObsScenes {
 pub struct Stream {
     pub default_latency_s: f64,
     pub first_chapter_title: String,
+    /// Chapter while the starting scene is on air; `first_chapter_title` begins when it leaves.
+    pub starting_chapter_title: String,
+    /// Chapter while the ending scene is on air.
+    pub ending_chapter_title: String,
     pub chapter_on_quest_change: bool,
     pub chapter_on_brb: bool,
     pub chapter_on_question: bool,
@@ -508,6 +512,8 @@ impl Default for Stream {
         Self {
             default_latency_s: 5.0,
             first_chapter_title: "Start".into(),
+            starting_chapter_title: "Starting Soon".into(),
+            ending_chapter_title: "Ending".into(),
             chapter_on_quest_change: true,
             chapter_on_brb: true,
             chapter_on_question: false,
