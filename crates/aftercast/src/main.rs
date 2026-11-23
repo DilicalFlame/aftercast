@@ -86,6 +86,9 @@ fn run(cli: Cli) -> Result<u8> {
             render(&home, config, session.as_deref(), &opts)
         }
         Some(Command::Sessions { json }) => sessions(&home, &config_path, json),
+        Some(Command::Desc { session, push }) => {
+            runtime()?.block_on(desc(&home, &config_path, session.as_deref(), push))
+        }
         Some(Command::Mcp) => {
             let server = ac_mcp::Server::new(home.clone(), config_path.clone());
             server.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
@@ -200,6 +203,54 @@ fn sessions(home: &Home, config_path: &std::path::Path, json: bool) -> Result<u8
             r["title"].as_str().unwrap_or_default(),
         );
     }
+    Ok(exit::OK)
+}
+
+/// Renders a session's description from its README and events (as the live session does)
+/// and prints it. `--push` uploads it unless it equals what was pushed last.
+async fn desc(
+    home: &Home,
+    config_path: &std::path::Path,
+    session: Option<&str>,
+    push: bool,
+) -> Result<u8> {
+    use ac_core::session::Session;
+    use error::AppError;
+    let config = Config::load(config_path)?;
+    let session = Session::open(&session_dir(home, &config, session)?)?;
+    let events = ac_core::event::read_events(&session.events_file())?;
+    let state = ac_core::session_state::SessionState::from_events(&events);
+    let clock = std::sync::Arc::new(Clock::new());
+    let (ctx, _) = ac_template::context(&ac_template::ContextInput {
+        config: &config,
+        meta: &session.meta,
+        state: &state,
+        now: clock.now_ts(),
+    });
+    let readme = std::fs::read_to_string(session.readme())?;
+    let desc = ac_template::Renderer::new(&home.path(&config.paths.templates))
+        .render(&readme, &ctx, &config.readme)
+        .map_err(|e| AppError::Usage(e.to_string()))?;
+    if !push {
+        println!("{}", desc.text);
+        eprintln!("{} chars (not pushed; --push uploads it)", desc.chars());
+        return Ok(exit::OK);
+    }
+    let pushed = session.render_dir().join("description.pushed.txt");
+    if std::fs::read_to_string(&pushed).is_ok_and(|p| p == desc.text) {
+        println!("description unchanged; not pushed");
+        return Ok(exit::OK);
+    }
+    let yt = live::client(home, &config, None, clock)?;
+    yt.update_description(&session.meta.video_id, &desc.text, false)
+        .await?;
+    std::fs::create_dir_all(session.render_dir())?;
+    std::fs::write(&pushed, &desc.text)?;
+    println!(
+        "description pushed ({} chars) to {}",
+        desc.chars(),
+        session.meta.video_id
+    );
     Ok(exit::OK)
 }
 

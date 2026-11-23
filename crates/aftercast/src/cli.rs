@@ -127,8 +127,6 @@ pub enum Command {
     Mcp,
     /// Print the shell integration snippet
     ShellHook { shell: Shell },
-    /// Measure stream latency (needs a live session)
-    Latency,
     /// Make overlays (specs/2026-11-23-overlay-plugins.md)
     Overlay {
         #[command(subcommand)]

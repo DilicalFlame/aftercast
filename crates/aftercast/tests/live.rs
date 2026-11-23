@@ -172,3 +172,38 @@ fn mock_session_checkpoints_sync_and_resume() {
     let toml = fs::read_to_string(session_dir.join("session.toml")).unwrap();
     assert!(toml.contains("status = \"live\""), "{toml}");
 }
+
+#[test]
+fn desc_renders_a_finished_session_offline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("Streams");
+    let aftercast = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_aftercast"))
+            .arg("--home")
+            .arg(&home)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(aftercast(&["init"]).status.success());
+    let script = tmp.path().join("run.txt");
+    fs::write(
+        &script,
+        "+15s checkpoint \"Project setup\"\n+30s cp Parser\nquit\n",
+    )
+    .unwrap();
+    let out = session(&home, &["--script"]).arg(&script).output().unwrap();
+    assert!(out.status.success());
+
+    let out = aftercast(&["desc"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    // (Chapter times follow the mock's virtual clock, so only the README text is checked.)
+    assert!(text.contains("Insomnia Driven Development #001"), "{text}");
+    assert!(text.contains("Chapters"), "{text}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not pushed"));
+}

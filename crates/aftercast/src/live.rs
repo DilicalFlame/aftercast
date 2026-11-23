@@ -527,7 +527,12 @@ async fn remove_draft(dir: &Path) {
 }
 
 /// The YouTube client: mock fixtures, or the signed-in profile.
-fn client(home: &Home, config: &Config, mock: Option<&Path>, clock: Arc<Clock>) -> Result<Client> {
+pub(crate) fn client(
+    home: &Home,
+    config: &Config,
+    mock: Option<&Path>,
+    clock: Arc<Clock>,
+) -> Result<Client> {
     let quota = QuotaGuard::open(
         &home.join("state/quota.json"),
         config.youtube.daily_quota_reserve,

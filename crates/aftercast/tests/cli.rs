@@ -19,7 +19,7 @@ fn stdout(out: &Output) -> String {
 #[test]
 fn stubbed_subcommand_exits_1() {
     let dir = tempfile::tempdir().unwrap();
-    let out = aftercast(dir.path(), &["desc"]);
+    let out = aftercast(dir.path(), &["export", "silences"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("not yet implemented"));
 }
