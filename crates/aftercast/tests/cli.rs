@@ -19,9 +19,21 @@ fn stdout(out: &Output) -> String {
 #[test]
 fn stubbed_subcommand_exits_1() {
     let dir = tempfile::tempdir().unwrap();
-    let out = aftercast(dir.path(), &["sessions"]);
+    let out = aftercast(dir.path(), &["desc"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("not yet implemented"));
+}
+
+#[test]
+fn sessions_lists_nothing_then_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("Streams");
+    assert_eq!(aftercast(&home, &["init"]).status.code(), Some(0));
+    let out = aftercast(&home, &["sessions"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("no sessions yet"));
+    let out = aftercast(&home, &["sessions", "--json"]);
+    assert_eq!(stdout(&out).trim(), "[]");
 }
 
 #[test]

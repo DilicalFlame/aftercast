@@ -85,6 +85,7 @@ fn run(cli: Cli) -> Result<u8> {
             };
             render(&home, config, session.as_deref(), &opts)
         }
+        Some(Command::Sessions { json }) => sessions(&home, &config_path, json),
         Some(Command::Mcp) => {
             let server = ac_mcp::Server::new(home.clone(), config_path.clone());
             server.serve(std::io::stdin().lock(), std::io::stdout().lock())?;
@@ -129,6 +130,77 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::GENERIC)
         }
     }
+}
+
+/// Every session, newest first: episode, folder, status, recording length and how far the
+/// after-stream steps got.
+fn sessions(home: &Home, config_path: &std::path::Path, json: bool) -> Result<u8> {
+    let config = Config::load(config_path)?;
+    let mut rows = Vec::new();
+    for dir in ac_library::session_dirs(home, &config).iter().rev() {
+        let Ok(s) = ac_core::session::Session::open(dir) else {
+            continue;
+        };
+        let length = std::fs::read_to_string(dir.join("media/master.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|m| m["duration_s"].as_f64());
+        let status = serde_json::to_value(s.meta.status)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let name = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        rows.push(serde_json::json!({
+            "name": name,
+            "episode": s.meta.episode,
+            "rehearse": s.meta.episode == ac_core::session::REHEARSE_EPISODE,
+            "status": status,
+            "title": s.meta.title_at_start.clone().unwrap_or_default(),
+            "video_id": s.meta.video_id,
+            "duration_s": length,
+            "processed": dir.join("derived/index.md").exists(),
+            "has_suggestions": dir.join("ai/suggestions.json").exists(),
+            "rendered": dir.join("out").is_dir(),
+            "path": dir,
+        }));
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).unwrap_or_default()
+        );
+        return Ok(exit::OK);
+    }
+    if rows.is_empty() {
+        println!("no sessions yet");
+    }
+    for r in &rows {
+        let done: Vec<&str> = [
+            ("processed", "post"),
+            ("has_suggestions", "clips"),
+            ("rendered", "render"),
+        ]
+        .iter()
+        .filter(|(k, _)| r[k] == true)
+        .map(|(_, l)| *l)
+        .collect();
+        println!(
+            "{:<20} ep{:03}  {:<9} {:>8}  {:<18} {}",
+            r["name"].as_str().unwrap_or_default(),
+            r["episode"].as_u64().unwrap_or(0),
+            r["status"].as_str().unwrap_or_default(),
+            r["duration_s"]
+                .as_f64()
+                .map_or("-".into(), ac_core::time::hms),
+            done.join(" "),
+            r["title"].as_str().unwrap_or_default(),
+        );
+    }
+    Ok(exit::OK)
 }
 
 fn runtime() -> Result<tokio::runtime::Runtime> {
