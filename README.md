@@ -104,7 +104,7 @@ aftercast rehearse                     # try everything without going live
 aftercast https://www.youtube.com/live/VIDEO_ID
 ```
 
-YouTube access (a Google Cloud OAuth client, once) and OBS WebSocket setup are in the wiki: [Setup](https://github.com/DilicalFlame/aftercast/wiki/Setup).
+YouTube access needs a Google Cloud OAuth client of your own, created once (about ten minutes), and OBS needs its WebSocket server on. Both are walked through in the wiki: [Setup](https://github.com/DilicalFlame/aftercast/wiki/Setup). Sign-in shows a "Google hasn't verified this app" warning. That is expected for your own project, and [troubleshooting](https://github.com/DilicalFlame/aftercast/wiki/Setup#troubleshooting-sign-in) covers the common errors.
 
 ## Bot commands
 
