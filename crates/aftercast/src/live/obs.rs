@@ -335,9 +335,18 @@ impl Controller {
         self.save_recordings();
     }
 
-    /// BRB is a chapter of its own: "Break" from its start, then back to the chapter before it.
+    /// BRB is a chapter of its own: "Break" from its start, then back to the chapter before it
+    /// (unless a chapter was set during the break: that one already carries on).
     fn brb_chapter(&mut self, start: bool) {
         if !self.begun || !self.config.stream.chapter_on_brb {
+            return;
+        }
+        let now = self.clock.now_ts();
+        let latest = ac_template::chapters::candidates(&self.state, &self.config.stream)
+            .into_iter()
+            .filter(|c| c.0 <= now)
+            .max_by_key(|c| c.0);
+        if !start && latest.is_some_and(|c| c.1 != ac_template::chapters::BREAK) {
             return;
         }
         let title = if start {

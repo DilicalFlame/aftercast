@@ -305,6 +305,39 @@ fn obs_restart_after_stop_makes_the_session_live_again() {
     assert!(toml.contains("status = \"live\""), "{toml}");
 }
 
+/// BRB saves "Break", then goes back to the chapter before it; a chapter set during the
+/// break (by a moderator, say) already carries on, so it is not saved a second time.
+#[test]
+fn brb_resumes_the_chapter_unless_one_was_set_during_the_break() {
+    let titles = |script: &str| -> Vec<String> {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_, events) = run(tmp.path(), script);
+        events
+            .iter()
+            .filter(|e| e["type"] == "checkpoint")
+            .map(|e| e["data"]["title"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let plain = titles(
+        "+1s obs stream started
++5s brb
++5s back
+quit
+",
+    );
+    assert_eq!(plain.len(), 2, "{plain:?}");
+    assert_eq!(plain[0], "Break");
+    let mid = titles(
+        "+1s obs stream started
++5s brb
++5s chat mo mod !chapter Parser
++5s back
+quit
+",
+    );
+    assert_eq!(mid, ["Break", "Parser"]);
+}
+
 #[test]
 fn mock_obs_brb_scenes_recordings_and_down() {
     let tmp = tempfile::tempdir().unwrap();
