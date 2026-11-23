@@ -1,0 +1,49 @@
+# Toast, a first party overlay as a plugin (id "toast": it is the overlay of that name).
+[overlay]
+id = "toast"
+name = "Toast"
+version = "1.0.0"
+api = 1
+entry = "index.html"
+description = "Short notices: a bot reply that did not fit chat."
+author = "aftercast"
+license = "MIT"
+
+[frame]
+x = 1180
+y = 40
+width = 700
+height = 200
+align = "right"
+
+[capabilities]
+reads = ["toast"]
+audio = false
+network = []
+
+[[skin]]
+id = "nvim"
+name = "Neovim"
+
+[[skin]]
+id = "clean"
+name = "Clean"
+
+[[skin]]
+id = "broadcast"
+name = "Broadcast"
+
+[[skin]]
+id = "glass"
+name = "Glass"
+
+[[skin]]
+id = "minimal"
+name = "Minimal"
+
+[[scenario]]
+name = "Sample"
+[scenario.state.toast]
+action = "show"
+[scenario.state.toast.data]
+text = "Thanks for the Super Chat, viewer42!"

@@ -117,10 +117,18 @@ removes the filters and offsets when it exits (and after a crash, on the next st
 filter keeps up to 500 ms of frames in video memory. Scene switches made in OBS itself are
 not delayed.
 
-Pages are transparent and reconnect by themselves when aftercast restarts. To restyle, put
-`overlay.css`, `overlay.js` or `<name>.html` in `<home>\overlays\`; theme colors and fonts
-come from `[overlay]`. Other files in that folder (images, fonts, videos) are served at
-`/overlay/assets/<file>`, for a custom page such as a branded `brb.html`.
+Pages are transparent and reconnect by themselves when aftercast restarts. Every overlay is a
+plugin built into aftercast (`crates/ac-server/plugins/<name>`; the toast overlay is a user plugin, `examples/user-plugins/toast`). To change one, install a plugin
+of the same id over it (`aftercast plugin add`; `plugin remove` brings the built-in back), or add
+a skin as a style sheet in `<home>\overlays\skins\<overlay>\<skin>.css`. Theme colors and fonts
+come from `[overlay]`. Other files in `<home>\overlays` (images, fonts, videos) are served at
+`/overlay/assets/<file>`.
+
+**Overlay plugins.** Anyone can add an overlay: `aftercast overlay new goal-bar` writes a project
+(plain HTML/CSS/JS, or `--template svelte`), `aftercast plugin add <folder | .zip | git-url | id>`
+installs one, and it shows up in the editor next to the built-in overlays with its own settings
+form, skins, movable parts and sample data. Packages can be signed (`plugin keygen`, `plugin pack
+--sign`) and listed in a registry (`[plugin_registry]`, `plugin search`). See `docs/plugins/README.md`.
 
 **Rehearse.** To try scenes and overlays without going live:
 
