@@ -1,0 +1,37 @@
+name: Feature request
+description: An idea for aftercast
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The situation on stream or after it that is hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How you imagine it working. Mockups welcome.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - TUI and keys
+        - OBS control
+        - Overlays and scene editor
+        - Plugins
+        - Chat and bot
+        - Capture
+        - Post stream, render or MCP
+        - Other
+  - type: checkboxes
+    id: plugin
+    attributes:
+      label: Could it be an overlay plugin
+      options:
+        - label: I checked the plugin guide and this needs a change in aftercast itself
