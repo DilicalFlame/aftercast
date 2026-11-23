@@ -128,10 +128,6 @@ fn run(cli: Cli) -> Result<u8> {
             runtime()?.block_on(live_session(&home, &config_path, &cli, true))
         }
         None => runtime()?.block_on(live_session(&home, &config_path, &cli, false)),
-        Some(_) => {
-            eprintln!("not yet implemented");
-            Ok(exit::GENERIC)
-        }
     }
 }
 

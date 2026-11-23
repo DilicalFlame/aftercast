@@ -107,11 +107,6 @@ pub enum Command {
         #[arg(long)]
         captions: Option<CaptionsMode>,
     },
-    /// Export derived data for review
-    Export {
-        #[command(subcommand)]
-        what: ExportWhat,
-    },
     /// Render the description; --push uploads it
     Desc {
         session: Option<String>,
@@ -212,12 +207,6 @@ pub enum AuthAction {
     Logout,
     /// Store the obs-websocket password (read from stdin) in the OS keyring
     Obs,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum ExportWhat {
-    /// Materialise dead segments for review
-    Silences { session: Option<String> },
 }
 
 #[derive(Debug, Subcommand)]
