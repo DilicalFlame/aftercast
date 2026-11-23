@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path as UrlPath, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use lofty::file::TaggedFileExt;
 use lofty::tag::Accessor;
@@ -78,9 +78,10 @@ fn tags(path: &Path) -> (String, String, String) {
 pub(crate) async fn music_index(
     State(s): State<Arc<Shared>>,
     UrlPath((playlist, file)): UrlPath<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     if !config::skin_name_ok(&playlist) || file != "index.json" {
-        return music_file(State(s), UrlPath((playlist, file))).await;
+        return music_file(State(s), UrlPath((playlist, file)), headers).await;
     }
     let folder = s.dir.join("sounds").join(&playlist);
     let mut files: Vec<String> = fs::read_dir(&folder)
@@ -105,6 +106,7 @@ pub(crate) async fn music_index(
 pub(crate) async fn music_file(
     State(s): State<Arc<Shared>>,
     UrlPath((playlist, file)): UrlPath<(String, String)>,
+    headers: HeaderMap,
 ) -> Response {
     let mime = match ext(&file).as_str() {
         "mp3" => "audio/mpeg",
@@ -117,10 +119,51 @@ pub(crate) async fn music_file(
     if !config::skin_name_ok(&playlist) || !safe_name(&file) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match fs::read(s.dir.join("sounds").join(&playlist).join(&file)) {
-        Ok(bytes) => ([(header::CONTENT_TYPE, mime)], bytes).into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    let Ok(bytes) = fs::read(s.dir.join("sounds").join(&playlist).join(&file)) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    // The player jumps into the middle of a track (a random part of it), which needs byte ranges.
+    let total = bytes.len();
+    if let Some((from, to)) = headers
+        .get(header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| byte_range(v, total))
+    {
+        return (
+            StatusCode::PARTIAL_CONTENT,
+            [
+                (header::CONTENT_TYPE, mime.to_owned()),
+                (header::ACCEPT_RANGES, "bytes".to_owned()),
+                (header::CONTENT_RANGE, format!("bytes {from}-{to}/{total}")),
+            ],
+            bytes[from..=to].to_vec(),
+        )
+            .into_response();
     }
+    (
+        [
+            (header::CONTENT_TYPE, mime),
+            (header::ACCEPT_RANGES, "bytes"),
+        ],
+        bytes,
+    )
+        .into_response()
+}
+
+/// `bytes=a-b`, `bytes=a-` or `bytes=-n` as the first and last byte of a file of `total` bytes.
+fn byte_range(header: &str, total: usize) -> Option<(usize, usize)> {
+    let (a, b) = header
+        .strip_prefix("bytes=")?
+        .split(',')
+        .next()?
+        .split_once('-')?;
+    let last = total.checked_sub(1)?;
+    let (from, to) = match (a.trim(), b.trim()) {
+        ("", n) => (total.saturating_sub(n.parse().ok()?), last),
+        (a, "") => (a.parse().ok()?, last),
+        (a, b) => (a.parse().ok()?, b.parse::<usize>().ok()?.min(last)),
+    };
+    (from <= to && from <= last).then_some((from, to))
 }
 
 /// `/overlay/cover/{playlist}/{file}`: a track's album art: the picture in its tags, else a
@@ -187,6 +230,33 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' if bytes
+                .get(i + 1..i + 3)
+                .is_some_and(|h| h.iter().all(u8::is_ascii_hexdigit)) =>
+            {
+                let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or("00");
+                out.push(u8::from_str_radix(hex, 16).unwrap_or(b'?'));
+                i += 3;
+            }
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn percent(s: &str) -> String {
@@ -282,11 +352,23 @@ pub(crate) async fn brb_json(State(s): State<Arc<Shared>>, uri: axum::http::Uri)
 /// `/overlay/upi.svg`: the QR code for `[overlay.brb_screen] qr_link`, else the UPI id in
 /// `[vars.support] upi` (404 without either), with the overlay picture in its middle and the
 /// overlay's accent color on its eyes.
-pub(crate) async fn upi_svg(State(s): State<Arc<Shared>>) -> Response {
+pub(crate) async fn upi_svg(State(s): State<Arc<Shared>>, uri: axum::http::Uri) -> Response {
     let Ok(c) = Config::load(&s.config) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let link = c.overlay.brb_screen.qr_link.trim();
+    // `?link=` and `?accent=` let a plugin ask for its own text and eye color.
+    let query = |key: &str| {
+        uri.query()
+            .and_then(|q| {
+                q.split('&')
+                    .find_map(|p| p.strip_prefix(&format!("{key}=")))
+            })
+            .map(percent_decode)
+    };
+    let own = query("link").filter(|l| (1..=500).contains(&l.len()));
+    let link = own
+        .as_deref()
+        .unwrap_or_else(|| c.overlay.brb_screen.qr_link.trim());
     let data = if link.is_empty() {
         let Some(upi) = c
             .vars
@@ -314,7 +396,9 @@ pub(crate) async fn upi_svg(State(s): State<Arc<Shared>>) -> Response {
         };
         (mime, bytes)
     });
-    let accent = if config::rgb(&c.overlay.accent).is_some() {
+    let accent = if let Some(a) = query("accent").filter(|a| config::rgb(a).is_some()) {
+        a
+    } else if config::rgb(&c.overlay.accent).is_some() {
         c.overlay.accent.clone()
     } else {
         "#c0359b".into()

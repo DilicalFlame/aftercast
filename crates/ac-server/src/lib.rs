@@ -4,6 +4,7 @@
 
 mod dvr;
 mod media;
+pub mod plugins;
 mod rehearse;
 
 pub use rehearse::{Feed, Rehearse};
@@ -21,8 +22,9 @@ use ac_core::config;
 use ac_core::session_state::SessionState;
 use ac_core::time::Clock;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -36,13 +38,11 @@ pub const OVERLAYS: [&str; 11] = [
     "now", "question", "toast", "brb", "latency", "chapters", "keys", "captions", "starting",
     "status", "alert",
 ];
-const PAGE: &str = include_str!("../overlays/overlay.html");
-const SCRIPT: &str = include_str!("../overlays/overlay.js");
-const STYLE: &str = include_str!("../overlays/overlay.css");
 const SFX: &str = include_str!("../overlays/sfx.js");
-const ALERT: &str = include_str!("../overlays/alert.js");
-const MUSIC: &str = include_str!("../overlays/music.js");
 const DVR: &str = include_str!("../overlays/dvr.js");
+const SDK: &str = include_str!("../overlays/sdk.js");
+const AUDIO: &str = include_str!("../overlays/audio.js");
+const UI: &str = include_str!("../overlays/ui.js");
 pub const TOKEN_HEADER: &str = "x-aftercast-token";
 
 /// `{ "overlay": "question", "action": "show", "data": {...} }`.
@@ -75,6 +75,14 @@ pub struct Overlays {
     queue: Option<mpsc::UnboundedSender<(Instant, OverlayMsg)>>,
     /// `:root { --bg: ... }` and every overlay's place, from `[overlay]` (see [`theme`]).
     theme: Arc<Mutex<String>>,
+    /// `{ plugin id: { params, skin, enabled } }`, sent with the theme.
+    theme_extra: Arc<Mutex<Value>>,
+    /// `[overlay.<name>] hide_when`: overlay -> the overlays it hides for.
+    rules: Arc<Mutex<BTreeMap<String, Vec<String>>>>,
+    /// Overlays on screen: until a hide (`None`), or until a time for the ones that never hide.
+    active: Arc<Mutex<BTreeMap<String, Option<std::time::Instant>>>>,
+    /// The overlays hidden right now, as last sent.
+    suppressed: Arc<Mutex<Vec<String>>>,
 }
 
 impl Default for Overlays {
@@ -85,6 +93,10 @@ impl Default for Overlays {
             delay_ms: Arc::default(),
             queue: None,
             theme: Arc::new(Mutex::new(theme(&config::Overlay::default()))),
+            theme_extra: Arc::new(Mutex::new(Value::Object(Default::default()))),
+            rules: Arc::default(),
+            active: Arc::default(),
+            suppressed: Arc::default(),
         }
     }
 }
@@ -111,14 +123,15 @@ impl Overlays {
         self.delay_ms.store(ms, Ordering::Relaxed);
     }
 
-    /// New colors and places: open pages restyle at once (not delayed), new pages load
-    /// with them.
-    pub fn set_theme(&self, css: String) {
+    /// New colors and places (and plugin settings): open pages restyle at once (not delayed),
+    /// new pages load with them.
+    pub fn set_theme(&self, css: String, plugins: Value) {
         *self.theme.lock().expect("overlay theme lock") = css.clone();
+        *self.theme_extra.lock().expect("overlay theme lock") = plugins.clone();
         self.emit(OverlayMsg {
             overlay: "theme".into(),
             action: Action::Show,
-            data: serde_json::json!({ "css": css }),
+            data: serde_json::json!({ "css": css, "plugins": plugins }),
         });
     }
 
@@ -137,7 +150,64 @@ impl Overlays {
         }
     }
 
+    /// How long overlays that never send a hide count as on screen.
+    fn lately(name: &str) -> Option<Duration> {
+        match name {
+            "toast" => Some(Duration::from_millis(5500)),
+            "captions" => Some(Duration::from_millis(4500)),
+            "keys" => Some(Duration::from_millis(3000)),
+            "alert" => Some(Duration::from_millis(7000)),
+            _ => None,
+        }
+    }
+
+    /// Which overlays are hidden because one they are set to hide for is on screen. Sent to the
+    /// pages as the `__suppress` message whenever the set changes.
+    pub fn suppress_tick(&self) {
+        let now = std::time::Instant::now();
+        let on: Vec<String> = {
+            let active = self.active.lock().expect("overlay active lock");
+            active
+                .iter()
+                .filter(|(_, until)| until.is_none_or(|t| t > now))
+                .map(|(n, _)| n.clone())
+                .collect()
+        };
+        let mut hidden: Vec<String> = self
+            .rules
+            .lock()
+            .expect("overlay rules lock")
+            .iter()
+            .filter(|(_, by)| by.iter().any(|b| on.contains(b)))
+            .map(|(n, _)| n.clone())
+            .collect();
+        hidden.sort();
+        let mut last = self.suppressed.lock().expect("overlay suppressed lock");
+        if *last != hidden {
+            *last = hidden.clone();
+            drop(last);
+            self.emit(OverlayMsg {
+                overlay: "__suppress".into(),
+                action: Action::Show,
+                data: serde_json::json!({ "names": hidden }),
+            });
+        }
+    }
+
+    pub fn set_rules(&self, rules: BTreeMap<String, Vec<String>>) {
+        *self.rules.lock().expect("overlay rules lock") = rules;
+    }
+
     fn emit(&self, msg: OverlayMsg) {
+        if !msg.overlay.starts_with("__") && msg.overlay != "theme" {
+            let mut active = self.active.lock().expect("overlay active lock");
+            if msg.action == Action::Hide {
+                active.remove(&msg.overlay);
+            } else {
+                let until = Self::lately(&msg.overlay).map(|d| std::time::Instant::now() + d);
+                active.insert(msg.overlay.clone(), until);
+            }
+        }
         // Toasts are moments, not state: never replayed.
         if msg.action != Action::Update {
             let mut last = self.last.lock().expect("overlay state lock");
@@ -156,6 +226,8 @@ pub struct Shared {
     pub token: String,
     /// `<home>/overlays`: files here override the built-in page, script and style.
     pub dir: PathBuf,
+    /// `<home>/plugins`: one folder per installed overlay plugin.
+    pub plugins: PathBuf,
     /// `aftercast.toml`: the rehearse page saves overlay places into it.
     pub config: PathBuf,
     /// `aftercast rehearse`: serves the rehearse page at `/rehearse`.
@@ -168,9 +240,18 @@ pub async fn bind(
     port: u16,
     shared: Shared,
 ) -> std::io::Result<(SocketAddr, impl Future<Output = std::io::Result<()>>)> {
+    let (plugins_dir, config_file, rehearsing) = (
+        shared.plugins.clone(),
+        shared.config.clone(),
+        shared.rehearse.is_some(),
+    );
+    let watch_overlays = shared.overlays.clone();
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, port)).await?;
     let addr = listener.local_addr()?;
     let app = Router::new()
+        .route("/sdk/{file}", get(sdk))
+        .route("/plugin/{id}/{*path}", get(plugin_file))
+        .route("/api/plugins", get(plugins_json))
         .route("/overlay/assets/{file}", get(asset))
         .route("/overlay/{name}", get(page))
         .route("/overlay/skins/{overlay}/{file}", get(skin_css))
@@ -198,6 +279,8 @@ pub async fn bind(
         )
         .route("/rehearse/pack", post(rehearse::pack))
         .route("/rehearse/options", post(rehearse::options))
+        .route("/rehearse/plugin", post(rehearse::plugin_param))
+        .route("/rehearse/plugin-parts", post(rehearse::plugin_parts))
         .route("/rehearse/source", post(rehearse::source))
         .route("/rehearse/obs/watch", post(rehearse::watch))
         .route("/rehearse/obs/item", post(rehearse::item))
@@ -208,7 +291,48 @@ pub async fn bind(
         .route("/rehearse/obs/source", post(rehearse::source_edit))
         .route("/rehearse/add-source", post(rehearse::add_source))
         .route("/rehearse/mode", post(rehearse::mode))
-        .with_state(Arc::new(shared));
+        .with_state(Arc::new(shared))
+        .layer(axum::middleware::from_fn(read_cors));
+    let tick_overlays = shared_overlays_for_tick(&watch_overlays);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            tick_overlays.suppress_tick();
+        }
+    });
+    // Plugins come and go while the server runs: the theme (their frames and settings) is
+    // sent again when the set changes, and while rehearsing a saved file of a plugin reloads
+    // its pages.
+    tokio::spawn(async move {
+        let overlays = watch_overlays;
+        let mut seen: BTreeMap<String, u128> = BTreeMap::new();
+        let mut first = true;
+        loop {
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            let found = plugins::scan(&plugins_dir);
+            let before: Vec<String> = seen.keys().cloned().collect();
+            let ids: Vec<String> = found.iter().map(|p| p.id.clone()).collect();
+            seen.retain(|k, _| ids.contains(k));
+            for p in &found {
+                let at = plugins::newest(&p.dir);
+                let was = seen.insert(p.id.clone(), at);
+                if rehearsing && !first && was.is_some_and(|w| w != at) {
+                    overlays.emit(OverlayMsg {
+                        overlay: "__plugin".into(),
+                        action: Action::Update,
+                        data: serde_json::json!({ "id": p.id }),
+                    });
+                }
+            }
+            if !first
+                && ids != before
+                && let Ok(config) = config::Config::load(&config_file)
+            {
+                apply_theme(&overlays, &config, &plugins_dir);
+            }
+            first = false;
+        }
+    });
     Ok((addr, async move { axum::serve(listener, app).await }))
 }
 
@@ -216,12 +340,17 @@ pub async fn bind(
 /// `--y` (top left), `--w`, `--h`, `--s` (scale), `--r` (rotation), `--align`,
 /// `--text-align` and `--bg` (with its opacity; `--bg-solid` without).
 pub fn theme(o: &config::Overlay) -> String {
+    theme_with(o, &[])
+}
+
+/// [`theme`] plus the frames of plugin overlays (by id).
+pub fn theme_with(o: &config::Overlay, plugin_frames: &[(String, config::Frame)]) -> String {
     let mut css = format!(
         ":root {{ --bg: {}; --bg-solid: {}; --accent: {}; --fg: {}; --muted: {}; --font-mono: \"{}\"; --font-sans: \"{}\"; }}",
         o.bg, o.bg, o.accent, o.fg, o.muted, o.font_mono, o.font_sans
     );
     css.push_str(&format!(
-        "\n:root {{ --bar-order: {}; --bar-animate: {}; --bar-marquee: {}; --bar-speed: {}; --bar-extras: {}; --sound: {}; --volume: {}; --sound-skin: {}; }}",
+        "\n:root {{ --bar-order: {}; --bar-animate: {}; --bar-marquee: {}; --bar-speed: {}; --bar-extras: {}; --sound: {}; --volume: {}; --sound-skin: {}; --brb-fade: {}; --brb-clip: {}; }}",
         if o.bar.order.is_empty() {
             "none".into()
         } else {
@@ -237,7 +366,9 @@ pub fn theme(o: &config::Overlay) -> String {
         },
         u8::from(o.sound.enabled),
         o.sound.volume,
-        o.sound.skin
+        o.sound.skin,
+        o.sound.brb_fade,
+        o.sound.brb_clip
     ));
     // Each segment of the status bar wears its overlay's skin (the pack when it has none).
     let looks: Vec<String> = o
@@ -290,49 +421,57 @@ pub fn theme(o: &config::Overlay) -> String {
         }
     ));
     for (name, f) in o.frames() {
-        // The frame as the skin it wears changes it (the alert wears its first animation when
-        // the pack is not one of its own).
-        let worn = if f.skin.is_empty() { &o.skin } else { &f.skin };
-        let worn = if name == "alert" && !ALERT_SKINS.contains(&worn.as_str()) {
-            ALERT_SKINS[0]
-        } else {
-            worn.as_str()
-        };
-        let f = &f.for_skin(worn);
-        let (flex, text) = match f.align {
-            config::Align::Left => ("flex-start", "left"),
-            config::Align::Center => ("center", "center"),
-            config::Align::Right => ("flex-end", "right"),
-        };
-        let color = if f.bg.is_empty() { &o.bg } else { &f.bg };
-        let skin = if f.skin.is_empty() { &o.skin } else { &f.skin };
-        let (bg, solid) = match config::rgb(color) {
-            Some((r, g, b)) => (
-                format!("rgb({r} {g} {b} / {}%)", f.opacity),
-                format!("rgb({r} {g} {b})"),
-            ),
-            // `[overlay] bg` is not checked: a named color keeps its own opacity.
-            None => (color.clone(), color.clone()),
-        };
-        let hide = if f.hide_when.is_empty() {
-            "none".to_owned()
-        } else {
-            f.hide_when.join(" ")
-        };
-        css.push_str(&format!(
-            "\n[data-overlay=\"{name}\"] {{ --x: {}px; --y: {}px; --w: {}px; --h: {}px; --s: {}; --r: {}deg; --align: {flex}; --text-align: {text}; --bg: {bg}; --bg-solid: {solid}; --skin: {skin}; --hide: {hide}; --mute: {}; --sound-file: {}; --shuffle: {}; }}",
-            f.x,
-            f.y,
-            f.width,
-            f.height,
-            f64::from(f.size) / 100.0,
-            f.rotate,
-            u8::from(f.mute),
-            if f.sound.is_empty() { "none" } else { &f.sound },
-            u8::from(f.shuffle)
-        ));
+        css.push_str(&frame_css(o, name, f));
+    }
+    for (name, f) in plugin_frames {
+        css.push_str(&frame_css(o, name, f));
     }
     css
+}
+
+/// One overlay's frame as CSS variables on `[data-overlay="<name>"]`.
+fn frame_css(o: &config::Overlay, name: &str, f: &config::Frame) -> String {
+    // The frame as the skin it wears changes it (the alert wears its first animation when
+    // the pack is not one of its own).
+    let worn = if f.skin.is_empty() { &o.skin } else { &f.skin };
+    let worn = if name == "alert" && !ALERT_SKINS.contains(&worn.as_str()) {
+        ALERT_SKINS[0]
+    } else {
+        worn.as_str()
+    };
+    let f = &f.for_skin(worn);
+    let (flex, text) = match f.align {
+        config::Align::Left => ("flex-start", "left"),
+        config::Align::Center => ("center", "center"),
+        config::Align::Right => ("flex-end", "right"),
+    };
+    let color = if f.bg.is_empty() { &o.bg } else { &f.bg };
+    let skin = if f.skin.is_empty() { &o.skin } else { &f.skin };
+    let (bg, solid) = match config::rgb(color) {
+        Some((r, g, b)) => (
+            format!("rgb({r} {g} {b} / {}%)", f.opacity),
+            format!("rgb({r} {g} {b})"),
+        ),
+        // `[overlay] bg` is not checked: a named color keeps its own opacity.
+        None => (color.clone(), color.clone()),
+    };
+    let hide = if f.hide_when.is_empty() {
+        "none".to_owned()
+    } else {
+        f.hide_when.join(" ")
+    };
+    format!(
+        "\n[data-overlay=\"{name}\"] {{ --x: {}px; --y: {}px; --w: {}px; --h: {}px; --s: {}; --r: {}deg; --align: {flex}; --text-align: {text}; --bg: {bg}; --bg-solid: {solid}; --skin: {skin}; --hide: {hide}; --mute: {}; --sound-file: {}; --shuffle: {}; }}",
+        f.x,
+        f.y,
+        f.width,
+        f.height,
+        f64::from(f.size) / 100.0,
+        f.rotate,
+        u8::from(f.mute),
+        if f.sound.is_empty() { "none" } else { &f.sound },
+        u8::from(f.shuffle)
+    )
 }
 
 /// Reads the API token from `path`, creating a random one first if missing.
@@ -357,14 +496,158 @@ fn file(dir: &Path, name: &str, builtin: &str) -> String {
     fs::read_to_string(dir.join(name)).unwrap_or_else(|_| builtin.to_owned())
 }
 
-async fn page(State(s): State<Arc<Shared>>, UrlPath(name): UrlPath<String>) -> Response {
-    if !OVERLAYS.contains(&name.as_str()) {
-        return (StatusCode::NOT_FOUND, "no such overlay").into_response();
+async fn page(
+    State(s): State<Arc<Shared>>,
+    headers: HeaderMap,
+    UrlPath(name): UrlPath<String>,
+) -> Response {
+    // An installed plugin: its entry in a shell (a plugin named like a built-in replaces it).
+    if let Some(p) = plugins::scan(&s.plugins).into_iter().find(|p| p.id == name) {
+        return plugin_page(&s, &p, host_of(&headers));
     }
-    let html = file(&s.dir, &format!("{name}.html"), PAGE)
-        .replace("{{ name }}", &name)
-        .replace("/* theme */", &s.overlays.theme());
-    ([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
+    (StatusCode::NOT_FOUND, "no such overlay").into_response()
+}
+
+/// The shell of a plugin: the theme as of now (the plugin's own frame and settings read from
+/// the config file, so a page never trails an edit), and what the SDK boots from.
+fn plugin_page(s: &Shared, p: &plugins::Plugin, host: &str) -> Response {
+    let config = config::Config::load(&s.config).unwrap_or_default();
+    let cfg = config.plugins.get(&p.id);
+    let mut css = s.overlays.theme();
+    if !p.replaces() {
+        css.push_str(&frame_css(&config.overlay, &p.id, &p.frame_in_effect(cfg)));
+    }
+    let boot = serde_json::json!({
+        "id": p.id, "api": plugins::API, "name": p.name, "version": p.version,
+        "params": p.params_in_effect(cfg), "skin": cfg.map_or("", |c| c.skin.as_str()),
+        "skins": plugin_skins(s, p),
+        "custom_skins": custom_skins(s, p),
+        "pack": config.overlay.skin,
+        "scenarios": p.scenarios.iter().map(|sc| serde_json::json!({ "name": sc.name, "state": sc.state })).collect::<Vec<_>>(),
+        "volume": config.overlay.sound.volume,
+        "avatar": config.overlay.avatar,
+        "parts": p.parts.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+        "part_positions": cfg.map_or(serde_json::json!({}), |c| serde_json::to_value(&c.parts).unwrap_or_default()),
+    });
+    match plugins::shell(p, &css, &boot) {
+        Some(html) => (
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+                (header::CACHE_CONTROL, "no-store"),
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    plugins::csp(p, host).as_str(),
+                ),
+            ],
+            html,
+        )
+            .into_response(),
+        None => (StatusCode::NOT_FOUND, "the plugin's entry is missing").into_response(),
+    }
+}
+
+/// A plugin's skins: its own, then any custom skin stylesheet found in
+/// `<home>/overlays/skins/<id>/` (the way built-in overlays could always be given more skins).
+fn plugin_skins(s: &Shared, p: &plugins::Plugin) -> Vec<String> {
+    let mut list: Vec<String> = p.skins.iter().map(|(id, _)| id.clone()).collect();
+    list.extend(custom_skins(s, p));
+    list
+}
+
+fn custom_skins(s: &Shared, p: &plugins::Plugin) -> Vec<String> {
+    let mut found: Vec<String> = fs::read_dir(s.dir.join("skins").join(&p.id))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            e.file_name()
+                .to_str()?
+                .strip_suffix(".css")
+                .map(str::to_owned)
+        })
+        .filter(|k| config::skin_name_ok(k) && !p.skins.iter().any(|(id, _)| id == k))
+        .collect();
+    found.sort();
+    found
+}
+
+/// `/plugin/{id}/{*path}`: a file of an installed plugin.
+async fn plugin_file(
+    State(s): State<Arc<Shared>>,
+    headers: HeaderMap,
+    UrlPath((id, path)): UrlPath<(String, String)>,
+) -> Response {
+    let Some(p) = plugins::scan(&s.plugins).into_iter().find(|p| p.id == id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match plugins::read_file(&p, &path) {
+        Some(bytes) => (
+            [
+                (header::CONTENT_TYPE, plugins::mime(&path)),
+                (header::CACHE_CONTROL, "no-store"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    plugins::csp(&p, host_of(&headers)).as_str(),
+                ),
+            ],
+            bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `/sdk/aftercast.js` and `/sdk/audio.js` (a copy in `<home>/overlays/` wins, for working on them).
+async fn sdk(State(s): State<Arc<Shared>>, UrlPath(name): UrlPath<String>) -> Response {
+    let (file_name, builtin) = match name.as_str() {
+        "aftercast.js" => ("sdk.js", SDK),
+        "audio.js" => ("audio.js", AUDIO),
+        "ui.js" => ("ui.js", UI),
+        _ => return StatusCode::NOT_FOUND.into_response(),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        file(&s.dir, file_name, builtin),
+    )
+        .into_response()
+}
+
+/// `/api/plugins`: every installed plugin's manifest and the settings in effect.
+async fn plugins_json(State(s): State<Arc<Shared>>) -> Response {
+    let config = config::Config::load(&s.config).unwrap_or_default();
+    let list: Vec<Value> = plugins::scan(&s.plugins)
+        .iter()
+        .map(|p| {
+            let cfg = config.plugins.get(&p.id);
+            let mut m = p.manifest_json();
+            m["params_in_effect"] = p.params_in_effect(cfg);
+            m["skin"] = cfg.map_or("", |c| c.skin.as_str()).into();
+            m
+        })
+        .collect();
+    Json(list).into_response()
+}
+
+/// Sends the theme (colors, every overlay's frame, plugin frames and settings) to every page.
+pub fn apply_theme(overlays: &Overlays, config: &config::Config, plugins_dir: &Path) {
+    overlays.set_rules(
+        config
+            .overlay
+            .frames()
+            .into_iter()
+            .filter(|(_, f)| !f.hide_when.is_empty())
+            .map(|(n, f)| (n.to_owned(), f.hide_when.clone()))
+            .collect(),
+    );
+    let found = plugins::scan(plugins_dir);
+    overlays.set_theme(
+        theme_with(&config.overlay, &plugins::frames(config, &found)),
+        plugins::runtime(config, &found),
+    );
 }
 
 /// `overlay.js`/`overlay.css` (home copy or built-in), else any file in `<home>/overlays`
@@ -499,7 +782,7 @@ async fn skin_css(
 ) -> Response {
     let css = file
         .strip_suffix(".css")
-        .filter(|skin| config::skin_name_ok(skin) && OVERLAYS.contains(&overlay.as_str()))
+        .filter(|skin| config::skin_name_ok(skin) && config::skin_name_ok(&overlay))
         .and_then(|skin| {
             fs::read_to_string(
                 s.dir
@@ -515,11 +798,7 @@ async fn skin_css(
 
 async fn asset(State(s): State<Arc<Shared>>, UrlPath(name): UrlPath<String>) -> Response {
     let builtin = match name.as_str() {
-        "overlay.js" => Some(SCRIPT),
-        "overlay.css" => Some(STYLE),
         "sfx.js" => Some(SFX),
-        "alert.js" => Some(ALERT),
-        "music.js" => Some(MUSIC),
         "dvr.js" => Some(DVR),
         _ => None,
     };
@@ -556,12 +835,55 @@ async fn asset(State(s): State<Arc<Shared>>, UrlPath(name): UrlPath<String>) -> 
     }
 }
 
-async fn ws(State(s): State<Arc<Shared>>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| push(socket, s))
+/// Who a page is: the host's own pages and other programs see everything; a plugin page (a
+/// sandboxed document, whose requests say `Origin: null`) sees the streams its manifest lists.
+async fn ws(
+    State(s): State<Arc<Shared>>,
+    headers: HeaderMap,
+    uri: axum::http::Uri,
+    upgrade: WebSocketUpgrade,
+) -> Response {
+    let sandboxed = headers
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|o| o == "null");
+    let view = sandboxed.then(|| {
+        let id = uri
+            .query()
+            .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("plugin=")))
+            .unwrap_or("");
+        let reads = plugins::scan(&s.plugins)
+            .into_iter()
+            .find(|p| p.id == id)
+            .map(|p| p.caps.reads)
+            .unwrap_or_default();
+        (id.to_owned(), reads)
+    });
+    upgrade.on_upgrade(move |socket| push(socket, s, view))
+}
+
+/// What a sandboxed plugin page may see of `msg`: its streams, the theme (with only its own
+/// settings) and the reload signal for itself.
+fn visible_to(view: &Option<(String, Vec<String>)>, msg: &OverlayMsg) -> Option<OverlayMsg> {
+    let Some((id, reads)) = view else {
+        return Some(msg.clone());
+    };
+    match msg.overlay.as_str() {
+        "theme" => {
+            let mut m = msg.clone();
+            if let Some(all) = m.data.get_mut("plugins").and_then(Value::as_object_mut) {
+                all.retain(|k, _| k == id);
+            }
+            Some(m)
+        }
+        "__plugin" => (msg.data["id"] == *id).then(|| msg.clone()),
+        "__suppress" => Some(msg.clone()),
+        name => reads.iter().any(|r| r == name).then(|| msg.clone()),
+    }
 }
 
 /// Sends the current overlay state, then every new message, until the page goes away.
-async fn push(mut socket: WebSocket, s: Arc<Shared>) {
+async fn push(mut socket: WebSocket, s: Arc<Shared>, view: Option<(String, Vec<String>)>) {
     let mut rx = s.overlays.tx.subscribe();
     let current: Vec<OverlayMsg> = s
         .overlays
@@ -569,7 +891,7 @@ async fn push(mut socket: WebSocket, s: Arc<Shared>) {
         .lock()
         .expect("overlay state lock")
         .values()
-        .cloned()
+        .filter_map(|m| visible_to(&view, m))
         .collect();
     let text = |m: &OverlayMsg| Message::Text(serde_json::to_string(m).expect("serializes").into());
     for msg in &current {
@@ -580,7 +902,8 @@ async fn push(mut socket: WebSocket, s: Arc<Shared>) {
     loop {
         tokio::select! {
             msg = rx.recv() => match msg {
-                Ok(msg) => if socket.send(text(&msg)).await.is_err() { return },
+                Ok(msg) => if let Some(msg) = visible_to(&view, &msg)
+                    && socket.send(text(&msg)).await.is_err() { return },
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => return,
             },
@@ -590,6 +913,49 @@ async fn push(mut socket: WebSocket, s: Arc<Shared>) {
             },
         }
     }
+}
+
+fn shared_overlays_for_tick(o: &Overlays) -> Overlays {
+    o.clone()
+}
+
+/// The `Host` a page was fetched from (127.0.0.1:port), for its Content-Security-Policy.
+fn host_of(headers: &HeaderMap) -> &str {
+    headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("127.0.0.1")
+}
+
+/// The read only services a plugin page may fetch from its opaque origin carry CORS headers; the
+/// host's write endpoints, the editor and the session state never do.
+async fn read_cors(req: Request, next: Next) -> Response {
+    let read = req.method() == axum::http::Method::GET
+        && [
+            "/plugin/",
+            "/sdk/",
+            "/overlay/assets/",
+            "/overlay/skins/",
+            "/overlay/music/",
+            "/overlay/cover/",
+            "/overlay/sounds/",
+            "/overlay/upi.svg",
+        ]
+        .iter()
+        .any(|p| req.uri().path().starts_with(p));
+    let mut res = next.run(req).await;
+    if read {
+        let h = res.headers_mut();
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            header::HeaderValue::from_static("*"),
+        );
+        h.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            header::HeaderValue::from_static("Content-Range, Accept-Ranges, Content-Length"),
+        );
+    }
+    res
 }
 
 async fn state(State(s): State<Arc<Shared>>) -> Json<SessionState> {
@@ -647,6 +1013,7 @@ mod tests {
             clock: Arc::new(Clock::new()),
             token: "secret".into(),
             dir: dir.to_path_buf(),
+            plugins: dir.join("plugins"),
             config: dir.join("aftercast.toml"),
             rehearse: None,
         };
@@ -694,9 +1061,220 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn plugins_are_served_as_shells_with_files_and_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let plug = dir.path().join("plugins/goal");
+        fs::create_dir_all(&plug).unwrap();
+        fs::write(
+            plug.join("overlay.toml"),
+            "[overlay]
+id='goal'
+name='Goal'
+api=1
+[frame]
+x=10
+y=20
+width=300
+height=100
+[[param]]
+key='n'
+type='number'
+default=3
+",
+        )
+        .unwrap();
+        fs::write(
+            plug.join("index.html"),
+            "<html><head></head><body><div id='ac-frame'></div></body></html>",
+        )
+        .unwrap();
+        fs::write(plug.join("app.js"), "1").unwrap();
+        fs::write(
+            dir.path().join("aftercast.toml"),
+            "[plugins.goal.params]
+n = 9
+",
+        )
+        .unwrap();
+        let (addr, ..) = start(dir.path()).await;
+        let get = |p: &str| reqwest::get(format!("http://{addr}{p}"));
+
+        let page = get("/overlay/goal").await.unwrap().text().await.unwrap();
+        assert!(page.contains("<base href=\"/plugin/goal/\">"), "{page}");
+        assert!(page.contains("<body data-overlay=\"goal\">"));
+        assert!(
+            page.contains("[data-overlay=\"goal\"] { --x: 10px; --y: 20px; --w: 300px; --h: 100px")
+        );
+        assert!(
+            page.contains("\"n\":9"),
+            "the saved setting is in the boot data"
+        );
+        assert!(page.contains("/sdk/aftercast.js"));
+
+        assert_eq!(get("/plugin/goal/app.js").await.unwrap().status(), 200);
+        for bad in [
+            "/plugin/goal/.env",
+            "/plugin/goal/..%2Faftercast.toml",
+            "/plugin/nope/app.js",
+        ] {
+            assert_eq!(get(bad).await.unwrap().status(), 404, "{bad}");
+        }
+        assert_eq!(get("/sdk/aftercast.js").await.unwrap().status(), 200);
+        let list: Value = get("/api/plugins").await.unwrap().json().await.unwrap();
+        let goal = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["id"] == "goal")
+            .expect("goal is listed");
+        assert_eq!(goal["params_in_effect"]["n"], 9.0);
+        assert!(
+            list.as_array().unwrap().iter().any(|p| p["id"] == "brb"),
+            "the built-in overlays are plugins too"
+        );
+        // A page for a plugin that is not installed is a 404 like any unknown overlay.
+        assert_eq!(get("/overlay/ghost").await.unwrap().status(), 404);
+    }
+
+    #[tokio::test]
+    async fn a_plugin_page_is_sandboxed_and_sees_only_what_it_reads() {
+        use futures_util::StreamExt;
+        use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+        let dir = tempfile::tempdir().unwrap();
+        let plug = dir.path().join("plugins/goal");
+        fs::create_dir_all(&plug).unwrap();
+        fs::write(
+            plug.join("overlay.toml"),
+            "[overlay]\nid='goal'\nname='Goal'\napi=1\n[capabilities]\nreads=['now']\nnetwork=['api.example.com']\n[[part]]\nid='bar'\n",
+        )
+        .unwrap();
+        fs::write(
+            plug.join("index.html"),
+            "<html><head></head><body></body></html>",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("aftercast.toml"),
+            "[plugins.goal.parts.nvim.bar]\nx = 5\ny = 6\n",
+        )
+        .unwrap();
+        let (addr, overlays, _rx) = start(dir.path()).await;
+
+        // The page and its files: a sandbox, only the host and the listed network hosts.
+        let res = reqwest::get(format!("http://{addr}/overlay/goal"))
+            .await
+            .unwrap();
+        let csp = res.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(csp.starts_with("sandbox allow-scripts;"), "{csp}");
+        assert!(
+            csp.contains("default-src 'none'") && csp.contains("https://api.example.com"),
+            "{csp}"
+        );
+        assert!(!csp.contains("allow-same-origin"));
+        let page = res.text().await.unwrap();
+        assert!(
+            page.contains("\"parts\":[\"bar\"]") && page.contains("\"x\":5"),
+            "{page}"
+        );
+        // Read only services carry CORS headers (a sandboxed page has an opaque origin); the
+        // host's own data does not.
+        let file = reqwest::get(format!("http://{addr}/sdk/aftercast.js"))
+            .await
+            .unwrap();
+        assert_eq!(file.headers()["access-control-allow-origin"], "*");
+        let plugins = reqwest::get(format!("http://{addr}/api/plugins"))
+            .await
+            .unwrap();
+        assert!(
+            plugins
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+
+        // The socket: a page with `Origin: null` gets the streams of `reads`, the host's pages all.
+        for (overlay, data) in [
+            ("question", json!({ "text": "secret" })),
+            ("now", json!({ "quest": "Parser" })),
+        ] {
+            overlays.send(OverlayMsg {
+                overlay: overlay.into(),
+                action: Action::Show,
+                data,
+            });
+        }
+        let mut request = format!("ws://{addr}/ws?plugin=goal")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("origin", "null".parse().unwrap());
+        let (mut ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        let mut seen = Vec::new();
+        while let Ok(Some(Ok(m))) =
+            tokio::time::timeout(Duration::from_millis(400), ws.next()).await
+        {
+            let v: Value = serde_json::from_str(m.to_text().unwrap()).unwrap();
+            seen.push(v["overlay"].as_str().unwrap().to_owned());
+        }
+        assert!(seen.contains(&"now".to_owned()), "{seen:?}");
+        assert!(!seen.contains(&"question".to_owned()), "{seen:?}");
+        let (mut open, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/ws"))
+            .await
+            .unwrap();
+        let mut all = Vec::new();
+        while let Ok(Some(Ok(m))) =
+            tokio::time::timeout(Duration::from_millis(400), open.next()).await
+        {
+            let v: Value = serde_json::from_str(m.to_text().unwrap()).unwrap();
+            all.push(v["overlay"].as_str().unwrap().to_owned());
+        }
+        assert!(all.contains(&"question".to_owned()), "{all:?}");
+    }
+
+    #[test]
+    fn overlays_hide_while_the_ones_they_hide_for_are_on_screen() {
+        let o = Overlays::default();
+        o.set_rules(BTreeMap::from([(
+            "keys".to_owned(),
+            vec!["question".to_owned()],
+        )]));
+        let names = |o: &Overlays| {
+            o.last
+                .lock()
+                .unwrap()
+                .get("__suppress")
+                .map(|m| m.data["names"].clone())
+        };
+        o.suppress_tick();
+        assert_eq!(
+            names(&o),
+            None,
+            "nothing is hidden at first, and nothing is sent"
+        );
+        o.send(OverlayMsg {
+            overlay: "question".into(),
+            action: Action::Show,
+            data: json!({}),
+        });
+        o.suppress_tick();
+        assert_eq!(names(&o), Some(json!(["keys"])));
+        o.send(OverlayMsg {
+            overlay: "question".into(),
+            action: Action::Hide,
+            data: json!({}),
+        });
+        o.suppress_tick();
+        assert_eq!(names(&o), Some(json!([])));
+    }
+
+    #[tokio::test]
     async fn pages_api_token_and_commands() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("overlay.css"), "/* mine */").unwrap();
+        fs::write(dir.path().join("sdk.js"), "/* mine */").unwrap();
         let (addr, _overlays, mut rx) = start(dir.path()).await;
         let http = reqwest::Client::new();
         let get = |path: &str| http.get(format!("http://{addr}{path}")).send();
@@ -710,9 +1288,9 @@ mod tests {
         assert!(page.contains("data-overlay=\"question\""), "{page}");
         assert!(page.contains("--accent: #FF5555"), "{page}");
         assert_eq!(get("/overlay/nope").await.unwrap().status(), 404);
-        let css = get("/overlay/assets/overlay.css").await.unwrap();
+        let sdk = get("/sdk/aftercast.js").await.unwrap();
         assert_eq!(
-            css.text().await.unwrap(),
+            sdk.text().await.unwrap(),
             "/* mine */",
             "home override wins"
         );
@@ -764,6 +1342,7 @@ mod tests {
             clock: Arc::new(Clock::new()),
             token: "secret".into(),
             dir: dir.path().to_path_buf(),
+            plugins: dir.path().join("plugins"),
             config: dir.path().join("aftercast.toml"),
             rehearse: Some(Rehearse::new(feed_rx, mpsc::unbounded_channel().0)),
         };
@@ -889,6 +1468,7 @@ mod tests {
             clock: Arc::new(Clock::new()),
             token: "secret".into(),
             dir: dir.path().to_path_buf(),
+            plugins: dir.path().join("plugins"),
             config: config.clone(),
             rehearse: Some(Rehearse::new(
                 watch::channel(Feed::default()).1,

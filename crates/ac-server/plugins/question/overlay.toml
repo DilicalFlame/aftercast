@@ -1,0 +1,60 @@
+# Question, a first party overlay as a plugin (id "question": it is the overlay of that name).
+[overlay]
+id = "question"
+name = "Question"
+version = "1.0.0"
+api = 1
+entry = "index.html"
+description = "The viewer question you are answering."
+author = "aftercast"
+license = "MIT"
+
+[frame]
+x = 360
+y = 680
+width = 1200
+height = 340
+align = "center"
+
+[capabilities]
+reads = ["question"]
+audio = false
+network = []
+
+[[skin]]
+id = "nvim"
+name = "Neovim"
+
+[[skin]]
+id = "clean"
+name = "Clean"
+
+[[skin]]
+id = "broadcast"
+name = "Broadcast"
+
+[[skin]]
+id = "glass"
+name = "Glass"
+
+[[skin]]
+id = "minimal"
+name = "Minimal"
+
+[[scenario]]
+name = "Sample"
+[scenario.state.question]
+action = "show"
+[scenario.state.question.data]
+author = "viewer42"
+text = "Why Neovim over VS Code? And which plugin manager do you use?"
+
+[[scenario]]
+name = "Super Chat question"
+[scenario.state.question]
+action = "show"
+[scenario.state.question.data]
+author = "ana_codes"
+text = "How do you test the tokenizer?"
+[scenario.state.question.data.support]
+label = "Rs 500.00"

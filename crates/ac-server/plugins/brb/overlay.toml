@@ -1,0 +1,251 @@
+# The Be right back screen as an overlay plugin. Its id is "brb", the name of the built-in
+# overlay, so installing it replaces the built-in page (frame, OBS source and the BRB scene
+# logic stay the host's).
+[overlay]
+id = "brb"
+name = "Be right back"
+version = "1.0.0"
+api = 1
+entry = "index.html"
+description = "A whole-screen BRB: title and timer, your picture, a music player with a live spectrum, and a support QR code. Five looks."
+author = "aftercast"
+license = "MIT"
+
+[frame]
+x = 0
+y = 0
+width = 1920
+height = 1080
+align = "center"
+
+[capabilities]
+reads = ["brb"]
+audio = true
+media = ["brb"]
+
+# Five looks. A skin sets the sky, the type, the dock and the way the spectrum fills the screen.
+[[skin]]
+id = "nvim"
+name = "Night"
+
+[[skin]]
+id = "clean"
+name = "Dusk"
+
+[[skin]]
+id = "broadcast"
+name = "Meter"
+
+[[skin]]
+id = "glass"
+name = "Aurora"
+
+[[skin]]
+id = "minimal"
+name = "Mono"
+
+# ---- settings ----
+[[param]]
+key = "title"
+type = "text"
+label = "Title"
+default = ""
+group = "Words"
+help = "Empty: the words the stream sends (Be right back)."
+
+[[param]]
+key = "lines"
+type = "list"
+label = "Lines under the title"
+default = []
+group = "Words"
+help = "A handle, a link, a thank you. Each line is a row."
+
+[[param]]
+key = "pfp"
+type = "bool"
+label = "Show my picture"
+default = true
+group = "Picture"
+
+[[param]]
+key = "pfp_shape"
+type = "select"
+label = "Shape"
+default = "circle"
+options = ["circle", "rounded", "square"]
+group = "Picture"
+
+[[param]]
+key = "pfp_size"
+type = "range"
+label = "Size"
+default = 320
+min = 80
+max = 700
+step = 10
+group = "Picture"
+
+[[param]]
+key = "qr"
+type = "bool"
+label = "Show the support QR code"
+default = true
+group = "QR code"
+
+[[param]]
+key = "qr_size"
+type = "range"
+label = "Size"
+default = 360
+min = 120
+max = 800
+step = 10
+group = "QR code"
+
+[[param]]
+key = "qr_caption"
+type = "text"
+label = "Caption"
+default = "scan to support"
+group = "QR code"
+
+[[param]]
+key = "qr_link"
+type = "text"
+label = "What it opens"
+default = ""
+group = "QR code"
+help = "Any link or text. Empty: your UPI id ([vars.support] upi)."
+
+[[param]]
+key = "music"
+type = "bool"
+label = "Play music"
+default = true
+group = "Music"
+help = "Plays the tracks in <home>/overlays/sounds/brb/ while you are away."
+
+[[param]]
+key = "playlist"
+type = "text"
+label = "Playlist folder"
+default = "brb"
+group = "Music"
+
+[[param]]
+key = "shuffle"
+type = "bool"
+label = "Shuffle"
+default = true
+group = "Music"
+
+[[param]]
+key = "fade"
+type = "number"
+label = "Fade in and out (seconds)"
+default = 5
+min = 0
+max = 30
+step = 1
+group = "Music"
+
+[[param]]
+key = "clip"
+type = "number"
+label = "Play this much of each track (seconds)"
+default = 30
+min = 0
+max = 600
+step = 5
+group = "Music"
+help = "From a random place in the track. 0: the whole track."
+
+# ---- sample data for the editor and the skin gallery ----
+[[scenario]]
+name = "Away for 2 minutes"
+[scenario.state.brb]
+action = "show"
+[scenario.state.brb.data]
+text = "Be right back"
+since_ms = "$now-120000"
+
+[[scenario]]
+name = "Just left"
+[scenario.state.brb]
+action = "show"
+[scenario.state.brb.data]
+text = "Be right back"
+since_ms = "$now"
+
+# ---- parts the editor can drag (each skin keeps its own layout) ----
+[[part]]
+id = "title"
+label = "Title and timer"
+
+[[part]]
+id = "lines"
+label = "Lines"
+
+[[part]]
+id = "pfp"
+label = "Picture"
+
+[[part]]
+id = "music"
+label = "Music player"
+resizable = true
+
+[[part]]
+id = "qr"
+label = "QR code"
+
+# ---- settings the built-in BRB kept in the config: copied once when this plugin is installed ----
+[[migrate]]
+from = "overlay.brb_screen.pfp"
+to = "pfp"
+
+[[migrate]]
+from = "overlay.brb_screen.pfp_shape"
+to = "pfp_shape"
+
+[[migrate]]
+from = "overlay.brb_screen.pfp_size"
+to = "pfp_size"
+
+[[migrate]]
+from = "overlay.brb_screen.qr"
+to = "qr"
+
+[[migrate]]
+from = "overlay.brb_screen.qr_size"
+to = "qr_size"
+
+[[migrate]]
+from = "overlay.brb_screen.qr_link"
+to = "qr_link"
+
+[[migrate]]
+from = "overlay.brb_screen.qr_caption"
+to = "qr_caption"
+
+[[migrate]]
+from = "overlay.brb_screen.text"
+to = "lines"
+
+[[migrate]]
+from = "overlay.brb.mute"
+to = "music"
+invert = true
+
+[[migrate]]
+from = "overlay.brb.shuffle"
+to = "shuffle"
+
+[[migrate]]
+from = "overlay.sound.brb_fade"
+to = "fade"
+
+[[migrate]]
+from = "overlay.sound.brb_clip"
+to = "clip"

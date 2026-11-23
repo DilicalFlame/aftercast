@@ -1,0 +1,50 @@
+# Now, a first party overlay as a plugin (id "now": it is the overlay of that name).
+[overlay]
+id = "now"
+name = "Now"
+version = "1.0.0"
+api = 1
+entry = "index.html"
+description = "The quest you are working on and the time live."
+author = "aftercast"
+license = "MIT"
+
+[frame]
+x = 40
+y = 40
+width = 900
+height = 80
+align = "left"
+
+[capabilities]
+reads = ["now"]
+audio = false
+network = []
+
+[[skin]]
+id = "nvim"
+name = "Neovim"
+
+[[skin]]
+id = "clean"
+name = "Clean"
+
+[[skin]]
+id = "broadcast"
+name = "Broadcast"
+
+[[skin]]
+id = "glass"
+name = "Glass"
+
+[[skin]]
+id = "minimal"
+name = "Minimal"
+
+[[scenario]]
+name = "Sample"
+[scenario.state.now]
+action = "show"
+[scenario.state.now.data]
+quest = "Writing a parser in Rust"
+live_since_ms = "$now-3723000"

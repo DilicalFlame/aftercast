@@ -1,0 +1,284 @@
+/* Be right back (aftercast overlay plugin). The host sets --bg --fg --accent --muted --font-sans
+   --font-mono and the frame; [data-skin] on <body> is the look in effect. */
+.card { position: relative; box-sizing: border-box; }
+#ac-frame { justify-content: center; align-items: stretch; }
+.card.brb [hidden] { display: none !important; }
+
+/* ---- Be right back: one screen, five looks. A grid: the title and a tagline top left, your
+   picture and the player below them, the QR frame down the right. Behind it a world that
+   moves: stars, shooting stars, clouds and a sleeping cat (nvim), or the whole screen as a
+   spectrum (clean: soft bars, broadcast: a level meter, glass: waves, minimal: hairlines).
+   Nothing that holds a part carries a transform: parts can be dragged free (absolute against
+   the card), and a transform on a parent would become their containing block. ---- */
+.card.brb {
+  --fs: 60px;
+  --bgc: #130f22; --acc: #a78bfa; --acc2: #c4b5fd; --acc3: #f0abfc;
+  flex: 1; min-height: 0; margin: 0; align-self: stretch; box-sizing: border-box; position: relative;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "top top pay" "text text pay" "pfp music pay";
+  align-content: center; column-gap: 64px; row-gap: 26px; padding: 56px 96px 150px;
+  border: 0; border-radius: 0; overflow: hidden; background: var(--bgc) !important; box-shadow: none;
+  color: #fff; text-align: left; font: 600 var(--fs)/1.2 var(--font-sans), sans-serif;
+}
+.card.brb > :not(.brbbg), .card.brb .brb-main > * { position: relative; z-index: 1; animation: brb-fade 0.9s ease-out both; }
+.card.brb .free { position: absolute; margin: 0; }
+/* A part dragged free is placed against the card, not against its grid area. */
+.card.brb .free[data-el] { grid-area: auto; }
+.card.brb .brb-main { display: contents; }
+@keyframes brb-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes brb-pulse { to { box-shadow: 0 0 0 14px transparent; } }
+
+/* The backdrop */
+.brbbg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+.brbbg .bgviz { position: absolute; inset: 0; width: 100%; height: 100%; display: none; }
+.brbbg .aurora { display: none; position: absolute; inset: -25%;
+  background: radial-gradient(circle at 25% 35%, color-mix(in srgb, var(--acc) 55%, transparent), transparent 38%),
+    radial-gradient(circle at 75% 25%, color-mix(in srgb, var(--acc2) 50%, transparent), transparent 40%),
+    radial-gradient(circle at 55% 82%, color-mix(in srgb, var(--acc3) 42%, transparent), transparent 44%);
+  filter: blur(46px); animation: brb-aurora 26s ease-in-out infinite alternate; }
+@keyframes brb-aurora { to { transform: translate(6%, -4%) rotate(14deg) scale(1.15); } }
+.brbbg .stars i { position: absolute; background: var(--acc); opacity: 0.8; animation: brb-twinkle 4.2s ease-in-out infinite;
+  clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%); }
+@keyframes brb-twinkle { 0%, 100% { opacity: 0.25; transform: scale(0.7) rotate(0deg); } 50% { opacity: 0.95; transform: scale(1.1) rotate(20deg); } }
+.brbbg .shoot { position: absolute; width: 360px; height: 3px; border-radius: 3px; opacity: 0;
+  background: linear-gradient(90deg, var(--acc2), transparent); animation: brb-shoot 9s linear infinite; }
+.brbbg .shoot.a { left: 68%; top: -2%; }
+.brbbg .shoot.b { left: 96%; top: 26%; animation-duration: 12s; animation-delay: 3.5s; width: 260px; }
+.brbbg .shoot.c { left: 38%; top: 4%; animation-duration: 14s; animation-delay: 7s; width: 300px; }
+@keyframes brb-shoot {
+  from { transform: translate(0, 0) rotate(-32deg); opacity: 0; }
+  4% { opacity: 0.95; }
+  22%, 100% { transform: translate(-760px, 475px) rotate(-32deg); opacity: 0; }
+}
+.brbbg .cloud { position: absolute; left: 0; width: 200%; bottom: 0; display: none; will-change: transform;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 300' preserveAspectRatio='none'%3E%3Cpath d='M0 300V170C60 90 150 100 210 150C260 60 380 40 450 120C520 70 620 70 680 140C750 60 880 60 940 130C1000 90 1100 90 1200 170V300Z'/%3E%3C/svg%3E") 0 100% / 1200px 100% repeat-x;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 300' preserveAspectRatio='none'%3E%3Cpath d='M0 300V170C60 90 150 100 210 150C260 60 380 40 450 120C520 70 620 70 680 140C750 60 880 60 940 130C1000 90 1100 90 1200 170V300Z'/%3E%3C/svg%3E") 0 100% / 1200px 100% repeat-x; }
+.brbbg .cloud.back { height: 330px; background: linear-gradient(180deg, color-mix(in srgb, var(--acc) 38%, var(--bgc)), color-mix(in srgb, var(--acc) 14%, var(--bgc))); opacity: 0.8; animation: brb-drift 140s linear infinite; }
+.brbbg .cloud.front { height: 230px; background: linear-gradient(180deg, color-mix(in srgb, var(--acc) 55%, var(--bgc)), color-mix(in srgb, var(--acc) 26%, var(--bgc))); animation: brb-drift 90s linear infinite reverse; }
+@keyframes brb-drift { to { transform: translateX(-1200px); } }
+.brbbg .cat { position: absolute; left: 36px; bottom: 46px; width: 400px; display: none; color: color-mix(in srgb, var(--acc) 8%, var(--bgc)); }
+.brbbg .cat svg { display: block; width: 100%; transform-origin: 50% 100%; animation: brb-breathe 5s ease-in-out infinite; }
+.brbbg .cat .tail { transform-box: fill-box; transform-origin: 0% 70%; animation: brb-tail 5.5s ease-in-out infinite; }
+.brbbg .cat .ear { transform-box: fill-box; transform-origin: 50% 100%; animation: brb-ear 9s ease-in-out infinite; }
+.brbbg .cat .ear.r { animation-delay: 4.5s; }
+@keyframes brb-tail { 50% { transform: rotate(-9deg); } }
+@keyframes brb-ear { 0%, 90%, 100% { transform: rotate(0); } 93% { transform: rotate(-9deg); } 96% { transform: rotate(3deg); } }
+@keyframes brb-breathe { 50% { transform: scaleY(1.035); } }
+.brbbg .cat .z { position: absolute; left: 112px; bottom: 150px; font: 800 30px/1 var(--font-sans), sans-serif; color: var(--acc); opacity: 0; animation: brb-z 4.5s ease-in infinite; }
+.brbbg .cat .z2 { animation-delay: 1.5s; font-size: 40px; }
+.brbbg .cat .z3 { animation-delay: 3s; font-size: 52px; }
+@keyframes brb-z { 0% { transform: translate(0, 0); opacity: 0; } 15% { opacity: 0.9; } 100% { transform: translate(46px, -120px); opacity: 0; } }
+
+/* Title, timer, tagline */
+.card.brb .brb-top { grid-area: top; display: flex; flex-direction: column; align-items: flex-start; gap: 22px; }
+.card.brb .title { font-size: 2.5em; font-weight: 800; line-height: 1.02; letter-spacing: -0.02em; text-wrap: balance; text-transform: capitalize; text-shadow: 0 8px 50px rgb(0 0 0 / 40%); }
+.card.brb .title .hl { color: var(--acc); }
+/* The timer chip: a label and the time, a live dot after it; each skin cuts it its own way. */
+.card.brb .timer {
+  order: -1; display: inline-flex; align-items: center; gap: 18px; padding: 0 22px 0 0; border-radius: 14px;
+  font: 700 30px/1 var(--font-mono), monospace; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: #fff;
+  background: color-mix(in srgb, var(--bgc) 72%, transparent); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--acc) 55%, transparent);
+}
+.card.brb .timer::before {
+  content: "away"; align-self: stretch; display: flex; align-items: center; padding: 15px 20px 15px 22px;
+  background: var(--acc); color: var(--bgc); border-radius: 14px 0 0 14px; font: 800 17px/1 var(--font-mono), monospace; letter-spacing: 0.24em; text-transform: uppercase;
+}
+.card.brb .timer::after { content: ""; width: 12px; height: 12px; border-radius: 50%; background: #ff5d73; box-shadow: 0 0 0 0 rgb(255 93 115 / 60%); animation: brb-pulse 1.8s ease-out infinite; }
+.card.brb .brb-text { grid-area: text; margin-bottom: 34px; display: flex; flex-wrap: wrap; align-items: center; font: 500 30px/1.3 var(--font-sans), sans-serif; letter-spacing: 0.3em; text-transform: lowercase; color: rgb(255 255 255 / 82%); }
+.card.brb .brb-text .line + .line::before { content: "\2022"; color: var(--acc); margin: 0 1.1em; }
+
+/* Your picture */
+.card.brb .pfp { grid-area: pfp; align-self: center; object-fit: cover; display: block;
+  box-shadow: 0 0 0 6px var(--bgc), 0 0 0 11px var(--acc), 0 0 0 24px color-mix(in srgb, var(--acc) 22%, transparent), 0 26px 60px rgb(0 0 0 / 45%); }
+.card.brb .pfp.circle { border-radius: 50%; }
+.card.brb .pfp.rounded { border-radius: 22%; }
+.card.brb .pfp.square { border-radius: 0; }
+
+/* The player */
+.card.brb .music { grid-area: music; align-self: center; display: flex; align-items: center; gap: 34px; min-width: 0; }
+.card.brb .music[hidden] { display: none; }
+.card.brb .music.free { width: 1100px; margin: 0; }
+.card.brb .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.card.brb .words { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.card.brb .np { display: flex; align-items: center; gap: 16px; font: 500 26px/1 var(--font-sans), sans-serif; letter-spacing: 0.24em; text-transform: lowercase; color: rgb(255 255 255 / 68%); }
+.card.brb .eq { width: 32px; height: 28px; background-repeat: no-repeat; background-position: 0 100%, 9px 100%, 18px 100%, 27px 100%;
+  background-image: linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc)), linear-gradient(var(--acc), var(--acc));
+  background-size: 5px 40%, 5px 90%, 5px 60%, 5px 30%; border-radius: 2px; animation: brb-eq 1.1s ease-in-out infinite alternate; }
+@keyframes brb-eq { to { background-size: 5px 95%, 5px 35%, 5px 100%, 5px 75%; } }
+.card.brb .track { font-size: 52px; font-weight: 700; line-height: 1.08; letter-spacing: -0.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card.brb .artist { font-size: 28px; font-weight: 500; color: rgb(255 255 255 / 75%); }
+.card.brb .album { font: 500 20px/1.3 var(--font-mono), monospace; color: rgb(255 255 255 / 50%); }
+.card.brb .artist:empty, .card.brb .album:empty { display: none; }
+.card.brb .bars { display: none; width: 100%; height: 120px; }
+.card.brb .prog { height: 8px; border-radius: 4px; background: rgb(255 255 255 / 14%); overflow: hidden; }
+.card.brb .prog i { display: block; width: 0; height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--acc), var(--acc2)); }
+.card.brb .times { display: flex; justify-content: space-between; margin-top: -6px; font: 500 20px/1 var(--font-sans), sans-serif; color: rgb(255 255 255 / 62%); }
+
+/* The QR frame */
+.card.brb .pay { grid-area: pay; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 24px; padding: 28px 34px 26px; border-radius: 46px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--acc) 24%, transparent), color-mix(in srgb, var(--acc) 6%, transparent));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--acc) 40%, transparent), 0 26px 60px rgb(0 0 0 / 28%); }
+.card.brb .pay.free { margin: 0; }
+.card.brb .paytop { font: 600 30px/1.2 var(--font-sans), sans-serif; letter-spacing: 0.03em; text-transform: lowercase; color: var(--acc); }
+.card.brb .pay .qr { display: block; margin: 12px; border-radius: 20px; background: #fff; box-shadow: 0 0 0 12px #fff; filter: drop-shadow(0 12px 26px rgb(0 0 0 / 30%)); }
+.card.brb .pay .note { width: 100%; text-align: center; font: 500 24px/1.2 var(--font-sans), sans-serif; letter-spacing: 0.34em; text-transform: lowercase; color: rgb(255 255 255 / 78%); }
+
+/* Album art: a track with no picture gets one drawn here, picked at random for each track
+   (data-art) in a random color (--hue). */
+.card.brb .cover {
+  --a1: hsl(var(--hue, 300) 85% 62%); --a2: hsl(calc(var(--hue, 300) + 50) 85% 55%);
+  --a3: hsl(calc(var(--hue, 300) + 150) 80% 64%); --ad: hsl(calc(var(--hue, 300) + 10) 50% 13%);
+  flex: none; position: relative; width: 170px; height: 170px; border-radius: 28px; overflow: hidden; background: var(--ad);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 45%), inset 0 0 0 1.5px rgb(255 255 255 / 20%);
+}
+.card.brb .cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.card.brb .cover.none img { display: none; }
+.card.brb .cover::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(135deg, rgb(255 255 255 / 24%), transparent 42%, rgb(0 0 0 / 24%)); }
+.card.brb .cover.none[data-art="0"] { background:
+  repeating-linear-gradient(180deg, transparent 0 9px, var(--ad) 9px 14px) 0 100% / 100% 46% no-repeat,
+  radial-gradient(circle at 50% 56%, var(--a3) 0 22%, transparent 22.5%),
+  linear-gradient(180deg, var(--a2), var(--a1) 56%, var(--ad) 56%); }
+.card.brb .cover.none[data-art="1"] { background:
+  conic-gradient(from 20deg at 70% 75%, transparent 0 18%, rgb(255 255 255 / 16%) 24%, transparent 30% 68%, rgb(255 255 255 / 16%) 74%, transparent 80%),
+  radial-gradient(circle at 70% 75%, var(--ad) 0 3%, var(--a1) 3.5% 15%, #111 15.5% 17%, transparent 17.5%),
+  repeating-radial-gradient(circle at 70% 75%, #141414 0 3px, #262626 3px 5px); }
+.card.brb .cover.none[data-art="2"] { background:
+  repeating-radial-gradient(circle at 28% 72%, var(--a1) 0 12px, var(--a2) 12px 24px, var(--a3) 24px 36px, var(--ad) 36px 48px); }
+.card.brb .cover.none[data-art="3"] { background:
+  radial-gradient(60% 45% at 25% 30%, var(--a1), transparent 70%), radial-gradient(55% 50% at 80% 40%, var(--a3), transparent 70%),
+  radial-gradient(70% 50% at 50% 105%, var(--a2), transparent 70%), var(--ad); }
+.card.brb .cover.none[data-art="4"] { background:
+  radial-gradient(circle at 50% 62%, var(--ad) 0 13%, var(--a3) 13.5% 19%, transparent 19.5%),
+  repeating-conic-gradient(from 0deg at 50% 62%, var(--a1) 0 9deg, var(--a2) 9deg 18deg); }
+.card.brb .cover.none[data-art="5"] { background:
+  radial-gradient(circle, var(--ad) 0 28%, transparent 31%) 0 0 / 18px 18px, linear-gradient(135deg, var(--a1), var(--a2)); }
+.card.brb .cover.none[data-art="6"] { background:
+  linear-gradient(var(--a3) 2px, transparent 2px) 0 0 / 100% 17px, linear-gradient(90deg, var(--a3) 2px, transparent 2px) 0 0 / 17px 100%,
+  radial-gradient(circle at 50% 100%, var(--a1) 0 40%, transparent 41%), linear-gradient(180deg, var(--ad), var(--a2)); }
+.card.brb .cover.none[data-art="7"] { background:
+  radial-gradient(circle at 32% 34%, var(--a3) 0 22%, transparent 22.5%), radial-gradient(circle at 72% 74%, var(--ad) 0 21%, transparent 21.5%),
+  linear-gradient(135deg, transparent 0 58%, var(--a2) 58% 100%), var(--a1); }
+.card.brb .cover.none[data-art="8"] { background:
+  linear-gradient(var(--a3), var(--a3)) 10% 100% / 14% 58% no-repeat, linear-gradient(var(--a3), var(--a3)) 30% 100% / 14% 84% no-repeat,
+  linear-gradient(var(--a3), var(--a3)) 50% 100% / 14% 44% no-repeat, linear-gradient(var(--a3), var(--a3)) 70% 100% / 14% 70% no-repeat,
+  linear-gradient(var(--a3), var(--a3)) 90% 100% / 14% 52% no-repeat, linear-gradient(160deg, var(--a1), var(--ad)); }
+.card.brb .cover.none[data-art="9"] { background:
+  radial-gradient(circle at 50% 50%, var(--ad) 0 24%, transparent 24.5%),
+  repeating-linear-gradient(135deg, var(--a1) 0 18px, var(--a2) 18px 36px, var(--a3) 36px 54px); }
+.card.brb .cover.none[data-art="10"] { background:
+  radial-gradient(circle at 74% 26%, #fff 0 9%, transparent 9.5%), linear-gradient(180deg, var(--a3), var(--a2) 60%, var(--a1)); }
+.card.brb .cover.none[data-art="10"]::before { content: ""; position: absolute; inset: 0; background: var(--ad); clip-path: polygon(0 100%, 0 72%, 24% 40%, 44% 68%, 66% 32%, 100% 74%, 100% 100%); }
+.card.brb .cover.none[data-art="11"] { background:
+  radial-gradient(circle, var(--ad) 0 30%, transparent 31%),
+  conic-gradient(var(--a1) 25%, var(--a2) 0 50%, var(--a1) 0 75%, var(--a2) 0) 0 0 / 44px 44px; }
+
+/* The five looks. */
+/* nvim, "Night": the picture above: deep violet, clouds, a sleeping cat, stars. */
+[data-skin="nvim"] .brbbg { background: radial-gradient(ellipse 80% 60% at 12% 6%, #2a1d52, transparent 60%), radial-gradient(ellipse 60% 50% at 96% 100%, #2b1a52, transparent 60%), var(--bgc); }
+[data-skin="nvim"] .brbbg .cloud, [data-skin="nvim"] .brbbg .cat { display: block; }
+[data-skin="nvim"] .card.brb .bars { display: block; }
+
+/* clean, "Dusk": huge soft bars stand on the bottom edge and rise with the music. */
+[data-skin="clean"] .card.brb { --bgc: #0e1024; --acc: #b794f6; --acc2: #f472b6; --acc3: #60a5fa; }
+[data-skin="clean"] .brbbg { background: linear-gradient(180deg, #0e1024, #1b1148 62%, #331760); }
+[data-skin="clean"] .brbbg .bgviz { display: block; }
+
+/* broadcast, "Meter": a level meter the size of the screen, hot colors on black. */
+[data-skin="broadcast"] .card.brb { --bgc: #08080b; --acc: #ff6a3d; --acc2: #ff3d81; --acc3: #ffd23d; }
+[data-skin="broadcast"] .brbbg { background: radial-gradient(ellipse 90% 50% at 50% 112%, #3c1408, transparent 70%), var(--bgc); }
+[data-skin="broadcast"] .brbbg .bgviz { display: block; }
+[data-skin="broadcast"] .brbbg .stars { display: none; }
+[data-skin="broadcast"] .card.brb .cover { border-radius: 8px; }
+
+/* glass, "Aurora": slow northern lights and layered waves. */
+[data-skin="glass"] .card.brb { --bgc: #07151c; --acc: #5eead4; --acc2: #a78bfa; --acc3: #38bdf8; }
+[data-skin="glass"] .brbbg { background: linear-gradient(180deg, #06121a, #0a2230 70%, #0d2c3a); }
+[data-skin="glass"] .brbbg .aurora, [data-skin="glass"] .brbbg .bgviz { display: block; }
+[data-skin="glass"] .card.brb .title { font-weight: 700; }
+
+/* minimal, "Mono": black, white, a thousand hairlines. */
+[data-skin="minimal"] .card.brb { --bgc: #09090b; --acc: #e4e4e7; --acc2: #fff; --acc3: #fff; }
+[data-skin="minimal"] .brbbg { background: var(--bgc); }
+[data-skin="minimal"] .brbbg .bgviz { display: block; }
+[data-skin="minimal"] .brbbg .stars { display: none; }
+[data-skin="minimal"] .card.brb .title { font-weight: 600; letter-spacing: -0.04em; }
+[data-skin="minimal"] .card.brb .title .hl { color: #fff; opacity: 0.55; }
+[data-skin="minimal"] .card.brb .cover, [data-skin="minimal"] .card.brb .pay .qr { border-radius: 0; }
+/* A soft shade under the text where a spectrum fills the screen. */
+.brbbg::after { content: ""; position: absolute; inset: 0; pointer-events: none; }
+[data-skin="clean"] .brbbg::after, [data-skin="broadcast"] .brbbg::after, [data-skin="minimal"] .brbbg::after {
+  background: linear-gradient(90deg, rgb(0 0 0 / 38%), transparent 70%);
+}
+
+/* ---- The cut of each skin: chips, the QR frame, type. ---- */
+/* nvim: a float with a title. The QR frame is a ticket, its four corners bitten out. */
+[data-skin="nvim"] .card.brb .pay {
+  border-radius: 0; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--acc) 40%, transparent);
+  -webkit-mask: radial-gradient(circle 26px at 0 0, #0000 98%, #000) 0 0 / 51% 51% no-repeat, radial-gradient(circle 26px at 100% 0, #0000 98%, #000) 100% 0 / 51% 51% no-repeat,
+    radial-gradient(circle 26px at 0 100%, #0000 98%, #000) 0 100% / 51% 51% no-repeat, radial-gradient(circle 26px at 100% 100%, #0000 98%, #000) 100% 100% / 51% 51% no-repeat;
+  mask: radial-gradient(circle 26px at 0 0, #0000 98%, #000) 0 0 / 51% 51% no-repeat, radial-gradient(circle 26px at 100% 0, #0000 98%, #000) 100% 0 / 51% 51% no-repeat,
+    radial-gradient(circle 26px at 0 100%, #0000 98%, #000) 0 100% / 51% 51% no-repeat, radial-gradient(circle 26px at 100% 100%, #0000 98%, #000) 100% 100% / 51% 51% no-repeat;
+}
+[data-skin="nvim"] .card.brb .pay .qr { border-radius: 14px; }
+
+/* clean: a soft pill with a gradient label, and a rounded glowing frame. */
+[data-skin="clean"] .card.brb .timer { border-radius: 999px; background: rgb(255 255 255 / 9%); box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 20%), 0 10px 30px color-mix(in srgb, var(--acc2) 22%, transparent); }
+[data-skin="clean"] .card.brb .timer::before { border-radius: 999px; padding: 15px 22px; margin: 5px 0 5px 5px; align-self: auto; background: linear-gradient(135deg, var(--acc), var(--acc2)); color: #fff; }
+[data-skin="clean"] .card.brb .pay { border-radius: 68px; padding: 34px 38px 30px; background: linear-gradient(160deg, rgb(255 255 255 / 14%), rgb(255 255 255 / 4%)); box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 22%), 0 30px 90px color-mix(in srgb, var(--acc2) 26%, transparent); }
+[data-skin="clean"] .card.brb .pay .qr { border-radius: 30px; }
+
+/* broadcast: Bahnschrift (a condensed DIN) in capitals, a slanted tag and a chamfered frame. */
+[data-skin="broadcast"] .card.brb { --font-sans: Bahnschrift, "Arial Narrow", Impact, Inter, sans-serif; }
+[data-skin="broadcast"] .card.brb .title { font-size: 2.8em; font-weight: 700; font-stretch: 75%; font-variation-settings: "wdth" 75; text-transform: uppercase; letter-spacing: 0.01em; line-height: 0.95; }
+[data-skin="broadcast"] .card.brb .track { font-size: 58px; font-weight: 700; font-stretch: 75%; font-variation-settings: "wdth" 75; text-transform: uppercase; letter-spacing: 0.01em; }
+[data-skin="broadcast"] .card.brb .artist, [data-skin="broadcast"] .card.brb .paytop, [data-skin="broadcast"] .card.brb .np, [data-skin="broadcast"] .card.brb .note { font-weight: 600; font-stretch: 85%; font-variation-settings: "wdth" 85; text-transform: uppercase; }
+[data-skin="broadcast"] .card.brb .timer { border-radius: 0; background: #000; box-shadow: none; clip-path: polygon(16px 0, 100% 0, calc(100% - 16px) 100%, 0 100%); padding-right: 34px; }
+[data-skin="broadcast"] .card.brb .timer::before { content: "brb"; border-radius: 0; background: var(--acc3); color: #111; padding: 15px 30px 15px 32px; }
+[data-skin="broadcast"] .card.brb .pay {
+  border-radius: 0; box-shadow: none; padding-top: 38px;
+  background: linear-gradient(var(--acc), var(--acc)) 0 0 / 100% 8px no-repeat, linear-gradient(160deg, #15151a, #0b0b0e);
+  clip-path: polygon(0 0, calc(100% - 40px) 0, 100% 40px, 100% 100%, 40px 100%, 0 calc(100% - 40px));
+}
+[data-skin="broadcast"] .card.brb .pay .qr { border-radius: 6px; }
+
+/* glass: frosted pills, a frosted frame with a bright edge. */
+[data-skin="glass"] .card.brb .timer { border-radius: 999px; background: rgb(255 255 255 / 13%); backdrop-filter: blur(18px); box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 32%), 0 12px 34px rgb(0 0 0 / 24%); }
+[data-skin="glass"] .card.brb .timer::before { border-radius: 999px 0 0 999px; background: rgb(255 255 255 / 16%); color: #fff; box-shadow: inset -1.5px 0 0 rgb(255 255 255 / 26%); padding-left: 26px; }
+[data-skin="glass"] .card.brb .timer::after { background: var(--acc); }
+[data-skin="glass"] .card.brb .pay { border-radius: 60px; background: linear-gradient(150deg, rgb(255 255 255 / 20%), rgb(255 255 255 / 5%)); backdrop-filter: blur(22px); box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 34%), 0 30px 80px rgb(0 0 0 / 28%); }
+[data-skin="glass"] .card.brb .pay .qr { border-radius: 28px; }
+
+/* minimal: no boxes: a label, a line; the frame is four corners. */
+[data-skin="minimal"] .card.brb .timer { padding: 0 0 10px; border-radius: 0; background: none; box-shadow: inset 0 -1.5px 0 rgb(255 255 255 / 40%); gap: 18px; }
+[data-skin="minimal"] .card.brb .timer::before { padding: 0; border-radius: 0; background: none; color: rgb(255 255 255 / 55%); }
+[data-skin="minimal"] .card.brb .timer::after { background: #fff; }
+[data-skin="minimal"] .card.brb .pay {
+  border-radius: 0; box-shadow: none; background:
+    linear-gradient(#fff, #fff) 0 0 / 40px 2px no-repeat, linear-gradient(#fff, #fff) 0 0 / 2px 40px no-repeat,
+    linear-gradient(#fff, #fff) 100% 0 / 40px 2px no-repeat, linear-gradient(#fff, #fff) 100% 0 / 2px 40px no-repeat,
+    linear-gradient(#fff, #fff) 0 100% / 40px 2px no-repeat, linear-gradient(#fff, #fff) 0 100% / 2px 40px no-repeat,
+    linear-gradient(#fff, #fff) 100% 100% / 40px 2px no-repeat, linear-gradient(#fff, #fff) 100% 100% / 2px 40px no-repeat;
+}
+
+/* The QR frame of clean and glass is a blob: several shapes merged, cut out with a mask. */
+[data-skin="clean"] .card.brb .pay, [data-skin="glass"] .card.brb .pay {
+  border-radius: 0; padding: 88px 70px 74px; gap: 20px; box-shadow: none; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+}
+[data-skin="clean"] .card.brb .pay {
+  background: radial-gradient(circle at 25% 15%, rgb(255 255 255 / 24%), transparent 55%), linear-gradient(155deg, color-mix(in srgb, var(--acc2) 38%, transparent), color-mix(in srgb, var(--acc) 22%, transparent));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 500' preserveAspectRatio='none'%3E%3Cpath d='M70 36C140-14 250 24 322 8C392-6 412 92 392 160C378 222 410 276 394 344C378 432 326 504 230 490C152 480 108 512 50 472C-10 430 16 360 8 300C0 232-14 160 14 100C26 70 42 52 70 36Z'/%3E%3Ccircle cx='356' cy='56' r='46'/%3E%3Ccircle cx='46' cy='452' r='40'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 500' preserveAspectRatio='none'%3E%3Cpath d='M70 36C140-14 250 24 322 8C392-6 412 92 392 160C378 222 410 276 394 344C378 432 326 504 230 490C152 480 108 512 50 472C-10 430 16 360 8 300C0 232-14 160 14 100C26 70 42 52 70 36Z'/%3E%3Ccircle cx='356' cy='56' r='46'/%3E%3Ccircle cx='46' cy='452' r='40'/%3E%3C/svg%3E");
+}
+[data-skin="glass"] .card.brb .pay {
+  background: radial-gradient(circle at 20% 12%, rgb(255 255 255 / 30%), transparent 52%), linear-gradient(150deg, rgb(255 255 255 / 20%), rgb(255 255 255 / 7%));
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 500' preserveAspectRatio='none'%3E%3Crect x='24' y='44' width='330' height='410' rx='96'/%3E%3Ccircle cx='318' cy='92' r='78'/%3E%3Ccircle cx='84' cy='424' r='72'/%3E%3Ccircle cx='372' cy='388' r='28'/%3E%3Ccircle cx='34' cy='96' r='30'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 500' preserveAspectRatio='none'%3E%3Crect x='24' y='44' width='330' height='410' rx='96'/%3E%3Ccircle cx='318' cy='92' r='78'/%3E%3Ccircle cx='84' cy='424' r='72'/%3E%3Ccircle cx='372' cy='388' r='28'/%3E%3Ccircle cx='34' cy='96' r='30'/%3E%3C/svg%3E");
+}
+[data-skin="clean"] .card.brb .pay .qr, [data-skin="glass"] .card.brb .pay .qr { border-radius: 34px; }
+
+/* A skin thumbnail in the editor is still and light: no animation, no blur, no mask. */
+.thumb .card.brb, .thumb .card.brb *, .thumb .card.brb *::before, .thumb .card.brb *::after { animation: none !important; backdrop-filter: none !important; }
+.thumb .brbbg .aurora { filter: none; }
+
+/* A part the user has dragged (the SDK positions it against the frame). */
+.card.brb .music[data-ac-free] { width: 1100px; max-width: none; }
+.card.brb [data-ac-free] { z-index: 2; }

@@ -26,6 +26,10 @@ pub struct Config {
     pub vars: toml::Table,
     pub bot: Bot,
     pub overlay: Overlay,
+    /// `[plugins.<id>]`: installed overlay plugins (specs/2026-11-23-overlay-plugins.md).
+    pub plugins: BTreeMap<String, PluginCfg>,
+    /// `[plugin_registry]`: where `plugin search` and `plugin add <id>` look, and whose packages to trust.
+    pub plugin_registry: PluginRegistry,
     pub captions: LiveCaptions,
     pub capture: Capture,
     pub hotkeys: Hotkeys,
@@ -34,6 +38,71 @@ pub struct Config {
     pub external: External,
     pub tui: Tui,
     pub notify: Notify,
+}
+
+/// `[plugin_registry]`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PluginRegistry {
+    /// Registry files: `{ "plugins": [{ "id", "name", "source", "sha256", ... }] }`, as URLs or paths.
+    pub urls: Vec<String>,
+    /// Publishers you trust: `"name:base64-public-key"` (see `aftercast plugin keygen`).
+    pub trusted_keys: Vec<String>,
+    /// Refuse a plugin package that is not signed by a trusted key.
+    pub require_signed: bool,
+}
+
+/// `[plugins.<id>]`: where an overlay plugin sits and what its settings are. Frame fields
+/// that are not set come from the plugin's manifest.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PluginCfg {
+    pub enabled: bool,
+    /// The plugin's own skin; empty wears the pack (`[overlay] skin`).
+    pub skin: String,
+    pub x: Option<i16>,
+    pub y: Option<i16>,
+    pub width: Option<u16>,
+    pub height: Option<u16>,
+    pub size: Option<u16>,
+    pub rotate: Option<i16>,
+    pub align: Option<Align>,
+    pub bg: Option<String>,
+    pub opacity: Option<u8>,
+    /// `[plugins.<id>.params]`: the values of the plugin's `[[param]]`s.
+    pub params: toml::Table,
+    /// `[plugins.<id>.parts.<skin>.<part>]`: where the user dragged the plugin's movable parts,
+    /// for each skin (each skin lays itself out differently).
+    pub parts: BTreeMap<String, BTreeMap<String, PartPos>>,
+}
+
+/// Where a movable part sits in its plugin's frame, in the frame's own pixels.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PartPos {
+    pub x: Option<i16>,
+    pub y: Option<i16>,
+    pub w: Option<u16>,
+}
+
+impl Default for PluginCfg {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            skin: String::new(),
+            x: None,
+            y: None,
+            width: None,
+            height: None,
+            size: None,
+            rotate: None,
+            align: None,
+            bg: None,
+            opacity: None,
+            params: toml::Table::new(),
+            parts: BTreeMap::new(),
+        }
+    }
 }
 
 /// `[notify]`: notifications on the desktop (Windows toasts), even while another app has focus.
@@ -104,6 +173,19 @@ impl HomeLayout {
     }
 }
 
+/// The value at the dotted `key` (e.g. `overlay.brb_screen.pfp_size`) of the config file as it is
+/// written, whatever the typed config makes of it. `None` when the file or the key is not there.
+pub fn raw_value(path: &Path, key: &str) -> Option<toml::Value> {
+    let text = fs::read_to_string(path).ok()?;
+    let table: toml::Table = toml::from_str(&text).ok()?;
+    let mut parts = key.split('.');
+    let mut cur = table.get(parts.next()?)?;
+    for part in parts {
+        cur = cur.as_table()?.get(part)?;
+    }
+    Some(cur.clone())
+}
+
 /// A value written by [`set_value`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -127,6 +209,12 @@ pub fn set_values<'a>(
     path: &Path,
     values: impl IntoIterator<Item = (&'a str, Option<Value>)>,
 ) -> Result<()> {
+    // One writer at a time: the editor saves several settings at once, and each save reads the
+    // file, changes it and writes it back, so two at the same moment would lose one.
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _writing = WRITING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
@@ -732,9 +820,9 @@ impl Default for BrbScreen {
         Self {
             pfp: true,
             pfp_shape: PfpShape::Circle,
-            pfp_size: 260,
+            pfp_size: 320,
             qr: true,
-            qr_size: 420,
+            qr_size: 360,
             qr_link: String::new(),
             qr_caption: "Scan to support".into(),
             text: Vec::new(),
@@ -831,6 +919,11 @@ pub struct Sound {
     /// (`coins.wav` for the coin shower, `alert.wav` for any), see the README.
     #[serde(deserialize_with = "skin_pack")]
     pub skin: String,
+    /// The BRB's music fades in and out over this many seconds at the start and end of each track.
+    pub brb_fade: u8,
+    /// The BRB plays this many seconds of each track, from a random place in it (0: the whole
+    /// track; a shorter track plays in full).
+    pub brb_clip: u16,
 }
 
 impl Default for Sound {
@@ -839,6 +932,8 @@ impl Default for Sound {
             enabled: true,
             volume: 70,
             skin: "default".into(),
+            brb_fade: 5,
+            brb_clip: 30,
         }
     }
 }
@@ -875,18 +970,18 @@ impl Default for Overlay {
 }
 
 impl Overlay {
-    /// Every overlay's name, frontmost first: `order` as set, then the rest as built in.
-    pub fn order(&self) -> Vec<&'static str> {
-        let mut order: Vec<&'static str> = Vec::new();
+    /// Every overlay's name, frontmost first: `order` as set (plugin ids included), then
+    /// the built-in ones that it does not name.
+    pub fn order(&self) -> Vec<String> {
+        let mut order: Vec<String> = Vec::new();
         for name in self
             .order
             .iter()
             .chain(DEFAULT_ORDER.map(String::from).iter())
         {
-            if let Some((n, ..)) = FRAMES.iter().find(|f| f.0 == name)
-                && !order.contains(n)
-            {
-                order.push(n);
+            let known = FRAMES.iter().any(|f| f.0 == name) || self.order.contains(name);
+            if known && !order.contains(name) {
+                order.push(name.clone());
             }
         }
         order
@@ -952,9 +1047,10 @@ fn skin_pack<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<String, D::
 fn overlay_order<'de, D: Deserializer<'de>>(d: D) -> std::result::Result<Vec<String>, D::Error> {
     use serde::de::Error as _;
     let order = Vec::<String>::deserialize(d)?;
+    // Built-in names, or the id of an installed plugin (which the config cannot know).
     if let Some(bad) = order
         .iter()
-        .find(|n| !FRAMES.iter().any(|f| f.0 == n.as_str()))
+        .find(|n| !FRAMES.iter().any(|f| f.0 == n.as_str()) && !skin_name_ok(n))
     {
         return Err(D::Error::custom(format!(
             "unknown overlay {bad:?} in order"
@@ -1218,11 +1314,9 @@ impl<'de, const I: usize> Deserialize<'de> for Framed<I> {
                 DOCKABLE.join(", ")
             )));
         }
-        if let Some(bad) = f
-            .hide_when
-            .iter()
-            .find(|n| n.as_str() == own || !FRAMES.iter().any(|fr| fr.0 == n.as_str()))
-        {
+        if let Some(bad) = f.hide_when.iter().find(|n| {
+            n.as_str() == own || (!FRAMES.iter().any(|fr| fr.0 == n.as_str()) && !skin_name_ok(n))
+        }) {
             return Err(D::Error::custom(format!(
                 "hide_when {bad:?}: name another overlay"
             )));
@@ -1668,6 +1762,7 @@ chapter_on_brb = true  # BRB chapters
         assert!(c.overlay.bar.marquee && c.overlay.bar.animate);
         assert!(err("[overlay.bar]\norder = [\"keys\"]\n").contains("can dock"));
         assert_eq!(Config::default().overlay.sound.volume, 70);
+        assert_eq!(Config::default().overlay.sound.brb_clip, 30);
 
         // Behaviour: dock only the dockable, hide_when names another overlay.
         let c = parse(
@@ -1694,11 +1789,14 @@ hide_when = [\"keys\"]
         );
         assert!(
             err("[overlay.keys]
-hide_when = [\"nope\"]
+hide_when = [\"No Such\"]
 ")
             .contains("hide_when")
         );
-        assert!(err("[overlay]\norder = [\"nope\"]\n").contains("unknown overlay"));
+        // A name that could be a plugin id is accepted (the config cannot know which are installed).
+        assert!(err("[overlay]\norder = [\"No Such\"]\n").contains("unknown overlay"));
+        let c = parse("[overlay]\norder = [\"goal-bar\", \"keys\"]\n").unwrap();
+        assert_eq!(&c.overlay.order()[..2], ["goal-bar", "keys"]);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("aftercast.toml");
         let list = Value::List(vec!["question".into(), "keys".into()]);
@@ -1706,6 +1804,39 @@ hide_when = [\"nope\"]
         assert_eq!(
             Config::load(&path).unwrap().overlay.order()[..2],
             ["question", "keys"]
+        );
+    }
+
+    #[test]
+    fn plugin_parts_are_saved_and_read_per_skin() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("aftercast.toml");
+        set_value(
+            &path,
+            "plugins.goal-bar.parts.nvim.qr.x",
+            Some(Value::Int(120)),
+        )
+        .unwrap();
+        set_value(
+            &path,
+            "plugins.goal-bar.parts.nvim.qr.y",
+            Some(Value::Int(-4)),
+        )
+        .unwrap();
+        let c = Config::load(&path).unwrap();
+        let qr = &c.plugins["goal-bar"].parts["nvim"]["qr"];
+        assert_eq!((qr.x, qr.y, qr.w), (Some(120), Some(-4), None));
+        set_value(&path, "plugins.goal-bar.parts.nvim", None).unwrap();
+        assert!(
+            Config::load(&path).unwrap().plugins["goal-bar"]
+                .parts
+                .is_empty()
+        );
+        assert_eq!(raw_value(&path, "plugins.goal-bar.enabled"), None);
+        set_value(&path, "plugins.goal-bar.enabled", Some(Value::Bool(false))).unwrap();
+        assert_eq!(
+            raw_value(&path, "plugins.goal-bar.enabled"),
+            Some(toml::Value::Boolean(false))
         );
     }
 

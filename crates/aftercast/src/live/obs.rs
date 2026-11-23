@@ -114,7 +114,7 @@ impl Controller {
     /// Stacks the overlay sources in OBS as `[overlay] order` says.
     pub(super) fn stack_overlays(&self) {
         if let (ObsLink::Real(tx), Ok(addr)) = (&self.obs, &self.server) {
-            let order = self.config.overlay.order().into_iter().map(String::from);
+            let order = self.config.overlay.order().into_iter();
             let _ = tx.send(Request::OverlayOrder {
                 prefixes: overlay_prefixes(addr.port()),
                 order: order.collect(),

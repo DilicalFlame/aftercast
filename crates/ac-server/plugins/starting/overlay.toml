@@ -1,0 +1,49 @@
+# Starting screen, a first party overlay as a plugin (id "starting": it is the overlay of that name).
+[overlay]
+id = "starting"
+name = "Starting screen"
+version = "1.0.0"
+api = 1
+entry = "index.html"
+description = "The waiting screen before you go live."
+author = "aftercast"
+license = "MIT"
+
+[frame]
+x = 0
+y = 0
+width = 1920
+height = 1080
+align = "center"
+
+[capabilities]
+reads = ["starting"]
+audio = false
+network = ["fonts.googleapis.com", "fonts.gstatic.com"]
+
+[[skin]]
+id = "nvim"
+name = "Neovim"
+
+[[skin]]
+id = "clean"
+name = "Clean"
+
+[[skin]]
+id = "broadcast"
+name = "Broadcast"
+
+[[skin]]
+id = "glass"
+name = "Glass"
+
+[[skin]]
+id = "minimal"
+name = "Minimal"
+
+[[scenario]]
+name = "Sample"
+[scenario.state.starting]
+action = "show"
+[scenario.state.starting.data]
+since_ms = 0

@@ -1,0 +1,5 @@
+/* Alert: the look of each skin. The host sets --bg --fg --accent --muted --font-* and the frame. */
+/* The alert: a canvas that fills its frame (see alert.js). */
+[data-overlay="alert"] { --v: stretch; }
+.alert { position: relative; display: flex; justify-content: var(--align, center); flex: 1; align-self: stretch; min-height: 0; }
+.alert-canvas { display: block; }

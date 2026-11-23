@@ -1,0 +1,141 @@
+/* Starting screen: the look of each skin. The host sets --bg --fg --accent --muted --font-* and the frame. */
+/* Starting screen, skin nvim (the base, after the channel's starting video): fills its
+   frame (the whole canvas by default). */
+.starting {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: #fff;
+  font-family: "Caveat Brush", "Segoe Script", cursive;
+  background:
+    radial-gradient(circle at 28% 62%, rgb(214 92 196 / 55%), transparent 42%),
+    radial-gradient(circle at 80% 20%, rgb(150 80 230 / 50%), transparent 45%),
+    linear-gradient(135deg, #8a3fd0 0%, #a046c8 42%, #c24eb4 100%);
+}
+/* The sky: long rounded bars rising to the right, soft circles, striped hatches; all drift. */
+.starting .sky i { position: absolute; display: block; border-radius: 999px; }
+.starting .sky [class^="b"], .starting .sky [class^="p"], .starting .sky [class^="h"] {
+  transform: rotate(-40deg);
+  animation: starting-drift 16s ease-in-out infinite alternate;
+}
+.starting .sky [class^="b"] { background: linear-gradient(90deg, rgb(132 118 242 / 60%), rgb(150 110 240 / 22%)); }
+.starting .sky [class^="p"] { background: linear-gradient(90deg, rgb(238 96 186 / 60%), rgb(238 96 186 / 18%)); }
+.starting .sky .b1 { left: -260px; top: 120px; width: 900px; height: 120px; animation-duration: 18s; }
+.starting .sky .b2 { left: 380px; top: -160px; width: 1100px; height: 110px; animation-duration: 21s; animation-delay: -6s; }
+.starting .sky .b3 { left: 1100px; top: 260px; width: 900px; height: 90px; animation-duration: 15s; animation-delay: -3s; }
+.starting .sky .b4 { left: 1300px; top: 760px; width: 1000px; height: 130px; animation-duration: 19s; animation-delay: -9s; }
+.starting .sky .b5 { left: -120px; top: 900px; width: 760px; height: 70px; animation-duration: 14s; animation-delay: -4s; }
+.starting .sky .b6 { left: 860px; top: 520px; width: 520px; height: 26px; opacity: .8; animation-duration: 12s; }
+.starting .sky .p1 { left: 1500px; top: 420px; width: 700px; height: 90px; animation-duration: 17s; animation-delay: -2s; }
+.starting .sky .p2 { left: 200px; top: 620px; width: 640px; height: 80px; animation-duration: 20s; animation-delay: -11s; }
+.starting .sky .p3 { left: 1050px; top: 40px; width: 560px; height: 60px; animation-duration: 13s; animation-delay: -7s; }
+.starting .sky [class^="d"] {
+  background: radial-gradient(circle at 35% 30%, rgb(255 255 255 / 30%), rgb(170 110 240 / 35%) 60%, rgb(150 90 220 / 20%));
+  animation: starting-float 9s ease-in-out infinite alternate;
+}
+.starting .sky .d1 { left: 140px; top: 500px; width: 110px; height: 110px; }
+.starting .sky .d2 { left: 380px; top: 560px; width: 420px; height: 420px; opacity: .55; animation-duration: 13s; }
+.starting .sky .d3 { left: 1270px; top: 700px; width: 170px; height: 170px; animation-delay: -4s; }
+.starting .sky .d4 { left: 270px; top: 360px; width: 54px; height: 54px; animation-delay: -2s; }
+.starting .sky [class^="h"] {
+  border-radius: 6px;
+  background: repeating-linear-gradient(90deg, rgb(255 255 255 / 55%) 0 5px, transparent 5px 14px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 30%, #000 70%, transparent);
+}
+.starting .sky .h1 { left: 700px; top: 760px; width: 520px; height: 56px; animation-duration: 11s; }
+.starting .sky .h2 { left: 1480px; top: 980px; width: 420px; height: 46px; animation-duration: 15s; animation-delay: -5s; }
+@keyframes starting-drift {
+  from { transform: rotate(-40deg) translateX(-60px); }
+  to { transform: rotate(-40deg) translateX(80px); }
+}
+@keyframes starting-float {
+  from { transform: translate(0, 0); }
+  to { transform: translate(18px, -28px); }
+}
+/* Who: "STREAM" on an arc over the picture, "Starting" under it. */
+.starting .who { position: absolute; left: 27%; top: 49%; width: 640px; height: 640px;
+  transform: translate(-50%, -50%); }
+.starting .arc { position: absolute; inset: -60px 0 auto; width: 640px; height: 640px; overflow: visible;
+  filter: drop-shadow(0 0 10px rgb(255 120 220 / 90%)) drop-shadow(0 0 28px rgb(255 90 210 / 50%)); }
+.starting .arc text { fill: #fff; font: 600 92px "Quicksand", "Segoe UI", sans-serif; letter-spacing: 10px; }
+.starting .pic { position: absolute; left: 50%; top: 50%; width: 432px; height: 432px; margin: -216px 0 0 -216px;
+  border-radius: 50%; overflow: hidden; background: #fff; box-sizing: border-box; border: 9px solid #fff;
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 40%), 0 0 60px rgb(255 120 220 / 45%);
+  animation: starting-breathe 6s ease-in-out infinite; }
+.starting .pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.starting .pic.mark { display: grid; place-items: center; background: #1d1430; color: var(--accent, #ff5555); }
+.starting .pic.mark svg { width: 62%; height: 62%; }
+.starting .label { position: absolute; left: 50%; top: 100%; transform: translate(-50%, -30%); white-space: nowrap;
+  font-size: 160px; line-height: 1;
+  text-shadow: 0 0 14px rgb(255 120 220 / 95%), 0 0 42px rgb(255 90 210 / 60%); }
+@keyframes starting-breathe {
+  50% { transform: scale(1.025); box-shadow: 0 0 0 2px rgb(255 255 255 / 50%), 0 0 90px rgb(255 120 220 / 60%); }
+}
+/* The clock, counting up. */
+.starting .count { position: absolute; left: 69%; top: 53%; transform: translate(-50%, -50%); }
+.starting .num { display: inline-block; font-size: 300px; line-height: 1; letter-spacing: 4px; white-space: nowrap;
+  text-shadow: 0 0 16px rgb(255 120 220 / 95%), 0 0 60px rgb(255 90 210 / 60%); }
+.starting .sub { position: absolute; right: 64px; bottom: 56px; padding: 10px 30px; border-radius: 999px;
+  background: #fff; color: #8a3fd0; font: 700 34px "Quicksand", "Segoe UI", sans-serif;
+  box-shadow: 0 8px 30px rgb(80 20 120 / 35%); animation: starting-nudge 7s ease-in-out infinite; }
+@keyframes starting-nudge {
+  0%, 86%, 100% { transform: none; }
+  90% { transform: translateY(-10px) rotate(-3deg); }
+  94% { transform: translateY(0) rotate(2deg); }
+}
+/* Starting, the other skins: the same pieces (sky, picture, label, clock, subscribe) in
+   other colors and places. */
+[data-skin="clean"] .starting {
+  color: #f1f2f5;
+  font-family: var(--font-sans), sans-serif;
+  background: radial-gradient(circle at 50% 30%, rgb(255 255 255 / 7%), transparent 55%), #121317;
+}
+[data-skin="clean"] .starting :is(.sky, .arc) { display: none; }
+[data-skin="clean"] .starting .who { left: 50%; top: 38%; }
+[data-skin="clean"] .starting .pic { border: 0; box-shadow: 0 0 0 6px var(--accent), 0 24px 60px rgb(0 0 0 / 50%); animation: none; }
+[data-skin="clean"] .starting .label { font: 700 64px/1 var(--font-sans), sans-serif; letter-spacing: 0.02em; text-shadow: none;
+  transform: translate(-50%, 36px); }
+[data-skin="clean"] .starting .count { left: 50%; top: 88%; }
+[data-skin="clean"] .starting .num { font: 600 110px/1 var(--font-mono), monospace; letter-spacing: 0; text-shadow: none;
+  color: var(--muted); }
+[data-skin="clean"] .starting .sub { background: var(--accent); color: #fff; font-family: var(--font-sans), sans-serif; box-shadow: none; }
+[data-skin="broadcast"] .starting {
+  font-family: var(--font-sans), sans-serif;
+  background: linear-gradient(112deg, #0d0d10 0 56%, var(--accent) 56.1% 100%);
+}
+[data-skin="broadcast"] .starting .sky { display: none; }
+[data-skin="broadcast"] .starting .arc { display: none; }
+[data-skin="broadcast"] .starting .pic { border-radius: 8px; border: 0; box-shadow: 0 0 0 6px #fff, 0 24px 60px rgb(0 0 0 / 45%); animation: none; }
+[data-skin="broadcast"] .starting .label { font: 900 120px/1 var(--font-sans), sans-serif; text-transform: uppercase;
+  letter-spacing: 0.02em; text-shadow: none; transform: translate(-50%, 0); }
+[data-skin="broadcast"] .starting .count { left: 79%; }
+[data-skin="broadcast"] .starting .num { font: 800 210px/1 var(--font-sans), sans-serif; letter-spacing: -4px; text-shadow: 0 10px 40px rgb(0 0 0 / 35%); }
+[data-skin="broadcast"] .starting .sub { border-radius: 4px; background: #fff; color: #0d0d10; text-transform: uppercase;
+  letter-spacing: 0.12em; font: 800 28px var(--font-sans), sans-serif; box-shadow: none; }
+[data-skin="glass"] .starting {
+  background: radial-gradient(circle at 20% 80%, rgb(60 200 190 / 35%), transparent 45%),
+    linear-gradient(135deg, #10202c 0%, #1b3b4f 50%, #26506a 100%);
+}
+[data-skin="glass"] .starting .sky { filter: hue-rotate(130deg) saturate(0.8); opacity: 0.7; }
+[data-skin="glass"] .starting .arc, [data-skin="glass"] .starting .label { filter: none; text-shadow: 0 4px 24px rgb(0 0 0 / 35%); }
+[data-skin="glass"] .starting .arc text { font-family: "Quicksand", var(--font-sans), sans-serif; }
+[data-skin="glass"] .starting .pic { box-shadow: 0 0 0 2px rgb(255 255 255 / 45%), 0 24px 70px rgb(0 0 0 / 40%); }
+[data-skin="glass"] .starting .count {
+  padding: 24px 70px 34px;
+  border: 1px solid rgb(255 255 255 / 25%);
+  border-radius: 56px;
+  background: linear-gradient(155deg, rgb(255 255 255 / 20%), rgb(255 255 255 / 5%) 60%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%), 0 24px 70px rgb(0 0 0 / 35%);
+}
+[data-skin="glass"] .starting .num { font: 700 240px/1 "Quicksand", var(--font-sans), sans-serif; text-shadow: 0 6px 30px rgb(0 0 0 / 30%); }
+[data-skin="glass"] .starting .sub { background: rgb(255 255 255 / 16%); color: #fff; border: 1px solid rgb(255 255 255 / 30%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%); }
+[data-skin="minimal"] .starting { background: #0b0b0c; font-family: var(--font-sans), sans-serif; }
+[data-skin="minimal"] .starting :is(.sky, .arc, .pic, .sub) { display: none; }
+[data-skin="minimal"] .starting .who { left: 50%; top: 36%; width: auto; height: auto; }
+[data-skin="minimal"] .starting .label { position: static; transform: none; font: 700 44px var(--font-sans), sans-serif;
+  letter-spacing: 0.4em; text-transform: uppercase; color: var(--accent); text-shadow: none; }
+[data-skin="minimal"] .starting .count { left: 50%; top: 56%; }
+[data-skin="minimal"] .starting .num { font: 200 320px/1 var(--font-sans), sans-serif; letter-spacing: -6px; text-shadow: none;
+  font-variant-numeric: tabular-nums; }

@@ -380,7 +380,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         .ok();
 
     let overlays = ac_server::Overlays::delayed(stream_delay_ms(&config));
-    overlays.set_theme(ac_server::theme(&config.overlay));
+    ac_server::apply_theme(&overlays, &config, &home.join("plugins"));
     let (state_tx, state_rx) = watch::channel(session_state.clone());
     let server = serve(
         home,
@@ -644,6 +644,7 @@ async fn serve(
         clock: clock.clone(),
         token,
         dir: home.join("overlays"),
+        plugins: home.join("plugins"),
         config: config_path.to_path_buf(),
         rehearse,
     };
@@ -1633,8 +1634,7 @@ impl Controller {
                     self.stack_overlays();
                 }
                 self.notice = Some("config and templates reloaded".into());
-                self.overlays
-                    .set_theme(ac_server::theme(&self.config.overlay));
+                ac_server::apply_theme(&self.overlays, &self.config, &self.home.join("plugins"));
                 self.captions_reload();
                 let ms = stream_delay_ms(&self.config);
                 if ms != delay {

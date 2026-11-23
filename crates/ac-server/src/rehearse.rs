@@ -346,7 +346,10 @@ pub(crate) async fn add_source(State(s): State<Arc<Shared>>, Json(p): Json<AddSo
     if s.rehearse.is_none() {
         return off();
     }
-    if !crate::OVERLAYS.contains(&p.overlay.as_str()) {
+    let plugin = crate::plugins::scan(&s.plugins)
+        .iter()
+        .any(|q| q.id == p.overlay);
+    if !plugin && !crate::OVERLAYS.contains(&p.overlay.as_str()) {
         return (StatusCode::BAD_REQUEST, "no such overlay").into_response();
     }
     let _ = s.commands.send(Command::AddOverlay {
@@ -430,7 +433,7 @@ pub(crate) async fn frames(State(s): State<Arc<Shared>>) -> Response {
     }
     match Config::load(&s.config) {
         Ok(c) => {
-            let frames: serde_json::Map<_, _> = c
+            let mut frames: serde_json::Map<_, _> = c
                 .overlay
                 .frames()
                 .into_iter()
@@ -443,7 +446,28 @@ pub(crate) async fn frames(State(s): State<Arc<Shared>>) -> Response {
                     (name.into(), frame)
                 })
                 .collect();
-            let order = c.overlay.order();
+            // Plugins: every installed one is a layer; the ones that are not built-in names
+            // have a frame of their own (`[plugins.<id>]`), the others replace a built-in page.
+            let plugin_list = crate::plugins::scan(&s.plugins);
+            for p in plugin_list.iter().filter(|p| !p.replaces()) {
+                let f = p.frame_in_effect(c.plugins.get(&p.id));
+                frames.insert(
+                    p.id.clone(),
+                    json!({ "x": f.x, "y": f.y, "width": f.width, "height": f.height,
+                            "size": f.size, "rotate": f.rotate, "align": f.align.name(),
+                            "bg": f.bg, "opacity": f.opacity, "skin": f.skin,
+                            "dock": false, "hide_when": [], "mute": false,
+                            "sound": "", "shuffle": true, "pin": false, "skins": {} }),
+                );
+            }
+            let mut order = c.overlay.order();
+            // Installed plugins that the order does not name yet go in front.
+            let missing: Vec<String> = plugin_list
+                .iter()
+                .filter(|p| !p.replaces() && !order.contains(&p.id))
+                .map(|p| p.id.clone())
+                .collect();
+            order.splice(0..0, missing);
             let skins = crate::skins(&s.dir);
             // Packs: every skin name some overlay wears.
             // (the alert's animations are not packs.)
@@ -462,8 +486,7 @@ pub(crate) async fn frames(State(s): State<Arc<Shared>>) -> Response {
                 )
             });
             packs.dedup();
-            Json(
-                json!({ "frames": frames, "order": order, "theme_bg": c.overlay.bg,
+            let mut out = json!({ "frames": frames, "order": order, "theme_bg": c.overlay.bg,
                          "pack": c.overlay.skin, "skins": skins, "packs": packs,
                          "bar": { "order": c.overlay.bar.order, "animate": c.overlay.bar.animate,
                                   "marquee": c.overlay.bar.marquee, "speed": c.overlay.bar.speed,
@@ -474,9 +497,38 @@ pub(crate) async fn frames(State(s): State<Arc<Shared>>) -> Response {
                          "sound_skins": crate::sound_skins(&s.dir),
                          "sounds": crate::sound_files(&s.dir),
                          "tracks": crate::media::tracks(&s.dir),
-                         "scenes": c.obs.scenes.all() }),
-            )
-            .into_response()
+                         "scenes": c.obs.scenes.all() });
+            let skin_map = out["skins"].as_object_mut().expect("skins is an object");
+            for p in &plugin_list {
+                // Its own skins, then custom stylesheets found in <home>/overlays/skins/<id>/.
+                let mut list: Vec<serde_json::Value> =
+                    p.skins.iter().map(|(id, _)| json!(id)).collect();
+                if let Some(all) = skins.get(p.id.as_str()) {
+                    list.extend(
+                        all.iter()
+                            .filter(|k| !p.skins.iter().any(|(id, _)| id == *k))
+                            .map(|k| json!(k)),
+                    );
+                }
+                if !list.is_empty() || !p.replaces() {
+                    skin_map.insert(p.id.clone(), list.into());
+                }
+            }
+            out["plugins"] = plugin_list
+                .iter()
+                .map(|p| {
+                    let cfg = c.plugins.get(&p.id);
+                    let mut m = p.manifest_json();
+                    m["params_in_effect"] = p.params_in_effect(cfg);
+                    m["parts_saved"] = cfg.map_or(json!({}), |c| {
+                        serde_json::to_value(&c.parts).unwrap_or_default()
+                    });
+                    m["skin"] = cfg.map_or("", |c| c.skin.as_str()).into();
+                    m
+                })
+                .collect::<Vec<_>>()
+                .into();
+            Json(out).into_response()
         }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -542,8 +594,14 @@ pub(crate) async fn frame(State(s): State<Arc<Shared>>, Json(f): Json<Framed>) -
     if s.rehearse.is_none() {
         return off();
     }
-    if !crate::OVERLAYS.contains(&f.name.as_str()) {
+    let plugin = crate::plugins::scan(&s.plugins)
+        .into_iter()
+        .find(|p| p.id == f.name && !p.replaces());
+    if plugin.is_none() && !crate::OVERLAYS.contains(&f.name.as_str()) {
         return (StatusCode::BAD_REQUEST, "no such overlay").into_response();
+    }
+    if plugin.is_some() {
+        return plugin_frame(&s, f);
     }
     if f.for_skin
         .as_deref()
@@ -612,6 +670,186 @@ pub(crate) async fn frame(State(s): State<Arc<Shared>>, Json(f): Json<Framed>) -
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// A plugin overlay's frame: `[plugins.<id>]` (a skin does not change a plugin's frame).
+fn plugin_frame(s: &Shared, f: Framed) -> Response {
+    let key = |field: &str| format!("plugins.{}.{field}", f.name);
+    let int = |v: i64| Some(config::Value::Int(v));
+    let text = |v: String| Some(config::Value::Text(v));
+    let mut keys: Vec<(String, Option<config::Value>)> = Vec::new();
+    if f.reset {
+        for field in [
+            "x", "y", "width", "height", "size", "rotate", "opacity", "align", "bg",
+        ] {
+            keys.push((key(field), None));
+        }
+    } else {
+        let fields = [
+            ("x", f.x.map(|v| int(v.clamp(-1920, 3840).into()))),
+            ("y", f.y.map(|v| int(v.clamp(-1080, 2160).into()))),
+            ("width", f.width.map(|v| int(v.clamp(20, 3840).into()))),
+            ("height", f.height.map(|v| int(v.clamp(20, 2160).into()))),
+            ("size", f.size.map(|v| int(v.clamp(10, 400).into()))),
+            ("rotate", f.rotate.map(|v| int(v.clamp(-180, 180).into()))),
+            ("opacity", f.opacity.map(|v| int(v.min(100).into()))),
+            ("align", f.align.map(text)),
+            ("bg", f.bg.map(text)),
+            ("skin", f.skin.map(text)),
+        ];
+        keys.extend(
+            fields
+                .into_iter()
+                .filter_map(|(k, v)| v.map(|v| (key(k), v))),
+        );
+    }
+    if let Err(e) = config::set_values(&s.config, keys.iter().map(|(k, v)| (k.as_str(), v.clone())))
+    {
+        return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+    }
+    let _ = s.commands.send(Command::Reload);
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PluginParam {
+    id: String,
+    /// The param to set (a null value: back to its default).
+    key: Option<String>,
+    value: Option<serde_json::Value>,
+    /// Every param back to its default.
+    #[serde(default)]
+    reset: bool,
+    enabled: Option<bool>,
+}
+
+/// Saves a plugin's setting (`[plugins.<id>.params]`) and reloads the config, which pushes it
+/// to the pages that show the plugin.
+pub(crate) async fn plugin_param(
+    State(s): State<Arc<Shared>>,
+    Json(p): Json<PluginParam>,
+) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let Some(plugin) = crate::plugins::scan(&s.plugins)
+        .into_iter()
+        .find(|q| q.id == p.id)
+    else {
+        return (StatusCode::BAD_REQUEST, "no such plugin").into_response();
+    };
+    let mut keys: Vec<(String, Option<config::Value>)> = Vec::new();
+    if p.reset {
+        keys.push((format!("plugins.{}.params", p.id), None));
+    }
+    if let Some(on) = p.enabled {
+        keys.push((
+            format!("plugins.{}.enabled", p.id),
+            Some(config::Value::Bool(on)),
+        ));
+    }
+    if let Some(k) = &p.key {
+        let Some(param) = plugin.params.iter().find(|q| &q.key == k) else {
+            return (StatusCode::BAD_REQUEST, "no such param").into_response();
+        };
+        let key = format!("plugins.{}.params.{k}", p.id);
+        let value = match p.value {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => {
+                // Checked against the manifest like the host does when it reads them.
+                let mut cfg = config::PluginCfg::default();
+                if let Ok(t) = serde_json::from_value::<toml::Value>(v.clone()) {
+                    cfg.params.insert(k.clone(), t);
+                }
+                if plugin.params_in_effect(Some(&cfg))[&param.key] != v {
+                    return (StatusCode::BAD_REQUEST, "the value does not fit the param")
+                        .into_response();
+                }
+                Some(match v {
+                    serde_json::Value::Bool(b) => config::Value::Bool(b),
+                    serde_json::Value::Number(n) => match n.as_i64() {
+                        Some(i) => config::Value::Int(i),
+                        None => config::Value::Float(n.as_f64().unwrap_or(0.0)),
+                    },
+                    serde_json::Value::String(t) => config::Value::Text(t),
+                    serde_json::Value::Array(a) => config::Value::List(
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(str::to_owned))
+                            .collect(),
+                    ),
+                    _ => return (StatusCode::BAD_REQUEST, "unsupported value").into_response(),
+                })
+            }
+        };
+        keys.push((key, value));
+    }
+    if let Err(e) = config::set_values(&s.config, keys.iter().map(|(k, v)| (k.as_str(), v.clone())))
+    {
+        return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+    }
+    let _ = s.commands.send(Command::Reload);
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct PluginParts {
+    id: String,
+    /// The skin whose layout this is (each skin has its own).
+    skin: String,
+    /// The places to save, by part id; `null` puts the skin's layout back to the plugin's own.
+    parts: Option<std::collections::BTreeMap<String, config::PartPos>>,
+}
+
+/// Saves where the user dragged a plugin's parts (`[plugins.<id>.parts.<skin>]`).
+pub(crate) async fn plugin_parts(
+    State(s): State<Arc<Shared>>,
+    Json(p): Json<PluginParts>,
+) -> Response {
+    if s.rehearse.is_none() {
+        return off();
+    }
+    let Some(plugin) = crate::plugins::scan(&s.plugins)
+        .into_iter()
+        .find(|q| q.id == p.id)
+    else {
+        return (StatusCode::BAD_REQUEST, "no such plugin").into_response();
+    };
+    if !config::skin_name_ok(&p.skin) {
+        return (StatusCode::BAD_REQUEST, "no such skin").into_response();
+    }
+    let base = format!("plugins.{}.parts.{}", p.id, p.skin);
+    let mut keys: Vec<(String, Option<config::Value>)> = Vec::new();
+    match p.parts {
+        None => keys.push((base, None)),
+        Some(parts) => {
+            for (id, pos) in parts {
+                if !plugin.parts.iter().any(|(q, _)| *q == id) {
+                    return (StatusCode::BAD_REQUEST, "no such part").into_response();
+                }
+                let int =
+                    |v: i16, lo: i16, hi: i16| Some(config::Value::Int(i64::from(v.clamp(lo, hi))));
+                keys.push((
+                    format!("{base}.{id}.x"),
+                    pos.x.and_then(|v| int(v, -4000, 4000)),
+                ));
+                keys.push((
+                    format!("{base}.{id}.y"),
+                    pos.y.and_then(|v| int(v, -4000, 4000)),
+                ));
+                keys.push((
+                    format!("{base}.{id}.w"),
+                    pos.w
+                        .map(|v| config::Value::Int(i64::from(v.clamp(20, 4000)))),
+                ));
+            }
+        }
+    }
+    if let Err(e) = config::set_values(&s.config, keys.iter().map(|(k, v)| (k.as_str(), v.clone())))
+    {
+        return (StatusCode::BAD_REQUEST, e.to_string()).into_response();
+    }
+    let _ = s.commands.send(Command::Reload);
+    StatusCode::NO_CONTENT.into_response()
+}
+
 #[derive(Deserialize)]
 pub(crate) struct Order {
     /// Overlay names, frontmost first.
@@ -624,7 +862,15 @@ pub(crate) async fn order(State(s): State<Arc<Shared>>, Json(o): Json<Order>) ->
     if s.rehearse.is_none() {
         return off();
     }
-    // Unknown names are refused by the config check in set_value.
+    // A name is a built-in overlay or an installed plugin.
+    let installed = crate::plugins::scan(&s.plugins);
+    if let Some(bad) = o
+        .order
+        .iter()
+        .find(|n| !crate::OVERLAYS.contains(&n.as_str()) && !installed.iter().any(|p| &p.id == *n))
+    {
+        return (StatusCode::BAD_REQUEST, format!("no such overlay: {bad}")).into_response();
+    }
     let list = Some(config::Value::List(o.order));
     if let Err(e) = config::set_value(&s.config, "overlay.order", list) {
         return (StatusCode::BAD_REQUEST, e.to_string()).into_response();

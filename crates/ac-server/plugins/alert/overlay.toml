@@ -1,0 +1,47 @@
+# Alert, a first party overlay as a plugin (id "alert": it is the overlay of that name).
+[overlay]
+id = "alert"
+name = "Alert"
+version = "1.0.0"
+api = 1
+entry = "index.html"
+description = "The Super Chat animation."
+author = "aftercast"
+license = "MIT"
+
+[frame]
+x = 360
+y = 860
+width = 1200
+height = 170
+align = "center"
+
+[capabilities]
+reads = ["alert"]
+audio = true
+network = []
+
+[[skin]]
+id = "dino"
+name = "Dino run"
+
+[[skin]]
+id = "pacman"
+name = "Pac-Man"
+
+[[skin]]
+id = "moonwalk"
+name = "Moonwalk"
+
+[[skin]]
+id = "coins"
+name = "Coin shower"
+
+[[skin]]
+id = "neon"
+name = "Neon sign"
+
+[[scenario]]
+name = "Sample"
+[scenario.state.alert]
+action = "hide"

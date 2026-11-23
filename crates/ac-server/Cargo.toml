@@ -16,6 +16,7 @@ qrcode = { version = "0.15", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["net", "sync", "macros", "rt", "time"] }
+toml.workspace = true
 
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false }
