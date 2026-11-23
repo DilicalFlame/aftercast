@@ -8,7 +8,7 @@ ac.on("latency", (m) => {
   if (m.action === "hide") return root.replaceChildren();
   const d = m.data || {};
   const num = el("span", "num");
-  root.replaceChildren(row("latency", "Lat", num));
+  root.replaceChildren(row(d.mini ? "latency mini" : "latency", "Lat", num));
   const f = () => (num.textContent = Math.floor((Date.now() - d.start_ms) / 100));
   f();
   ticker = setInterval(f, 50);

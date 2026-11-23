@@ -4,6 +4,7 @@
 mod captions;
 mod capture;
 mod chat;
+mod latency;
 mod obs;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -72,6 +73,10 @@ pub enum Msg {
     Caption(captions::Caption),
     /// The `:end` end screen has run its time.
     EndDue,
+    /// Time to see whether an automatic latency measurement is due.
+    LatencyTick,
+    /// An automatic latency measurement finished.
+    LatencyAuto(std::result::Result<f64, String>),
 }
 
 /// Where OBS shows the facecam: scene, item, left/top/width/height, canvas size.
@@ -404,6 +409,15 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
             }
         });
     }
+    if !opts.rehearse {
+        let tx = msg_tx.clone();
+        tokio::spawn(async move {
+            let mut every = interval(Duration::from_secs(5));
+            while tx.send(Msg::LatencyTick).is_ok() {
+                every.tick().await;
+            }
+        });
+    }
     let captions = captions::spawn(home, &config, clock.clone(), msg_tx.clone());
     let pushed_text = fs::read_to_string(session_render_pushed(&session)).ok();
     let mut controller = Controller {
@@ -459,6 +473,7 @@ pub async fn start(home: &Home, config_path: &Path, opts: Options<'_>) -> Result
         chat_log,
         started,
         latency_run: None,
+        latency_auto: None,
         chat_fast,
         rehearse_feed: feed_tx,
         on_air,
@@ -1003,6 +1018,8 @@ struct Controller {
     /// Chat commands typed before this (history sent on connect) are not executed.
     started: Timestamp,
     latency_run: Option<chat::LatencyRun>,
+    /// The automatic latency measurement (`stream.auto_latency`), while live.
+    latency_auto: Option<latency::Auto>,
     /// Tells the chat reader a latency measurement runs (reopen chat without waiting).
     chat_fast: watch::Sender<bool>,
     /// `aftercast rehearse`: what the rehearse page shows.
@@ -1233,6 +1250,8 @@ impl Controller {
                     Msg::ShellPoll => self.shell_poll(),
                     Msg::Caption(c) => self.on_caption(c),
                     Msg::EndDue => self.end_due(),
+                    Msg::LatencyTick => self.latency_tick(),
+                    Msg::LatencyAuto(r) => self.latency_auto_done(r),
                 },
                 () = quit_due => self.done = true,
                 () = render_due => {

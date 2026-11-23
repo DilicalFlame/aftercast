@@ -182,6 +182,14 @@ viewer, and ideally a third account you made a moderator.
     you have, expect minutes, not seconds; `:lat <n>` in the palette works too if chat lags.
     The chapter list shows "Latency check" from step 16 and then your previous chapter title
     again from the third sample.
+18. Needs yt-dlp, ffmpeg and GLM-OCR (`aftercast setup`). Set `stream.auto_latency = true` and
+    put the `latency` overlay's frame in a small corner (for example x 0, y 0, width 360,
+    height 90), then go live. Expect: a small `LAT` counter in that corner on stream. After
+    about the current latency plus 30 s the status bar's `lat` changes by itself, then again
+    every `stream.auto_latency_interval_s`; each reading is a `latency.measured` event with
+    `samples` 1. A failed read (no counter yet, OCR missing) shows `auto latency: ...` in the
+    notice line and is retried after 1, 2, 4 ... minutes. `:latency` during this shows the big
+    counter and pauses the automatic readings until it ends.
 
 ### Rehearse
 

@@ -4,6 +4,7 @@
 use std::collections::VecDeque;
 use std::io::Write;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ac_bot::{Builtin, Cmd, Parsed};
 use ac_core::chat::{ChatKind, ChatMessage, Support};
@@ -18,8 +19,9 @@ use ac_core::time::{Timestamp, hms};
 use ac_server::{Action, OverlayMsg};
 use ac_youtube::chat::ChatUpdate;
 use serde_json::{Value, json};
+use tokio::time::Instant;
 
-use super::Controller;
+use super::{Controller, Msg, latency};
 
 /// Messages kept for the TUI chat pane.
 const CHAT_PANE: usize = 500;
@@ -493,18 +495,79 @@ impl Controller {
         {
             self.latency_end(run);
         }
-        self.emit(
-            "core",
-            EventKind::LatencyMeasured {
-                latency_s,
-                samples: samples as u32,
-            },
-        );
-        self.session.meta.anchors.latency_s = Some(latency_s);
-        self.save_session();
+        self.latency_record(latency_s, samples as u32);
         self.notice = Some(format!(
             "latency {latency_s:.1} s ({samples} of {LATENCY_SAMPLES} samples)"
         ));
+    }
+
+    /// A latency reading becomes the stream's latency.
+    fn latency_record(&mut self, latency_s: f64, samples: u32) {
+        self.emit("core", EventKind::LatencyMeasured { latency_s, samples });
+        self.session.meta.anchors.latency_s = Some(latency_s);
+        self.save_session();
+    }
+
+    /// Every few seconds: starts, runs and stops the automatic measurement while live.
+    pub(super) fn latency_tick(&mut self) {
+        let live = self.state.stream == Some(StreamStatus::Live) && !self.state.ended;
+        if !live || !self.config.stream.auto_latency {
+            self.latency_auto = None;
+            return;
+        }
+        // The counter must have been on stream as long as viewers are behind.
+        let first = Duration::from_secs_f64(self.latency() + 30.0);
+        let (start, config) = (self.clock.now_ts(), self.config.clone());
+        let auto = self.latency_auto.get_or_insert_with(|| latency::Auto {
+            start,
+            next: Instant::now() + first,
+            delay: latency::RETRY,
+            busy: false,
+        });
+        if auto.busy || self.latency_run.is_some() || Instant::now() < auto.next {
+            return;
+        }
+        auto.busy = true;
+        let job = latency::Job {
+            home: self.home.clone(),
+            config,
+            clock: self.clock.clone(),
+            video_id: self.session.meta.video_id.clone(),
+            start: auto.start,
+        };
+        let tx = self.msg_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = tx.send(Msg::LatencyAuto(latency::measure(&job)));
+        });
+    }
+
+    /// An automatic reading arrived (or failed: it is tried again, less and less often).
+    pub(super) fn latency_auto_done(&mut self, result: std::result::Result<f64, String>) {
+        let interval = Duration::from_secs(u64::from(
+            self.config.stream.auto_latency_interval_s.clamp(60, 3600),
+        ));
+        let manual = self.latency_run.is_some();
+        let Some(auto) = &mut self.latency_auto else {
+            return;
+        };
+        auto.busy = false;
+        let result = result.and_then(|s| {
+            (0.0..=latency::MAX_S)
+                .contains(&s)
+                .then_some(s)
+                .ok_or_else(|| format!("counter read as {s:.0} s, ignored"))
+        });
+        auto.delay = if result.is_ok() {
+            latency::RETRY
+        } else {
+            (auto.delay * 2).min(interval)
+        };
+        auto.next = Instant::now() + if result.is_ok() { interval } else { auto.delay };
+        match result {
+            Ok(_) if manual => {}
+            Ok(s) => self.latency_record((s * 10.0).round() / 10.0, 1),
+            Err(e) => self.notice = Some(format!("auto latency: {e}")),
+        }
     }
 
     /// Ends the "Latency check" chapter by returning to the one before it.
@@ -646,9 +709,14 @@ impl Controller {
             ),
             None => hide(),
         };
-        let latency = self.latency_run.as_ref().map_or_else(hide, |run| {
-            (Action::Show, json!({ "start_ms": run.start.unix_ms() }))
-        });
+        let latency = match (&self.latency_run, &self.latency_auto) {
+            (Some(run), _) => (Action::Show, json!({ "start_ms": run.start.unix_ms() })),
+            (None, Some(a)) => (
+                Action::Show,
+                json!({ "start_ms": a.start.unix_ms(), "mini": true }),
+            ),
+            _ => hide(),
+        };
         let chapters = self
             .state
             .checkpoints

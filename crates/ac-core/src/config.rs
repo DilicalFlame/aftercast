@@ -582,6 +582,11 @@ pub struct Stream {
     pub chapter_on_question: bool,
     /// Wrap a `:latency` measurement in a "Latency check" chapter, so viewers can skip it.
     pub chapter_on_latency: bool,
+    /// Measure the latency by itself while live: a small counter stays on the `latency`
+    /// overlay and its frame is read from the public stream (needs yt-dlp, ffmpeg, GLM-OCR).
+    pub auto_latency: bool,
+    /// Seconds between automatic measurements (60 to 3600).
+    pub auto_latency_interval_s: u32,
     /// OBS shows cameras, captures and audio this late (0 to 500 ms), so live captions land
     /// on the words; overlays and scene switches wait as long. 0 is off.
     pub delay_ms: u32,
@@ -606,6 +611,8 @@ impl Default for Stream {
             chapter_on_brb: true,
             chapter_on_question: false,
             chapter_on_latency: true,
+            auto_latency: false,
+            auto_latency_interval_s: 300,
             delay_ms: 0,
             end_screen: true,
             end_screen_s: 30,

@@ -149,6 +149,7 @@ let redock = () => {};
   };
   const statusPut = (n, action, d) => {
     if (!DOCK[n]) return;
+    if (n === "latency" && d && d.mini) action = "hide"; // the automatic counter is for the stream, not the bar
     statusBar();
     const old = segs[n];
     if (action === "hide") {

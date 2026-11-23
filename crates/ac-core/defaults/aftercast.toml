@@ -78,6 +78,9 @@ chapter_on_quest_change = true
 chapter_on_brb = true           # BRB gets a "Break" chapter, then returns to the chapter before
 chapter_on_question = false     # add "Q: ..." chapter when a question is shown
 chapter_on_latency = true       # :latency adds a "Latency check" chapter, then returns to the previous one
+auto_latency = false            # measure latency by itself while live: a small counter stays on the latency overlay,
+                                # read from the public stream (yt-dlp, ffmpeg, GLM-OCR); put its frame in a corner
+auto_latency_interval_s = 300   # seconds between automatic measurements (60 to 3600)
 end_screen = true               # :end shows the ending scene first, asking how long
 end_screen_s = 30               # seconds it offers (1 to 600); then streaming, recording, virtual camera stop
 starting_screen = true          # Go Live opens on the starting scene; Enter in the TUI goes to the main scene

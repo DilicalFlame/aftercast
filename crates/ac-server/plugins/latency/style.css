@@ -32,6 +32,9 @@ body[data-overlay="latency"] { --v: center; }
 .card .timer { color: var(--muted); font-family: var(--font-mono), monospace; }
 .card .num { font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; }
 .latency { --fs: 160px; --padx: 60px; --pady: 24px; line-height: 1; }
+/* Automatic measurement: a small counter in the frame's top left corner, which the host reads. */
+.latency.mini { --fs: 40px; --padx: 18px; --pady: 8px; align-self: flex-start; }
+#ac-frame:has(.mini) { justify-content: flex-start; }
 /* Skin clean: soft rounded cards in the sans font, the label a quiet pill. */
 [data-skin="clean"] .card {
   margin-top: 0;

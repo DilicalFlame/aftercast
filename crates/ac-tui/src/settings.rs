@@ -1134,6 +1134,30 @@ pub fn all() -> Vec<Setting> {
             Now,
             |c| Value::Bool(c.stream.chapter_on_latency),
         ),
+        s(
+            7,
+            "Chapters",
+            "stream.auto_latency",
+            "Measure latency by itself",
+            "While live, a small counter stays on the latency overlay and its frame is read from the public stream. Put the overlay's frame in a corner.",
+            Bool,
+            Now,
+            |c| Value::Bool(c.stream.auto_latency),
+        ),
+        s(
+            7,
+            "Chapters",
+            "stream.auto_latency_interval_s",
+            "Latency check every (s)",
+            "Seconds between automatic latency measurements.",
+            Int {
+                min: 60,
+                max: 3600,
+                step: 60,
+            },
+            Now,
+            |c| Value::Int(c.stream.auto_latency_interval_s.into()),
+        ),
         // YouTube
         s(
             8,
