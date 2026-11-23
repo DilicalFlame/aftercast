@@ -129,6 +129,82 @@ pub enum Command {
     ShellHook { shell: Shell },
     /// Measure stream latency (needs a live session)
     Latency,
+    /// Make overlays (specs/2026-11-23-overlay-plugins.md)
+    Overlay {
+        #[command(subcommand)]
+        action: OverlayAction,
+    },
+    /// Install, list and remove overlay plugins
+    Plugin {
+        #[command(subcommand)]
+        action: PluginAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OverlayAction {
+    /// Create a new overlay project, ready for `plugin add`
+    New {
+        /// The overlay's id: 1 to 32 of a-z 0-9 - _
+        id: String,
+        /// plain: HTML, CSS and JS with no build; svelte: Svelte 5 and Vite
+        #[arg(long, value_enum, default_value_t = Template::Plain)]
+        template: Template,
+        /// Where to create it (default: ./<id>)
+        #[arg(long, value_name = "PATH")]
+        dir: Option<PathBuf>,
+        /// The name shown in the editor (default: the id as words)
+        #[arg(long)]
+        name: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PluginAction {
+    /// Install an overlay from a folder, a .zip file or a git URL
+    Add {
+        source: String,
+        /// Do not ask
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Use the folder in place instead of copying it (for developing a plugin)
+        #[arg(long)]
+        link: bool,
+        /// Refuse a package that is not signed by a trusted key
+        #[arg(long)]
+        require_signed: bool,
+    },
+    /// Search the registries in [plugin_registry]
+    Search { query: Option<String> },
+    /// Make a signing key for packages (the secret stays in <home>/state/plugin-keys)
+    Keygen { name: String },
+    /// Zip a plugin folder for sharing; --sign adds a signature file next to it
+    Pack {
+        dir: PathBuf,
+        /// A key made with `plugin keygen`
+        #[arg(long)]
+        sign: Option<String>,
+        /// The zip to write (default: <id>-<version>.zip next to the folder)
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// List installed plugins
+    List,
+    /// Remove a plugin and its settings
+    Remove {
+        id: String,
+        /// Do not ask
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    /// Check a plugin folder's manifest without installing
+    Check { path: PathBuf },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Template {
+    Plain,
+    Svelte,
 }
 
 #[derive(Debug, Subcommand)]

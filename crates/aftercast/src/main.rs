@@ -2,6 +2,8 @@ mod cli;
 mod doctor;
 mod error;
 mod live;
+mod plugin_cmd;
+mod plugin_pkg;
 mod script;
 mod secret;
 mod setup;
@@ -18,7 +20,7 @@ use ac_youtube::auth::{self, Auth};
 use ac_youtube::quota::QuotaGuard;
 use clap::Parser;
 
-use cli::{AuthAction, Cli, Command};
+use cli::{AuthAction, Cli, Command, OverlayAction, PluginAction};
 use error::Result;
 
 fn main() -> ExitCode {
@@ -89,6 +91,35 @@ fn run(cli: Cli) -> Result<u8> {
             Ok(exit::OK)
         }
         Some(Command::Library { action }) => library(&home, &config_path, action),
+        Some(Command::Overlay {
+            action:
+                OverlayAction::New {
+                    id,
+                    template,
+                    dir,
+                    name,
+                },
+        }) => plugin_cmd::overlay_new(&id, template, dir, name),
+        Some(Command::Plugin { action }) => match action {
+            PluginAction::Add {
+                source,
+                yes,
+                link,
+                require_signed,
+            } => plugin_cmd::plugin_add(&home, &config_path, &source, yes, link, require_signed),
+            PluginAction::Search { query } => {
+                plugin_cmd::plugin_search(&config_path, query.as_deref())
+            }
+            PluginAction::Keygen { name } => plugin_cmd::plugin_keygen(&home, &name),
+            PluginAction::Pack { dir, sign, out } => {
+                plugin_cmd::plugin_pack(&home, &dir, out, sign.as_deref())
+            }
+            PluginAction::List => plugin_cmd::plugin_list(&home),
+            PluginAction::Remove { id, yes } => {
+                plugin_cmd::plugin_remove(&home, &config_path, &id, yes)
+            }
+            PluginAction::Check { path } => plugin_cmd::plugin_check(&path),
+        },
         Some(Command::Rehearse) => {
             runtime()?.block_on(live_session(&home, &config_path, &cli, true))
         }
@@ -202,7 +233,15 @@ async fn live_session(
     let post_after = ui.map_err(|e| error::AppError::Usage(format!("TUI task failed: {e}")))??;
     if post_after {
         // The terminal is plain again: the pipeline's progress bars print here.
-        return post(home, config_path, Some(&last.session), None, None, false, None);
+        return post(
+            home,
+            config_path,
+            Some(&last.session),
+            None,
+            None,
+            false,
+            None,
+        );
     }
     Ok(exit::OK)
 }

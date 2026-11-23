@@ -1,0 +1,62 @@
+[overlay]
+id = "__ID__"
+name = "__NAME__"
+version = "0.1.0"
+api = 1
+entry = "index.html"
+description = "A new aftercast overlay."
+author = ""
+license = "MIT"
+
+# Where it sits on the 1920x1080 canvas at first. The editor moves it from there.
+[frame]
+x = 40
+y = 40
+width = 760
+height = 120
+align = "left"
+
+# What it asks for; shown to whoever installs it.
+[capabilities]
+reads = ["now"]
+
+[[skin]]
+id = "dark"
+name = "Dark"
+
+[[skin]]
+id = "light"
+name = "Light"
+
+# Settings: the editor draws a form for these, and the page reads them as `ac.params`.
+[[param]]
+key = "label"
+type = "text"
+label = "Label"
+default = "Now"
+
+[[param]]
+key = "show_timer"
+type = "bool"
+label = "Show the live timer"
+default = true
+
+[[param]]
+key = "accent"
+type = "color"
+label = "Accent color"
+default = "#a78bfa"
+
+# Sample data for the editor and thumbnails (no live stream needed).
+[[scenario]]
+name = "On stream"
+[scenario.state.now]
+action = "show"
+[scenario.state.now.data]
+quest = "Writing my first overlay"
+live_since_ms = "$now-754000"
+
+[[scenario]]
+name = "Nothing yet"
+[scenario.state.now]
+action = "hide"

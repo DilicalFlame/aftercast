@@ -1,0 +1,59 @@
+[overlay]
+id = "__ID__"
+name = "__NAME__"
+version = "0.1.0"
+api = 1
+# The built page: `npm run build` writes it.
+entry = "dist/index.html"
+description = "A new aftercast overlay (Svelte)."
+author = ""
+license = "MIT"
+
+[frame]
+x = 40
+y = 40
+width = 760
+height = 120
+align = "left"
+
+[capabilities]
+reads = ["now"]
+
+[[skin]]
+id = "dark"
+name = "Dark"
+
+[[skin]]
+id = "light"
+name = "Light"
+
+[[param]]
+key = "label"
+type = "text"
+label = "Label"
+default = "Now"
+
+[[param]]
+key = "show_timer"
+type = "bool"
+label = "Show the live timer"
+default = true
+
+[[param]]
+key = "accent"
+type = "color"
+label = "Accent color"
+default = "#a78bfa"
+
+[[scenario]]
+name = "On stream"
+[scenario.state.now]
+action = "show"
+[scenario.state.now.data]
+quest = "Writing my first overlay"
+live_since_ms = "$now-754000"
+
+[[scenario]]
+name = "Nothing yet"
+[scenario.state.now]
+action = "hide"
