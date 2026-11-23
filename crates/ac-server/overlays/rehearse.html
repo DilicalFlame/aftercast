@@ -437,6 +437,16 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .pnl-b > .prop { padding: 6px 0; border-top: 0; }
 .pnl.off .pnl-b, .prop.off { opacity: .38; pointer-events: none; filter: grayscale(.5); }
 .stack { display: grid; gap: 10px; }
+.pform .group { margin-top: 6px; color: var(--faint); font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.pform .field { display: grid; gap: 6px; padding: 0; border: 0; background: none; box-shadow: none; }
+.pform .field > .lbl { color: var(--dim); font-size: 12.5px; }
+.pform .field > .help { color: var(--faint); font-size: 12px; line-height: 1.5; }
+.pform textarea.txt { width: 100%; box-sizing: border-box; resize: vertical; }
+.pform input[type=color] { width: 36px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--well); }
+.pform .colorrow { display: grid; grid-template-columns: 36px 1fr; gap: 8px; align-items: center; }
+.pform .row2 { display: flex; gap: 8px; align-items: center; }
+.pform .ghost { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: none; color: var(--dim); font: inherit; font-size: 12.5px; cursor: pointer; }
+.pform .ghost:hover { color: var(--text); border-color: #3a3b43; }
 .pair { display: grid; grid-auto-flow: column; gap: 8px; margin-top: 10px; }
 .note { display: flex; align-items: center; gap: 10px; margin: 0 12px 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px;
   line-height: 1.4; color: var(--dim); background: var(--well); box-shadow: inset 0 0 0 1px var(--line); }
@@ -566,8 +576,8 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
   font-size: 12.5px; cursor: pointer; }
 .link:hover { text-decoration: underline; }
 /* Rows of skins, as many as fit; the wheel moves one row at a time (see the script). */
-.skins-row { display: grid; grid-template-columns: repeat(auto-fill, 188px); grid-auto-rows: max-content; gap: 16px;
-  align-content: start; flex: 1; min-height: 0; overflow-y: auto; padding: 4px; scroll-snap-type: y mandatory;
+.skins-row { display: grid; grid-auto-flow: column; grid-auto-columns: 188px; gap: 16px; align-content: start; flex: 1; min-height: 0;
+  overflow-x: auto; overflow-y: hidden; padding: 4px 4px 12px; scroll-snap-type: x proximity;
   scrollbar-width: thin; scrollbar-color: var(--hover) transparent; }
 .skins-row > * { scroll-snap-align: start; }
 .skin { display: flex; flex-direction: column; gap: 9px; width: 188px; padding: 0; border: 0;
@@ -912,6 +922,11 @@ body.editing .skins { display: flex; flex-direction: column; gap: 14px; align-se
           <section class="pnl" data-tab="content" data-title="My texts" id="pnlTxt" data-frame>
             <div class="prop" id="brbTxt" hidden>
               <textarea class="txt" id="bLines" rows="3" spellcheck="false" placeholder="One line per row, e.g. buymeacoffee.com/you" aria-label="Custom texts"></textarea>
+            </div>
+          </section>
+          <section class="pnl" data-tab="content" data-title="Settings" id="pnlPlugin" data-frame>
+            <div class="prop" id="pluginProp" hidden>
+              <div class="stack pform" id="pluginForm"></div>
             </div>
           </section>
           <section class="pnl" data-tab="content" data-title="Music" id="pnlMusic" data-frame>
@@ -1504,7 +1519,8 @@ const frames = {}, hits = {}, rows = {};
 let F = null, order = [], themeBg = "#303030", selected = null, editing = false;
 let pack = "nvim", skins = {}, packs = [];
 let soundFiles = [], brbTracks = 0;
-let BRB = { pfp: true, pfp_shape: "circle", pfp_size: 260, qr: true, qr_size: 420, qr_link: "", qr_caption: "", text: [] };
+let PLUGINS = {}; // installed overlay plugins by id (their manifests and settings)
+let BRB = { pfp: true, pfp_shape: "circle", pfp_size: 320, qr: true, qr_size: 360, qr_link: "", qr_caption: "", text: [] };
 let OPT = { bar: { order: [], animate: true, marquee: false, speed: 60, extras: [] }, sound: { enabled: true, volume: 70 } };
 let k = 1; // screen pixels per canvas pixel
 const committed = {}, history = [];
@@ -1544,9 +1560,25 @@ new ResizeObserver(fit).observe($("stage"));
 new ResizeObserver(fitPlayer).observe($("viewport").parentElement);
 
 // Drawing one overlay: its page's vars, its hit box, the selection and the panels.
+// A plugin page is sandboxed (an opaque origin, so it cannot touch this page or the host's
+// write endpoints): the editor reaches it by messages only. The SDK answers them.
+const isPlugin = (n) => !!PLUGINS[n];
+function tell(n, op, extra = {}) {
+  frames[n]?.contentWindow?.postMessage({ aftercast: op, ...extra }, "*");
+}
+// The window of an overlay page this editor may call into (a built-in one), else null.
+const winOf = (n) => {
+  try {
+    const w = frames[n] && frames[n].contentWindow;
+    void w.document;
+    return w;
+  } catch {
+    return null;
+  }
+};
 function apply(n) {
   const f = F[n], body = frames[n].contentDocument && frames[n].contentDocument.body;
-  if (body) {
+  if (body || isPlugin(n)) {
     const c = rgbOf(f.bg || themeBg);
     const vars = { "--x": f.x + "px", "--y": f.y + "px", "--w": f.width + "px", "--h": f.height + "px",
                    "--s": f.size / 100, "--r": f.rotate + "deg", "--align": FLEX[f.align], "--text-align": f.align,
@@ -1554,8 +1586,10 @@ function apply(n) {
                    "--bg-solid": c ? `rgb(${c.join(" ")})` : f.bg || themeBg, "--skin": wearing(n),
                    "--hide": F[n].hide_when.join(" ") || "none", "--mute": +F[n].mute,
                    "--sound-file": F[n].sound || "none", "--shuffle": +F[n].shuffle };
-    for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
-    frames[n].contentWindow.aftercastSkin?.();
+    if (body) {
+      for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
+      frames[n].contentWindow.aftercastSkin?.();
+    } else tell(n, "vars", { vars });
   }
   syncDock();
   place(hits[n], f);
@@ -1583,22 +1617,162 @@ function syncDock() {
   const docked = order.filter((n) => F[n].dock).join(" ") || "none";
   const hiddenDocked = order.filter((n) => F[n].dock && !shownHere(n)).join(" ") || "none";
   const segSkins = DOCKABLE.map((n) => `${n}=${segSkin(n)}`).join(" ");
+  const vars = {
+    "--docked": docked, "--bar-hidden": hiddenDocked, "--seg-skins": segSkins,
+    "--bar-order": fullOrder().join(" "), "--bar-animate": +OPT.bar.animate,
+    "--bar-marquee": +OPT.bar.marquee, "--bar-speed": OPT.bar.speed, "--sound": +OPT.sound.enabled,
+    "--volume": OPT.sound.volume, "--sound-skin": OPT.sound.skin,
+    "--bar-extras": OPT.bar.extras.join(" ") || "none",
+    "--seg-pins": DOCKABLE.map((n) => `${n}=${+F[n].pin}`).join(" "),
+    "--seg-aligns": DOCKABLE.map((n) => `${n}=${F[n].align}`).join(" "),
+    "--seg-opacities": DOCKABLE.map((n) => `${n}=${F[n].opacity}`).join(" "),
+  };
+  const key = JSON.stringify(vars);
   for (const n of order) {
-    const win = frames[n].contentWindow, body = frames[n].contentDocument && frames[n].contentDocument.body;
-    if (!body) continue;
-    body.style.setProperty("--docked", docked);
-    body.style.setProperty("--bar-hidden", hiddenDocked);
-    body.style.setProperty("--seg-skins", segSkins);
-    for (const [v, val] of Object.entries({ "--bar-order": fullOrder().join(" "), "--bar-animate": +OPT.bar.animate,
-        "--bar-marquee": +OPT.bar.marquee, "--bar-speed": OPT.bar.speed, "--sound": +OPT.sound.enabled,
-        "--volume": OPT.sound.volume, "--sound-skin": OPT.sound.skin,
-        "--bar-extras": OPT.bar.extras.join(" ") || "none",
-        "--seg-pins": DOCKABLE.map((n) => `${n}=${+F[n].pin}`).join(" "),
-        "--seg-aligns": DOCKABLE.map((n) => `${n}=${F[n].align}`).join(" "),
-        "--seg-opacities": DOCKABLE.map((n) => `${n}=${F[n].opacity}`).join(" ") })) body.style.setProperty(v, val);
-    win.aftercastRefresh?.();
+    const body = frames[n].contentDocument && frames[n].contentDocument.body;
+    if (body) {
+      for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
+      frames[n].contentWindow.aftercastRefresh?.();
+    } else if (isPlugin(n) && frames[n].dataset.dockKey !== key) {
+      // A plugin page: by message, and only when something changed (each one redraws).
+      frames[n].dataset.dockKey = key;
+      tell(n, "vars", { vars });
+    }
   }
   liveSound();
+}
+// ---- plugin settings: a form drawn from the manifest's [[param]]s ----
+let pluginFormFor = "";
+function pushParams(pl) {
+  tell(pl.id, "push", { data: { plugins: { [pl.id]: { params: pl.params_in_effect, skin: F[pl.id].skin || "" } } } });
+}
+async function setParam(pl, key, value) {
+  pl.params_in_effect[key] = value;
+  pushParams(pl);
+  await post("/rehearse/plugin", { id: pl.id, key, value });
+}
+function drawPlugin(pl) {
+  const form = $("pluginForm");
+  // Built once per plugin; while it is on screen only the values are refreshed.
+  if (pluginFormFor === pl.id) {
+    for (const input of form.querySelectorAll("[data-key]")) {
+      if (document.activeElement === input) continue;
+      const v = pl.params_in_effect[input.dataset.key.replace(/#num$/, "")];
+      if (input.type === "checkbox") input.checked = !!v;
+      else input.value = Array.isArray(v) ? v.join("\n") : v;
+    }
+    return;
+  }
+  pluginFormFor = pl.id;
+  form.replaceChildren();
+  const add = (e) => form.append(e);
+  const h = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls || "", textContent: text || "" });
+  if (pl.scenarios.length) {
+    const field = h("div", "field");
+    const sel = document.createElement("select");
+    sel.append(...pl.scenarios.map((sc) => new Option(sc.name, sc.name)));
+    sel.onchange = () => tell(pl.id, "scenario", { name: sel.value });
+    field.append(h("span", "lbl", "Sample shown here"), sel);
+    add(field);
+  }
+  if (pl.parts.length) {
+    const field = h("div", "field");
+    const sw = h("label", "switch");
+    const cb = Object.assign(document.createElement("input"), { type: "checkbox", checked: plMove() });
+    cb.onchange = () => { store.set("pl-move", cb.checked ? "on" : "off"); plBoxes(); };
+    sw.append(cb, h("span", "", "Drag parts on the canvas"));
+    const reset = h("button", "ghost", "Reset this skin's layout");
+    reset.type = "button";
+    reset.onclick = async () => {
+      tell(pl.id, "parts", { parts: null });
+      await post("/rehearse/plugin-parts", { id: pl.id, skin: wearing(pl.id), parts: null });
+    };
+    field.append(sw, h("span", "help", "Parts: " + pl.parts.map((p) => p.label).join(", ") + ". Each skin keeps its own layout."), reset);
+    add(field);
+  }
+  let group = null;
+  for (const p of pl.params) {
+    if (p.group && p.group !== group) { group = p.group; add(h("div", "group", p.group)); }
+    const field = h("div", "field");
+    const v = pl.params_in_effect[p.key];
+    const bind = (input, read) => {
+      input.dataset.key = p.key;
+      input.oninput = () => { pl.params_in_effect[p.key] = read(); pushParams(pl); };
+      input.onchange = () => setParam(pl, p.key, read());
+      return input;
+    };
+    const label = () => field.append(h("span", "lbl", p.label));
+    if (p.type === "bool") {
+      const sw = h("label", "switch");
+      const cb = Object.assign(document.createElement("input"), { type: "checkbox", checked: !!v });
+      sw.append(bind(cb, () => cb.checked), h("span", "", p.label));
+      field.append(sw);
+    } else if (p.type === "select") {
+      label();
+      const sel = document.createElement("select");
+      sel.append(...p.options.map((o) => new Option(o, o)));
+      sel.value = v;
+      field.append(bind(sel, () => sel.value));
+    } else if (p.type === "range" || p.type === "number") {
+      label();
+      const num = Object.assign(document.createElement("input"), { type: "number", value: v });
+      for (const [k, x] of [["min", p.min], ["max", p.max], ["step", p.step]]) if (x !== null) num[k] = x;
+      const read = () => Number(num.value);
+      if (p.type === "range") {
+        const rng = Object.assign(document.createElement("input"), { type: "range", value: v });
+        for (const [k, x] of [["min", p.min], ["max", p.max], ["step", p.step]]) if (x !== null) rng[k] = x;
+        rng.dataset.key = p.key;
+        rng.oninput = () => { num.value = rng.value; pl.params_in_effect[p.key] = Number(rng.value); pushParams(pl); };
+        rng.onchange = () => setParam(pl, p.key, Number(rng.value));
+        const box = h("div", "range");
+        const wrap = h("label", "num");
+        bind(num, read);
+        num.dataset.key = p.key + "#num";
+        num.oninput = () => { rng.value = num.value; pl.params_in_effect[p.key] = read(); pushParams(pl); };
+        num.onchange = () => setParam(pl, p.key, Number(num.value));
+        wrap.append(num);
+        box.append(rng, wrap);
+        field.append(box);
+      } else {
+        const wrap = h("label", "num");
+        wrap.append(bind(num, read));
+        field.append(wrap);
+      }
+    } else if (p.type === "color") {
+      label();
+      const row = h("div", "colorrow");
+      const col = Object.assign(document.createElement("input"), { type: "color", value: v });
+      const hex = Object.assign(document.createElement("input"), { type: "text", value: v, spellcheck: false });
+      col.oninput = () => { hex.value = col.value; pl.params_in_effect[p.key] = col.value; pushParams(pl); };
+      col.onchange = () => setParam(pl, p.key, col.value);
+      bind(hex, () => hex.value);
+      hex.onchange = () => { if (/^#[0-9a-f]{6}$/i.test(hex.value)) { col.value = hex.value; setParam(pl, p.key, hex.value); } };
+      row.append(col, hex);
+      field.append(row);
+    } else if (p.type === "list") {
+      label();
+      const ta = Object.assign(document.createElement("textarea"), { className: "txt", rows: 3, value: (v || []).join("\n"), spellcheck: false });
+      field.append(bind(ta, () => ta.value.split("\n").map((x) => x.trim()).filter(Boolean)));
+    } else {
+      label();
+      const input = Object.assign(document.createElement("input"), { type: "text", className: "txt", value: v, spellcheck: false });
+      field.append(bind(input, () => input.value));
+    }
+    if (p.help) field.append(h("span", "help", p.help));
+    add(field);
+  }
+  const row = h("div", "row2");
+  const reset = h("button", "ghost", "Reset settings");
+  reset.type = "button";
+  reset.onclick = async () => {
+    for (const p of pl.params) pl.params_in_effect[p.key] = p.default;
+    pushParams(pl);
+    pluginFormFor = "";
+    await post("/rehearse/plugin", { id: pl.id, reset: true });
+    drawPlugin(pl);
+  };
+  row.append(reset);
+  add(row);
 }
 const CURSORS = ["ns-resize", "nesw-resize", "ew-resize", "nwse-resize"];
 const ANGLE = { n: 0, ne: 45, e: 90, se: 135, s: 180, sw: 225, w: 270, nw: 315 };
@@ -1631,10 +1805,13 @@ function inspect() {
   $("bgTheme").hidden = !f.bg;
   $("barProp").hidden = $("barProp2").hidden = selected !== "status";
   $("alertProp").hidden = selected !== "alert";
-  $("muteProp").hidden = !SOUNDING.includes(selected);
-  $("brbProp").hidden = selected !== "brb";
-  for (const id of ["brbArrange", "brbPic", "brbQr", "brbTxt"]) $(id).hidden = selected !== "brb";
-  if (selected === "brb") {
+  const plugin = PLUGINS[selected];
+  $("muteProp").hidden = !SOUNDING.includes(selected) || !!plugin;
+  $("brbProp").hidden = selected !== "brb" || !!plugin;
+  for (const id of ["brbArrange", "brbPic", "brbQr", "brbTxt"]) $(id).hidden = selected !== "brb" || !!plugin;
+  $("pluginProp").hidden = !plugin;
+  if (plugin) drawPlugin(plugin);
+  if (selected === "brb" && !plugin) {
     drawBrbScreen();
     $("shuffle").checked = f.shuffle;
     // Play sound off: no playlist, and so no cover art or bars.
@@ -1808,7 +1985,11 @@ addEventListener("blur", closeCtx);
 // not a pile of noise.
 let edSound = store.get("ed-sound", "on") !== "off";
 function liveSound() {
-  for (const n of order) frames[n]?.contentWindow?.aftercastLive?.(edSound && n === selected && editing);
+  for (const n of order) {
+    const on = edSound && n === selected && editing;
+    if (isPlugin(n)) tell(n, "sound", { on });
+    else winOf(n)?.aftercastLive?.(on);
+  }
 }
 // Number fields: the arrow keys (Shift for 10) and a stepper on the right.
 function stepper(label) {
@@ -1953,6 +2134,8 @@ async function load() {
   OPT.sound.skin = OPT.sound.skin || "default";
   skins = r.skins;
   packs = r.packs;
+  PLUGINS = Object.fromEntries((r.plugins || []).map((p) => [p.id, p]));
+  for (const p of r.plugins || []) META[p.id] = META[p.id] || [p.name, "globe"];
   for (const n of order) r.frames[n].skins = r.frames[n].skins || {};
   // `wearing` needs the overlay's frame already: give it the raw one first.
   for (const n of order) F[n] = r.frames[n];
@@ -2066,7 +2249,10 @@ function setMode(m) {
 function syncTimers() {
   const at = scenes.indexOf(scene);
   const on = (n) => (n === "brb" && mode === "brb") || (n === "starting" && (at === 3 || at === 4));
-  for (const n of ["brb", "starting"]) frames[n]?.contentWindow?.aftercastTimer?.(on(n));
+  for (const n of ["brb", "starting"]) {
+    if (isPlugin(n)) tell(n, "timer", { on: on(n) });
+    else winOf(n)?.aftercastTimer?.(on(n));
+  }
 }
 setInterval(() => { if (F) syncTimers(); }, 1000);
 function paintScene() {
@@ -2362,7 +2548,7 @@ function build() {
     f.src = `/overlay/${n}?demo`;
     f.tabIndex = -1;
     f.allow = "autoplay";
-    f.onload = () => apply(n);
+    f.onload = () => { delete f.dataset.dockKey; apply(n); };
     const hit = document.createElement("div");
     hit.className = "frame";
     hit.oncontextmenu = (e) => { if (selected !== n) select(n); openCtx(e, n); };
@@ -2546,7 +2732,7 @@ function drawBrbScreen() {
   if (act !== $("bCaption")) $("bCaption").value = e.qr_caption;
   if (act !== $("bLines")) $("bLines").value = e.text.join("\n");
 }
-const redrawBrb = () => frames.brb.contentWindow.aftercastBrbReload?.();
+const redrawBrb = () => winOf("brb")?.aftercastBrbReload?.();
 async function saveBrb(part) {
   const skin = brbSkin();
   BRB.skins = BRB.skins || {};
@@ -2705,6 +2891,143 @@ function brbNudge(e) {
   nudgeT = setTimeout(() => saveBrb(pos), 350);
   return true;
 }
+// ---- movable parts of a plugin: a box over each [data-part] element; drag to place it ----
+const plEls = document.createElement("div");
+$("canvas").append(plEls);
+let partRects = {}, plDragging = false;
+const plMove = () => store.get("pl-move", "on") !== "off";
+function plBoxes() {
+  if (plDragging) return;
+  const n = selected, pl = n && PLUGINS[n];
+  const show = editing && pl && pl.parts.length && plMove() && !frames[n].hidden && partRects[n];
+  const rects = show ? partRects[n] : {};
+  const fr = show ? F[n] : null, s = fr ? fr.size / 100 : 1;
+  const have = new Map([...plEls.children].map((b) => [b.dataset.part, b]));
+  for (const [id, b] of have) if (!rects[id]) { b.remove(); have.delete(id); }
+  for (const [id, r] of Object.entries(rects)) {
+    let b = have.get(id);
+    if (!b) {
+      b = document.createElement("div");
+      b.className = "brbel";
+      b.dataset.part = id;
+      b.title = (pl.parts.find((p) => p.id === id) || {}).label || id;
+      b.onpointerdown = (ev) => plDrag(n, id, ev);
+      plEls.append(b);
+    }
+    // A part marked resizable has a grip on its right edge.
+    const def = pl.parts.find((p) => p.id === id);
+    if (def && def.resizable && !b.querySelector(".rz")) {
+      const g = document.createElement("div");
+      g.className = "rz w";
+      g.onpointerdown = (ev) => plResize(n, id, ev);
+      b.append(g);
+    }
+    Object.assign(b.style, { left: fr.x + r.x * s + "px", top: fr.y + r.y * s + "px", width: r.w * s + "px", height: r.h * s + "px" });
+  }
+}
+// The page answers with every part's box in its own pixels.
+addEventListener("message", (e) => {
+  const d = e.data;
+  if (d && d.aftercast === "barfit") window.aftercastBarFit(d);
+  if (!d || d.aftercast !== "rects") return;
+  const n = order.find((x) => frames[x] && frames[x].contentWindow === e.source);
+  if (!n || plDragging) return;
+  partRects[n] = d.rects;
+  plBoxes();
+});
+setInterval(() => {
+  const n = selected;
+  if (n && PLUGINS[n] && PLUGINS[n].parts.length && editing && plMove()) tell(n, "measure", { id: n });
+  else plBoxes();
+}, 500);
+// Every part's place as it stands, with the widths the user set: the first change leaves the rest.
+function plPositions(n) {
+  const saved = ((PLUGINS[n].parts_saved || {})[wearing(n)]) || {};
+  return Object.fromEntries(Object.entries(partRects[n]).map(([k, r]) => [k, { x: Math.round(r.x), y: Math.round(r.y), ...(saved[k] && saved[k].w ? { w: saved[k].w } : {}) }]));
+}
+function plSave(n, pos) {
+  PLUGINS[n].parts_saved = { ...(PLUGINS[n].parts_saved || {}), [wearing(n)]: pos };
+  post("/rehearse/plugin-parts", { id: n, skin: wearing(n), parts: pos });
+}
+function plResize(n, id, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const fr = F[n], s = fr.size / 100, rects = partRects[n], pos = plPositions(n);
+  const w0 = pos[id].w || Math.round(rects[id].w), x0 = e.clientX, box = e.currentTarget.parentElement;
+  let moved = false;
+  plDragging = true;
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", "ew-resize");
+  const move = (m) => {
+    moved = true;
+    pos[id].w = Math.round(Math.min(1900, Math.max(40, w0 + (m.clientX - x0) / k / s)));
+    box.style.width = pos[id].w * s + "px";
+    tell(n, "parts", { parts: pos });
+  };
+  const up = () => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    plDragging = false;
+    if (moved) {
+      rects[id].w = pos[id].w;
+      plSave(n, pos);
+    }
+    plBoxes();
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+}
+function plDrag(n, id, e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const fr = F[n], s = fr.size / 100, rects = partRects[n];
+  // Every part's place as it stands: the first move leaves the others where they are.
+  const pos = plPositions(n);
+  const mine = rects[id], w = mine.w * s, h = mine.h * s;
+  const left0 = fr.x + mine.x * s, top0 = fr.y + mine.y * s;
+  const T = snapTargets(n);
+  for (const [k, r] of Object.entries(rects)) {
+    if (k === id) continue;
+    const l = fr.x + r.x * s, t = fr.y + r.y * s;
+    T.xs.push(l, l + r.w * s / 2, l + r.w * s);
+    T.ys.push(t, t + r.h * s / 2, t + r.h * s);
+  }
+  const x0 = e.clientX, y0 = e.clientY, box = e.currentTarget;
+  let moved = false;
+  plDragging = true;
+  document.body.classList.add("gesture");
+  document.body.style.setProperty("--gesture", "move");
+  const move = (m) => {
+    if (!moved && Math.hypot(m.clientX - x0, m.clientY - y0) < 3) return;
+    moved = true;
+    let L = left0 + (m.clientX - x0) / k, Tp = top0 + (m.clientY - y0) / k;
+    if (snapOn(m)) {
+      const sx = pull([L, L + w / 2, L + w], T.xs), sy = pull([Tp, Tp + h / 2, Tp + h], T.ys);
+      if (sx !== null) L += sx;
+      if (sy !== null) Tp += sy;
+      showGuides(hits_([L, L + w / 2, L + w], T.xs), hits_([Tp, Tp + h / 2, Tp + h], T.ys));
+    } else showGuides([], []);
+    pos[id] = { x: Math.round((L - fr.x) / s), y: Math.round((Tp - fr.y) / s) };
+    box.style.left = fr.x + pos[id].x * s + "px";
+    box.style.top = fr.y + pos[id].y * s + "px";
+    tell(n, "parts", { parts: pos });
+  };
+  const up = () => {
+    removeEventListener("pointermove", move);
+    removeEventListener("pointerup", up);
+    document.body.classList.remove("gesture");
+    showGuides([], []);
+    plDragging = false;
+    if (moved) {
+      for (const [k, p] of Object.entries(pos)) if (partRects[n][k]) { partRects[n][k].x = p.x; partRects[n][k].y = p.y; }
+      plSave(n, pos);
+    }
+    plBoxes();
+  };
+  addEventListener("pointermove", move);
+  addEventListener("pointerup", up);
+}
 setInterval(brbBoxes, 400);
 $("bMove").onchange = () => { store.set("brb-move", $("bMove").checked ? "on" : "off"); brbBoxes(); };
 $("bReset").onclick = resetBrbLook;
@@ -2725,7 +3048,10 @@ $("soundVol").oninput = () => { OPT.sound.volume = $("soundVol").valueAsNumber; 
 $("soundVol").onchange = () => { syncDock(); post("/rehearse/options", { volume: OPT.sound.volume }); };
 $("soundFile").onchange = () => { F.alert.sound = $("soundFile").value; apply("alert"); commit("alert"); };
 $("soundVolNum").onchange = () => { OPT.sound.volume = Math.min(100, Math.max(0, $("soundVolNum").valueAsNumber || 0)); syncDock(); inspect(); post("/rehearse/options", { volume: OPT.sound.volume }); };
-const playAlert = (sound) => frames.alert.contentWindow.aftercastPlay?.({ sound, volume: OPT.sound.volume });
+const playAlert = (sound) => {
+  if (isPlugin("alert")) tell("alert", "play", { sound, volume: OPT.sound.volume });
+  else winOf("alert")?.aftercastPlay?.({ sound, volume: OPT.sound.volume });
+};
 $("playAlert").onclick = () => playAlert(false);
 $("playSound").onclick = () => playAlert(true);
 $("dock").onchange = () => { F[selected].dock = $("dock").checked; apply(selected); commit(selected); renderSkins(); };
@@ -2784,19 +3110,20 @@ function thumb(n, s) {
   f.tabIndex = -1;
   f.onload = () => {
     // A look, not a place: upright, and no wider than 640 so wide cards wrap into a shape
-    // that reads at thumbnail size.
+    // that reads at thumbnail size (the BRB is a whole screen: it keeps its shape).
     const fr = bar
       ? { ...F.status, x: 0, y: 0, rotate: 0, width: 520, height: Math.max(F.status.height, 40) }
-      : { ...F[n], rotate: 0, width: Math.min(F[n].width, 640) };
+      : { ...F[n], rotate: 0, width: n === "brb" ? F[n].width : Math.min(F[n].width, 640) };
     const g = geo(fr), body = f.contentDocument && f.contentDocument.body;
-    if (body) {
+    if (body || PLUGINS[n]) {
       const c = rgbOf(fr.bg || themeBg);
       const vars = { "--x": fr.x + "px", "--y": fr.y + "px", "--w": fr.width + "px", "--h": fr.height + "px",
                      "--s": fr.size / 100, "--r": "0deg", "--align": FLEX[fr.align], "--text-align": fr.align,
                      "--bg": c ? `rgb(${c.join(" ")} / ${fr.opacity}%)` : fr.bg || themeBg,
                      "--bg-solid": c ? `rgb(${c.join(" ")})` : fr.bg || themeBg,
                      "--docked": "none", "--hide": "none" };
-      for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
+      if (body) for (const [v, val] of Object.entries(vars)) body.style.setProperty(v, val);
+      else f.contentWindow.postMessage({ aftercast: "vars", vars }, "*");
     }
     // Centered and as large as the thumbnail allows: the frame at first, then what the
     // overlay draws once its sample has settled (a question card is far smaller than its frame).
@@ -2824,6 +3151,7 @@ function preview(n, s) {
     segHover = s ? { n, s } : null;
     return syncDock();
   }
+  if (isPlugin(n)) return tell(n, "vars", { vars: { "--skin": s || wearing(n) } });
   const body = frames[n].contentDocument && frames[n].contentDocument.body;
   if (!body) return;
   body.style.setProperty("--skin", s || wearing(n));
@@ -2854,7 +3182,8 @@ function renderSkins() {
   $("skinsNote").textContent = "";
   $("wearPack").hidden = !F[n].skin;
   for (const s of list) {
-    const b = card(skinLabel(s), s, s === wearing(n), !SKIN_NAMES[s], n);
+    const own = PLUGINS[n] && PLUGINS[n].skins.find((k) => k.id === s);
+    const b = own ? card(own.name, s, s === wearing(n), false, n) : card(skinLabel(s), s, s === wearing(n), !SKIN_NAMES[s], n);
     b.onmouseenter = () => preview(n, s);
     b.onmouseleave = () => preview(n, null);
     b.onclick = () => {
@@ -2883,19 +3212,13 @@ async function setPack(s) {
   renderSkins();
   await post("/rehearse/pack", { skin: s });
 }
-// One wheel step shows the next row of skins (a trackpad's burst counts as one step).
-{
-  let wait = 0;
-  $("skinRow").addEventListener("wheel", (e) => {
-    const row = $("skinRow"), first = row.firstElementChild;
-    if (!first || row.scrollHeight <= row.clientHeight) return;
-    e.preventDefault();
-    if (Date.now() < wait || Math.abs(e.deltaY) < 4) return;
-    wait = Date.now() + 260;
-    const step = first.offsetHeight + 16;
-    row.scrollTo({ top: (Math.round(row.scrollTop / step) + Math.sign(e.deltaY)) * step, behavior: "smooth" });
-  }, { passive: false });
-}
+// The wheel scrolls the skins sideways (one row of them, however many there are).
+$("skinRow").addEventListener("wheel", (e) => {
+  const row = $("skinRow");
+  if (row.scrollWidth <= row.clientWidth || Math.abs(e.deltaY) < Math.abs(e.deltaX)) return;
+  e.preventDefault();
+  row.scrollLeft += e.deltaY;
+}, { passive: false });
 $("wearPack").onclick = () => {
   F[selected].skin = "";
   apply(selected);
